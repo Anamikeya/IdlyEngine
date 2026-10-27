@@ -1,0 +1,16 @@
+@'
+/resources/
+/build/
+/out/
+/cmake-build-*/
+/.vs/
+/.idea/
+/.vscode/
+*.obj
+*.exe
+*.dll
+*.lib
+*.pdb
+.env
+.env.*
+'@ | Set-Content -Encoding utf8 .gitignore
