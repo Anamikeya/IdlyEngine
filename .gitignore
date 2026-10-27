@@ -1,4 +1,3 @@
-@'
 /resources/
 /build/
 /out/
@@ -6,11 +5,12 @@
 /.vs/
 /.idea/
 /.vscode/
+/CMakeUserPresets.json
 *.obj
 *.exe
 *.dll
 *.lib
 *.pdb
+*.ilk
 .env
 .env.*
-'@ | Set-Content -Encoding utf8 .gitignore
