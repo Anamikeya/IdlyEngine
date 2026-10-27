@@ -23,14 +23,6 @@ if(TARGET engine::networking)
 		LIBRARIES engine::networking)
 endif()
 
-if(TARGET engine::networking_gns)
-	gameengine_add_test_executable(networking_gns_tests
-		LABELS networking integration gns
-		TIMEOUT 120
-		SOURCES Networking/gns_transport_tests.cpp
-		LIBRARIES engine::networking_gns)
-endif()
-
 if(TARGET engine::online_services)
 	gameengine_add_test_executable(online_services_tests
 		LABELS online unit

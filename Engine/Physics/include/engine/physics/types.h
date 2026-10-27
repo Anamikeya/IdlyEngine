@@ -57,7 +57,8 @@ public:
 	[[nodiscard]] PhysicsError error() const noexcept { return error_; }
 	[[nodiscard]] T& value() & noexcept { return value_; }
 	[[nodiscard]] const T& value() const& noexcept { return value_; }
-	[[nodiscard]] T&& value() && noexcept { return std::move(value_); }
+	// By value: a reference into a temporary result would dangle at the end of the statement.
+	[[nodiscard]] T value() && noexcept { return std::move(value_); }
 
 private:
 	T value_;

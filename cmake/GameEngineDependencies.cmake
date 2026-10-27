@@ -79,6 +79,13 @@ if(GAMEENGINE_WITH_PHYSICS)
 	set(BOX3D_DISABLE_SIMD OFF CACHE BOOL "" FORCE)
 	add_subdirectory("${GAMEENGINE_RESOURCES_DIR}/box3d" "${CMAKE_BINARY_DIR}/_deps/box3d" EXCLUDE_FROM_ALL SYSTEM)
 	set_target_properties(box3d PROPERTIES FOLDER "ThirdParty")
+
+	# MinGW-w64 GCC does not realign the stack to 32 bytes (GCC bug 54412), so Box3D's AVX2 path
+	# faults on aligned spills (vmovaps to the stack). Have the assembler emit unaligned moves
+	# instead; requires binutils >= 2.38. Verified with GCC 13.2 / binutils 2.42.
+	if(MINGW AND CMAKE_C_COMPILER_ID STREQUAL "GNU")
+		target_compile_options(box3d PRIVATE "-Wa,-muse-unaligned-vector-move")
+	endif()
 endif()
 
 # ---- GameNetworkingSockets --------------------------------------------------------------------

@@ -203,9 +203,9 @@ ENGINE_TEST(free_fall_matches_gravity)
 	for (int i = 0; i < 60; ++i) {
 		ENGINE_REQUIRE(world.step() == PhysicsError::None);
 	}
-	const float t = 60.0f * static_cast<float>(std::chrono::duration<double>(world.config().fixed_timestep).count());
+	const double t = 60.0 * std::chrono::duration<double>(world.config().fixed_timestep).count();
 	const Vec3 v = world.linear_velocity(ball).value();
-	ENGINE_CHECK_NEAR(v.y, -9.81f * t, 0.01);
+	ENGINE_CHECK_NEAR(v.y, -9.81 * t, 0.01);
 	// Semi-implicit Euler drops slightly further than the analytic 0.5*g*t^2 (~4.905 m).
 	const float fallen = 100.0f - world.body_pose(ball).value().position.y;
 	ENGINE_CHECK_NEAR(fallen, 0.5 * 9.81 * t * t, 0.1);
@@ -459,7 +459,9 @@ ENGINE_TEST(collision_filter_prevents_contact)
 	ground_collider.filter.category_bits = 0x1;
 	world.add_collider(ground, ground_collider);
 
-	const BodyHandle ghost = world.create_body(BodyDesc{.pose = {{0, 1, 0}, {}}}).value();
+	BodyDesc ghost_desc;
+	ghost_desc.pose.position = {0, 1, 0};
+	const BodyHandle ghost = world.create_body(ghost_desc).value();
 	ColliderDesc ghost_collider;
 	ghost_collider.filter.mask_bits = ~std::uint64_t{0x1};
 	world.add_collider(ghost, ghost_collider);
