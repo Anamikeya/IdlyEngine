@@ -45,6 +45,11 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/Engine/Core/CMakeLists.txt")
 	add_subdirectory(Engine/Core)
 endif()
 
+# Include the render snapshot module in the combined build and CTest run.
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/Engine/Renderer/CMakeLists.txt")
+    add_subdirectory(Engine/Renderer)
+endif()
+
 if(GAMEENGINE_WITH_PHYSICS)
 	add_subdirectory(Engine/Physics)
 endif()
