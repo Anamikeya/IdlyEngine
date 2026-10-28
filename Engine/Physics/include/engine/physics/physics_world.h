@@ -103,6 +103,9 @@ private:
 	std::unique_ptr<Impl> impl_;
 };
 
+// True when add_collider would accept the description's shape and material values.
+[[nodiscard]] bool is_valid(const ColliderDesc& desc) noexcept;
+
 // Number of live Box3D worlds in the process, for leak checks.
 int live_world_count() noexcept;
 // Bytes currently allocated by Box3D across all worlds, for leak checks.

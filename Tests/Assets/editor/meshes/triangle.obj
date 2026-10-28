@@ -1,0 +1,5 @@
+# Positions only, negative (relative) indices; normals are generated.
+v 0 0 0
+v 1 0 0
+v 0 1 0
+f -3 -2 -1

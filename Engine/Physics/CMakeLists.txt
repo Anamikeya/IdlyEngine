@@ -10,3 +10,16 @@ target_include_directories(engine_physics PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/in
 target_link_libraries(engine_physics PRIVATE box3d::box3d)
 gameengine_target_defaults(engine_physics)
 set_target_properties(engine_physics PROPERTIES FOLDER "Engine")
+
+# Scene integration: maps engine::core entities to bodies and publishes poses through the command bus.
+# Built only in the combined tree, where Codex's engine::core exists.
+if(TARGET engine::core)
+	add_library(engine_physics_scene STATIC
+		include/engine/physics/scene_physics.h
+		src/scene_physics.cpp
+	)
+	add_library(engine::physics_scene ALIAS engine_physics_scene)
+	target_link_libraries(engine_physics_scene PUBLIC engine::physics engine::core)
+	gameengine_target_defaults(engine_physics_scene)
+	set_target_properties(engine_physics_scene PROPERTIES FOLDER "Engine")
+endif()

@@ -45,6 +45,7 @@ cmake -S . -B build/mingw-gcc-debug -G Ninja -DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_
 | `GAMEENGINE_WARNINGS_AS_ERRORS` | OFF | `/WX` / `-Werror` on engine-owned targets only |
 | `GAMEENGINE_STRICT_DEPENDENCY_LOCK` | OFF | Fail configure if a dependency is not at its locked commit |
 | `GAMEENGINE_WITH_PHYSICS` | ON | Build Box3D and `engine::physics` |
+| `GAMEENGINE_BUILD_EDITOR` | ON | Define `gameengine::glfw` / `gameengine::imgui` and add `Engine/Editor` when it exists |
 | `GAMEENGINE_WITH_GNS` | OFF | Build GameNetworkingSockets and `engine::networking_gns` (needs protobuf) |
 | `GAMEENGINE_GNS_COMPILE_CHECK` | ON | When GNS is off, compile (not link) the GNS backend against GNS headers |
 
@@ -60,6 +61,11 @@ Warnings (`cmake/GameEngineCompilerOptions.cmake`) apply only to engine targets 
 | `engine::networking` | Claude | none |
 | `engine::networking_gns` | Claude | `engine::networking`, `GameNetworkingSockets::static` (when enabled) |
 | `engine::online_services` | Claude | none |
+| `engine::physics_scene` | Claude | `engine::physics`, `engine::core` (scene/command bridge, built when core exists) |
+| `engine::assets` | Claude | `engine::core` (for `Result`) |
+| `gameengine::glfw` | Claude (build) | GLFW from resources, `EXCLUDE_FROM_ALL` |
+| `gameengine::imgui` | Claude (build) | ImGui core + GLFW backend, `EXCLUDE_FROM_ALL`; no renderer backend |
+| `engine::renderer` | Codex | `engine::core` |
 | `engine::core` | Codex | added automatically once `Engine/Core/CMakeLists.txt` exists; receives `ENGINE_DEPENDENCY_ROOT=${GAMEENGINE_RESOURCES_DIR}` |
 
 ## Enabling GameNetworkingSockets
@@ -81,6 +87,25 @@ Then: `cmake --preset windows-msvc-debug -DGAMEENGINE_WITH_GNS=ON -DCMAKE_PREFIX
 
 `.github/workflows/ci.yml` recreates the resources directory with
 `cmake/scripts/fetch_dependencies.py`, which shallow-fetches each dependency at its locked commit.
-It then builds and tests the `windows-msvc-ci` preset, plus a non-blocking Linux GCC job. The
+It then builds and tests the `windows-msvc-ci` and `windows-msvc-release` presets, plus a non-blocking
+Linux GCC job (editor targets off there: GLFW needs X11/Wayland packages and Linux is unverified). The
 workflow has been dry-run locally (same script and preset against a fresh fetch), but it has **not
 yet run on GitHub-hosted runners**.
+
+## When `vcvars64.bat` stalls
+
+On the reference machine on 2026-10-28, `vcvars64.bat` (and therefore `dev-shell.ps1`) began hanging
+inside `Common7/Tools/vsdevcmd/ext/vcvars.bat` after printing its banner, although it had worked
+earlier the same day. The root cause was not identified. Builds were completed by exporting the
+equivalent environment directly from Git Bash:
+
+```bash
+VCT='C:/Program Files/Microsoft Visual Studio/2022/Community/VC/Tools/MSVC/14.44.35207'
+SDK='C:/Program Files (x86)/Windows Kits/10'; SDKV=10.0.26100.0
+export INCLUDE="$VCT/include;$SDK/Include/$SDKV/ucrt;$SDK/Include/$SDKV/shared;$SDK/Include/$SDKV/um"
+export LIB="$VCT/lib/x64;$SDK/Lib/$SDKV/ucrt/x64;$SDK/Lib/$SDKV/um/x64"
+export PATH="$(cygpath -u "$VCT/bin/Hostx64/x64"):$(cygpath -u "$SDK/bin/$SDKV/x64"):$PATH"
+cmake --preset windows-msvc-debug && cmake --build --preset windows-msvc-debug && ctest --preset windows-msvc-debug
+```
+
+Adjust the toolset and SDK versions to the installed ones. Prefer `dev-shell.ps1` whenever it works.

@@ -1,5 +1,10 @@
 # Integrating physics, networking and online services
 
+> Milestone 2 additions (scene/physics bridge, assets, editor build targets):
+> [m2-contracts.md](m2-contracts.md), [m2-editor-integration.md](m2-editor-integration.md),
+> [m2-integration-report.md](m2-integration-report.md). Section 2's "what physics needs from Codex"
+> items 1, 2 and 4 are superseded by contracts C-1 and C-2 there.
+
 Audience: Codex (engine core, ECS, scene, commands, editor). Branch `agent/claude-systems`.
 Written against Codex's uncommitted `docs/architecture/001-core-milestone.md` and
 `002-claude-integration.md` as of 2026-10-27. Nothing here depends on uncommitted Codex code.

@@ -442,8 +442,7 @@ PhysicsResult<ColliderHandle> PhysicsWorld::add_collider(BodyHandle body, const 
 	if (!impl_->owns(body_id)) {
 		return PhysicsError::InvalidBody;
 	}
-	if (!std::visit(ShapeValidator{}, desc.shape) || !is_finite_non_negative(desc.density) ||
-		!is_finite_non_negative(desc.friction) || !is_finite_non_negative(desc.restitution)) {
+	if (!physics::is_valid(desc)) {
 		return PhysicsError::InvalidArgument;
 	}
 
@@ -702,6 +701,12 @@ WorldStats PhysicsWorld::stats() const noexcept
 	stats.awake_body_count = b3World_GetAwakeBodyCount(impl_->world);
 	stats.step_count = impl_->step_count;
 	return stats;
+}
+
+bool is_valid(const ColliderDesc& desc) noexcept
+{
+	return std::visit(ShapeValidator{}, desc.shape) && is_finite_non_negative(desc.density) &&
+		is_finite_non_negative(desc.friction) && is_finite_non_negative(desc.restitution);
 }
 
 int live_world_count() noexcept

@@ -19,7 +19,12 @@ concurrency:
 jobs:
   windows-msvc:
     runs-on: windows-2022
-    timeout-minutes: 45
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        # ci = RelWithDebInfo with /WX and strict dependency lock; release = shipping optimisation level.
+        preset: [windows-msvc-ci, windows-msvc-release]
     env:
       GAMEENGINE_RESOURCES_DIR: ${{ github.workspace }}/../resources
     steps:
@@ -29,26 +34,26 @@ jobs:
         run: python -m pip install ninja==1.11.1.1
 
       - name: Fetch locked dependencies
-        run: python -I cmake/scripts/fetch_dependencies.py "$env:GAMEENGINE_RESOURCES_DIR" box3d GameNetworkingSockets
+        run: python -I cmake/scripts/fetch_dependencies.py "$env:GAMEENGINE_RESOURCES_DIR" box3d GameNetworkingSockets flecs glm spdlog glfw imgui
 
       - name: Configure
         shell: pwsh
-        run: ./cmake/scripts/dev-shell.ps1 cmake --preset windows-msvc-ci
+        run: ./cmake/scripts/dev-shell.ps1 cmake --preset ${{ matrix.preset }}
 
       - name: Build
         shell: pwsh
-        run: ./cmake/scripts/dev-shell.ps1 cmake --build --preset windows-msvc-ci
+        run: ./cmake/scripts/dev-shell.ps1 cmake --build --preset ${{ matrix.preset }}
 
       - name: Test
         shell: pwsh
-        run: ./cmake/scripts/dev-shell.ps1 ctest --preset windows-msvc-ci --output-junit ctest-results.xml
+        run: ./cmake/scripts/dev-shell.ps1 ctest --preset ${{ matrix.preset }} --output-junit ctest-results.xml
 
       - name: Upload test results
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ctest-windows-msvc
-          path: build/windows-msvc-ci/ctest-results.xml
+          name: ctest-${{ matrix.preset }}
+          path: build/${{ matrix.preset }}/ctest-results.xml
 
   # Portability signal only. Linux has not been verified locally; failures here do not block merges
   # until the job has been green at least once.
@@ -65,10 +70,11 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y ninja-build
 
       - name: Fetch locked dependencies
-        run: python3 -I cmake/scripts/fetch_dependencies.py "$GAMEENGINE_RESOURCES_DIR" box3d GameNetworkingSockets
+        run: python3 -I cmake/scripts/fetch_dependencies.py "$GAMEENGINE_RESOURCES_DIR" box3d GameNetworkingSockets flecs glm spdlog glfw imgui
 
       - name: Configure
-        run: cmake --preset linux-gcc-debug -DGAMEENGINE_WARNINGS_AS_ERRORS=ON -DGAMEENGINE_STRICT_DEPENDENCY_LOCK=ON
+        # Editor targets (GLFW) need X11/Wayland development packages and are unverified on Linux.
+        run: cmake --preset linux-gcc-debug -DGAMEENGINE_WARNINGS_AS_ERRORS=ON -DGAMEENGINE_STRICT_DEPENDENCY_LOCK=ON -DGAMEENGINE_BUILD_EDITOR=OFF
 
       - name: Build
         run: cmake --build --preset linux-gcc-debug
