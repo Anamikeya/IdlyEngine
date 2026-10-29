@@ -102,7 +102,8 @@ Result<void> write_scene(std::ostream &out, const SceneSnapshot &s) {
         StreamState guard(out);
         out << std::dec << std::defaultfloat << std::noshowpos
             << std::setprecision(std::numeric_limits<double>::max_digits10);
-        out << "ENGINE_SCENE 1 " << s.next_id << ' ' << s.entities.size() << '\n';
+        out << "ENGINE_SCENE " << scene_format_version << ' ' << s.next_id << ' '
+            << s.entities.size() << '\n';
         for (const auto &e : s.entities) {
             const auto &t = e.transform;
             out << "ENTITY " << e.id << ' ' << e.parent << ' ' << std::quoted(e.name) << ' '
@@ -110,6 +111,8 @@ Result<void> write_scene(std::ostream &out, const SceneSnapshot &s) {
                 << ' ' << t.rotation.y << ' ' << t.rotation.z << ' ' << t.rotation.w << ' '
                 << t.scale.x << ' ' << t.scale.y << ' ' << t.scale.z << '\n';
         }
+        // Version 2 section. No component kinds are defined yet; see docs/architecture/006-scene-format.md.
+        out << "COMPONENTS 0\n";
         if (!out)
             return fail(ErrorCode::ParseError, "Scene output stream failed");
         return {};
@@ -125,7 +128,8 @@ Result<SceneSnapshot> read_scene(std::istream &in) {
         std::size_t count = 0;
         SceneSnapshot s;
         if (!reader.token(word, 12) || word != "ENGINE_SCENE" || !reader.number(version) ||
-            version != 1 || !reader.number(s.next_id) || !reader.number(count))
+            version < 1 || version > scene_format_version || !reader.number(s.next_id) ||
+            !reader.number(count))
             return fail(ErrorCode::ParseError,
                         "Invalid scene header or unsupported schema version");
         if (count > Scene::max_entities)
@@ -143,6 +147,17 @@ Result<SceneSnapshot> read_scene(std::istream &in) {
                 return fail(ErrorCode::ParseError,
                             "Malformed entity record or input limit exceeded");
             s.entities.push_back(std::move(e));
+        }
+        if (version >= 2) {
+            std::size_t components = 0;
+            if (!reader.token(word, 10) || word != "COMPONENTS" || !reader.number(components))
+                return fail(ErrorCode::ParseError, "Missing or malformed COMPONENTS section");
+            // Every component line names its kind first; none are defined in this version.
+            if (components != 0) {
+                if (!reader.token(word, 16))
+                    return fail(ErrorCode::ParseError, "Malformed component record");
+                return fail(ErrorCode::ParseError, "Unsupported component kind '" + word + "'");
+            }
         }
         if (!reader.end())
             return fail(ErrorCode::ParseError, "Trailing scene content or input limit exceeded");

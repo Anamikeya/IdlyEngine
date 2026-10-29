@@ -166,10 +166,26 @@ void serialization_roundtrip() {
 void malformed_serialization() {
     for (const auto *text :
          {"WRONG 1 1 0", "ENGINE_SCENE 2 1 0", "ENGINE_SCENE 1 0 0", "ENGINE_SCENE 1 1 100001",
-          "ENGINE_SCENE 1 1 0 trailing", "ENGINE_SCENE 1 2 1 ENTITY 1 0 \"x\" 0 0"}) {
+          "ENGINE_SCENE 1 1 0 trailing", "ENGINE_SCENE 1 2 1 ENTITY 1 0 \"x\" 0 0",
+          "ENGINE_SCENE 0 1 0", "ENGINE_SCENE 3 1 0 COMPONENTS 0", "ENGINE_SCENE 2 1 0 COMPONENTS",
+          "ENGINE_SCENE 2 1 0 COMPONENTS -1", "ENGINE_SCENE 2 1 0 COMPONENTS 1 MESH 1",
+          "ENGINE_SCENE 2 1 0 COMPONENTS 0 trailing", "ENGINE_SCENE 1 1 0 COMPONENTS 0"}) {
         std::istringstream in(text);
         check(!read_scene(in), "Malformed scene accepted");
     }
+    // Version 1 files (no COMPONENTS section) still load, and are written back as the current version.
+    std::istringstream legacy("ENGINE_SCENE 1 3 1\nENTITY 2 0 \"Legacy\" 1 2 3 0 0 0 1 1 1 1\n");
+    auto upgraded = read_scene(legacy);
+    ok(upgraded);
+    check(upgraded.value().next_id == 3 && upgraded.value().entities.size() == 1 &&
+              upgraded.value().entities[0].name == "Legacy" &&
+              upgraded.value().entities[0].transform.position == Vec3{1, 2, 3},
+          "Version 1 scene not read");
+    std::ostringstream rewritten;
+    ok(write_scene(rewritten, upgraded.value()));
+    check(rewritten.str().rfind("ENGINE_SCENE " + std::to_string(scene_format_version) + " 3 1\n", 0) == 0 &&
+              rewritten.str().ends_with("COMPONENTS 0\n"),
+          "Scene not written in the current format");
     std::istringstream huge("ENGINE_SCENE 1 2 1 ENTITY 1 0 \"" + std::string(1000, 'x') +
                             "\" 0 0 0 0 0 0 1 1 1 1");
     check(!read_scene(huge), "Unbounded name accepted");

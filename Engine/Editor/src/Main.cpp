@@ -36,7 +36,7 @@ struct Host {
         if (!glfwInit()) throw std::runtime_error("GLFW initialization failed");
         glfw = true;
         glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-        window = glfwCreateWindow(1440, 900, "GameEngine | Milestone 2 Editor", nullptr, nullptr);
+        window = glfwCreateWindow(1440, 900, "GameEngine Editor", nullptr, nullptr);
         if (!window) throw std::runtime_error("Window creation failed");
         IMGUI_CHECKVERSION(); ImGui::CreateContext(); imgui = true;
         ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_DockingEnable | ImGuiConfigFlags_NavEnableKeyboard;
@@ -50,13 +50,17 @@ struct Host {
         if (!backend) throw std::runtime_error("ImGui GLFW initialization failed");
     }
 };
+// Actions that discard the editor scene ask first when it has unsaved changes.
+enum class Pending { None, NewScene, Load, Quit };
 struct EditorUI {
     editor::EditorSession &session;
     renderer::DesktopRenderer &renderer;
     std::array<char, 1024> scene_path{};
     std::vector<std::string> messages{"Filament OpenGL initialized. All scene edits use typed commands."};
+    Pending pending = Pending::None;
+    bool confirm_requested = false, quit = false;
     EntityId draft_id = 0;
-    uint64_t draft_revision = ~uint64_t(0);
+    uint64_t draft_scene = 0, draft_revision = ~uint64_t(0);
     std::array<char, 257> name{};
     float position[3]{}, rotation[3]{}, scale[3]{1,1,1};
     int operation = 0, coordinates = 0;
@@ -70,6 +74,38 @@ struct EditorUI {
     void log(std::string text) { if (messages.size() == 128) messages.erase(messages.begin()); messages.push_back(std::move(text)); }
     template<class T> bool report(const Result<T> &r, const char *success) {
         if (r) { log(success); return true; } log("Error: " + r.error().message); return false;
+    }
+    bool playing() const { return session.play_state() != editor::PlayState::Editing; }
+    std::string title() const {
+        std::string t = "GameEngine Editor - " + std::filesystem::path(scene_path.data()).filename().string();
+        if (session.dirty()) t += '*';
+        if (session.play_state() == editor::PlayState::Playing) t += " [Playing]";
+        if (session.play_state() == editor::PlayState::Paused) t += " [Paused]";
+        return t;
+    }
+    void perform(Pending action) {
+        if (action == Pending::NewScene && report(session.new_scene(), "New scene"))
+            std::snprintf(scene_path.data(), scene_path.size(), "%s", "Untitled.scene");
+        if (action == Pending::Load) report(session.load(scene_path.data()), "Scene loaded (undoable)");
+        if (action == Pending::Quit) quit = true;
+    }
+    void request(Pending action) {
+        if (action == Pending::Quit && playing()) report(session.stop(), "Stopped Play mode; runtime copy discarded");
+        if (action != Pending::Quit && playing()) { log("Error: Stop Play mode first"); return; }
+        if (!session.dirty()) { perform(action); return; }
+        pending = action; confirm_requested = true;
+    }
+    void confirm() {
+        if (confirm_requested) { ImGui::OpenPopup("Unsaved changes"); confirm_requested = false; }
+        if (!ImGui::BeginPopupModal("Unsaved changes", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) return;
+        const char *verb = pending == Pending::Quit ? "closing" : pending == Pending::Load ? "loading" : "starting a new scene";
+        ImGui::Text("The scene has unsaved changes. Save them to '%s' before %s?", scene_path.data(), verb);
+        Pending run = Pending::None;
+        if (ImGui::Button("Save")) { if (report(session.save(scene_path.data()), "Scene saved")) run = pending; pending = Pending::None; ImGui::CloseCurrentPopup(); }
+        ImGui::SameLine(); if (ImGui::Button("Discard changes")) { run = pending; pending = Pending::None; ImGui::CloseCurrentPopup(); }
+        ImGui::SameLine(); if (ImGui::Button("Cancel")) { pending = Pending::None; ImGui::CloseCurrentPopup(); }
+        ImGui::EndPopup();
+        if (run != Pending::None) perform(run);
     }
     void docking() {
         const ImGuiID dock = ImGui::DockSpaceOverViewport(0, ImGui::GetMainViewport());
@@ -94,18 +130,35 @@ struct EditorUI {
     }
     void toolbar() {
         ImGui::Begin("Toolbar");
-        if (ImGui::Button("+ Cube")) report(session.create(), "Created cube");
+        const auto state = session.play_state();
+        ImGui::BeginDisabled(playing());
+        if (ImGui::Button("New")) request(Pending::NewScene);
+        ImGui::EndDisabled();
+        ImGui::SameLine(); if (ImGui::Button("+ Cube")) report(session.create(), "Created cube");
         ImGui::SameLine(); ImGui::BeginDisabled(!session.selection());
         if (ImGui::Button("Delete")) report(session.execute(commands::DeleteEntity{session.selection()}), "Deleted entity subtree");
         ImGui::SameLine(); if (ImGui::Button("Focus [F]")) session.focus();
         ImGui::EndDisabled();
-        ImGui::SameLine(); ImGui::BeginDisabled(!session.commands().undo_size());
+        ImGui::SameLine(); ImGui::BeginDisabled(playing() || !session.commands().undo_size());
         if (ImGui::Button("Undo")) report(session.undo(), "Undo"); ImGui::EndDisabled();
-        ImGui::SameLine(); ImGui::BeginDisabled(!session.commands().redo_size());
+        ImGui::SameLine(); ImGui::BeginDisabled(playing() || !session.commands().redo_size());
         if (ImGui::Button("Redo")) report(session.redo(), "Redo"); ImGui::EndDisabled();
-        ImGui::SameLine(); if (ImGui::Button("Save")) report(session.save(scene_path.data()), "Scene saved");
-        ImGui::SameLine(); if (ImGui::Button("Load")) report(session.load(scene_path.data()), "Scene loaded (undoable)");
-        ImGui::SameLine(); ImGui::TextDisabled("Revision %llu", static_cast<unsigned long long>(session.commands().revision()));
+        ImGui::SameLine(); ImGui::BeginDisabled(playing());
+        if (ImGui::Button("Save")) report(session.save(scene_path.data()), "Scene saved");
+        ImGui::SameLine(); if (ImGui::Button("Load")) request(Pending::Load);
+        ImGui::EndDisabled();
+        ImGui::SameLine(); ImGui::TextDisabled("|"); ImGui::SameLine();
+        if (state == editor::PlayState::Playing) { if (ImGui::Button("Pause")) report(session.pause(), "Paused"); }
+        else if (ImGui::Button(state == editor::PlayState::Paused ? "Resume" : "Play"))
+            report(session.play(), state == editor::PlayState::Paused ? "Resumed" : "Play mode: running a copy of the scene; changes are discarded on Stop");
+        ImGui::SameLine(); ImGui::BeginDisabled(state != editor::PlayState::Paused);
+        if (ImGui::Button("Step")) report(session.step(), "Stepped one tick"); ImGui::EndDisabled();
+        ImGui::SameLine(); ImGui::BeginDisabled(state == editor::PlayState::Editing);
+        if (ImGui::Button("Stop")) report(session.stop(), "Stopped; runtime copy discarded, editor scene shown"); ImGui::EndDisabled();
+        ImGui::SameLine();
+        if (playing()) ImGui::TextColored({0.45f, 0.85f, 0.45f, 1}, "%s  tick %llu", state == editor::PlayState::Paused ? "PAUSED" : "PLAYING",
+                                          static_cast<unsigned long long>(session.runtime_ticks()));
+        else ImGui::TextDisabled("Revision %llu%s", static_cast<unsigned long long>(session.commands().revision()), session.dirty() ? "  (unsaved)" : "");
         ImGui::SetNextItemWidth(490); ImGui::InputText("Scene file", scene_path.data(), scene_path.size());
         ImGui::SameLine(); ImGui::SetNextItemWidth(110); ImGui::Combo("##operation", &operation, "Move\0Rotate\0Scale\0");
         ImGui::SameLine(); ImGui::SetNextItemWidth(100); ImGui::Combo("##coordinates", &coordinates, "Local\0World\0");
@@ -132,8 +185,8 @@ struct EditorUI {
         ImGui::Begin("Inspector");
         const auto record = session.scene().inspect(session.selection());
         if (!record) { ImGui::TextWrapped("Select an entity in the hierarchy or click a cube in the viewport."); ImGui::End(); return; }
-        if (draft_id != record->id || draft_revision != session.commands().revision()) {
-            draft_id = record->id; draft_revision = session.commands().revision();
+        if (draft_id != record->id || draft_scene != session.scene_identity() || draft_revision != session.scene_revision()) {
+            draft_id = record->id; draft_scene = session.scene_identity(); draft_revision = session.scene_revision();
             std::snprintf(name.data(), name.size(), "%s", record->name.c_str());
             const auto &t = record->transform;
             position[0] = float(t.position.x); position[1] = float(t.position.y); position[2] = float(t.position.z);
@@ -141,6 +194,7 @@ struct EditorUI {
             for (int i = 0; i < 3; ++i) rotation[i] = float(euler[i]);
             scale[0] = float(t.scale.x); scale[1] = float(t.scale.y); scale[2] = float(t.scale.z);
         }
+        if (playing()) ImGui::TextColored({0.45f, 0.85f, 0.45f, 1}, "Play mode: edits affect the runtime copy only");
         ImGui::TextDisabled("Stable ID: %llu", static_cast<unsigned long long>(record->id));
         if (ImGui::InputText("Name", name.data(), name.size(), ImGuiInputTextFlags_EnterReturnsTrue))
             report(session.execute(commands::RenameEntity{record->id, name.data()}), "Renamed entity");
@@ -216,6 +270,12 @@ struct EditorUI {
         if (hovered && ImGui::IsMouseClicked(0) && !ImGuizmo::IsOver() && !gizmo_active)
             session.select(session.pick(*frame, (io.MousePos.x-origin.x) / size.x * 2-1, 1-(io.MousePos.y-origin.y) / size.y * 2));
         ImGui::GetWindowDrawList()->AddText({origin.x+12,origin.y+10}, IM_COL32(210,220,235,255), "RMB orbit  |  MMB pan  |  Wheel zoom  |  F focus  |  Click select");
+        if (playing()) {
+            ImGui::GetWindowDrawList()->AddRect(origin, ImVec2(origin.x+size.x, origin.y+size.y), IM_COL32(115,215,115,255), 0.0f, ImDrawFlags_None, 3.0f);
+            ImGui::GetWindowDrawList()->AddText({origin.x+12,origin.y+28}, IM_COL32(115,215,115,255),
+                session.play_state() == editor::PlayState::Paused ? "PLAY MODE (paused) - changes are discarded on Stop"
+                                                                  : "PLAY MODE - changes are discarded on Stop");
+        }
         ImGui::End();
     }
     void assets() {
@@ -238,11 +298,13 @@ struct EditorUI {
         ImGui::Begin("Console");
         for (const auto &m : messages) ImGui::TextWrapped("%s", m.c_str());
         ImGui::End();
+        confirm();
         const auto &io = ImGui::GetIO();
-        if (!io.WantTextInput && !gizmo_active) {
+        if (!io.WantTextInput && !gizmo_active && !ImGui::IsPopupOpen("Unsaved changes")) {
             if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Z)) report(io.KeyShift ? session.redo() : session.undo(), io.KeyShift ? "Redo" : "Undo");
             if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Y)) report(session.redo(), "Redo");
             if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_S)) report(session.save(scene_path.data()), "Scene saved");
+            if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_N)) request(Pending::NewScene);
         }
     }
 };
@@ -255,13 +317,29 @@ int main(int argc, char **argv) {
         editor::EditorSession session;
         auto created = session.create("Cube");
         if (!created) throw std::runtime_error(created.error().message);
+        session.mark_clean(); // The starter cube is not a user change.
         const auto cube = session.selection();
         renderer::DesktopRenderer renderer(glfwGetWin32Window(host.window), EDITOR_MATERIAL_DIR);
         renderer.resize_viewport(800, 600);
         EditorUI ui(session, renderer);
         int frame = 0, rendered = 0;
-        while (!glfwWindowShouldClose(host.window)) {
+        SceneSnapshot before_play;
+        std::uint64_t revision_before_play = 0;
+        std::string shown_title;
+        auto last = std::chrono::steady_clock::now();
+        while (!ui.quit) {
             glfwPollEvents();
+            if (glfwWindowShouldClose(host.window)) {
+                if (smoke) break;
+                // Closing goes through the unsaved-changes prompt; restore first so a minimized window shows it.
+                glfwSetWindowShouldClose(host.window, GLFW_FALSE);
+                if (glfwGetWindowAttrib(host.window, GLFW_ICONIFIED)) glfwRestoreWindow(host.window);
+                ui.request(Pending::Quit);
+                if (ui.quit) break;
+            }
+            const auto now = std::chrono::steady_clock::now();
+            session.update(now - last); last = now;
+            if (const auto title = ui.title(); title != shown_title) { glfwSetWindowTitle(host.window, title.c_str()); shown_title = title; }
             int width, height; glfwGetFramebufferSize(host.window, &width, &height);
             if (width <= 0 || height <= 0) { glfwWaitEventsTimeout(0.05); continue; }
             ImGui_ImplGlfw_NewFrame(); ImGui::NewFrame(); ImGuizmo::BeginFrame();
@@ -283,10 +361,24 @@ int main(int argc, char **argv) {
                 }
                 if (frame == 65) glfwIconifyWindow(host.window);
                 if (frame == 65) { glfwPollEvents(); glfwRestoreWindow(host.window); }
+                if (frame == 70) {
+                    before_play = session.editor_scene().snapshot(); revision_before_play = session.commands().revision();
+                    if (!session.play()) throw std::runtime_error("Smoke play failed");
+                }
+                if (frame == 72) {
+                    Transform t; t.position = {-2,0.5,0};
+                    if (!session.execute(commands::SetTransform{cube,t}) || !session.create("RuntimeOnly")) throw std::runtime_error("Smoke runtime edit failed");
+                }
+                if (frame == 80) {
+                    if (!session.runtime_ticks() || renderer.object_count() != 2) throw std::runtime_error("Smoke runtime scene not ticking or not rendered");
+                    if (!session.stop()) throw std::runtime_error("Smoke stop failed");
+                    if (session.editor_scene().snapshot() != before_play || session.commands().revision() != revision_before_play)
+                        throw std::runtime_error("Smoke play mode changed the editor scene");
+                }
                 if (++frame == 100) {
                     if (rendered < 20 || renderer.object_count() != session.scene().size()) throw std::runtime_error("Smoke renderer did not reconcile: rendered=" + std::to_string(rendered) + " objects=" + std::to_string(renderer.object_count()));
                     renderer.capture("editor-smoke.ppm", width, height);
-                    std::cout << "GPU smoke passed: " << rendered << " frames; transform, undo/redo, save/load, resize and capture.\n";
+                    std::cout << "GPU smoke passed: " << rendered << " frames; transform, undo/redo, save/load, play/stop isolation, resize and capture.\n";
                     break;
                 }
             } else glfwWaitEventsTimeout(0.005);

@@ -1,7 +1,7 @@
 # Milestone 3 plan: functional 3D editor
 
 Branch `agent/claude-milestone-3` (from `main` at `37db654`), worktree `D:\AI\GameEngine-Integration`.
-Status: **proposed, awaiting approval.** No M3 feature code has been written.
+Status: **approved 2026-10-29. S1 complete; S2 next.** Progress and evidence: `docs/MILESTONE_3_REPORT.md`.
 
 M3 turns the M2 prototype editor into a usable scene editor without replacing Filament, Flecs, ImGui docking,
 GLFW or the typed `CommandBus`. M3 work is not merged into `main` without explicit approval.
@@ -87,7 +87,7 @@ checker-textured quad and a GPU readback test in which the orientation is assert
 entity (`MESH`, `MATERIAL`, `CAMERA`, `LIGHT`, `BODY`, `COLLIDER`). Asset references are stored as the 16-hex
 `AssetId` plus the virtual path for diagnostics. A missing asset loads as a visible "missing asset" placeholder
 with a Console error, not as a failed load. v1 files still load. The reader keeps the 64 MiB and token limits.
-Documented in `docs/architecture/006-scene-format-v2.md`.
+Documented in `docs/architecture/006-scene-format.md`.
 
 **D8. Project folder.** `engine_editor --project <dir>` (default: the working directory). Assets live under
 `<dir>/Assets` and are managed by `engine::assets::AssetDatabase`. Import copies the source file into `Assets/`

@@ -77,6 +77,8 @@ class Scene final {
     } // Trusted engine systems only.
     static Result<void> validate(const SceneSnapshot &);
 };
+// Text scene format, docs/architecture/006-scene-format.md. Writes the current version; reads 1..current.
+inline constexpr unsigned scene_format_version = 2;
 Result<void> write_scene(std::ostream &, const SceneSnapshot &);
 Result<SceneSnapshot> read_scene(std::istream &);
 } // namespace engine
