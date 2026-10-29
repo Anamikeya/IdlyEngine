@@ -7,6 +7,8 @@
 /.vscode/
 /CMakeUserPresets.json
 *.obj
+# Wavefront OBJ test fixtures share the object-file extension.
+!/Tests/Assets/**/*.obj
 *.exe
 *.dll
 *.lib

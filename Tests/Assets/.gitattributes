@@ -1,0 +1,3 @@
+# Binary fixtures must never be line-ending converted.
+*.tga binary
+*.ppm binary

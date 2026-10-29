@@ -14,15 +14,18 @@ default, fatal with `GAMEENGINE_STRICT_DEPENDENCY_LOCK=ON`, which CI uses).
 | ENet | github.com/lsalzman/enet | `5a9c537f` | v1.3.18-17 | MIT | Not integrated (possible future transport) |
 | Flecs | github.com/SanderMertens/flecs | `3988dee7` | v4.1.6-692 | MIT | Codex (`engine::core`) |
 | Filament | github.com/google/filament | `4e2df5e2` | rc/1.80.0-cut-6 | Apache-2.0 | Codex (renderer, not yet built) |
-| GLFW | github.com/glfw/glfw | `92dcf4ce` | 3.5.1-1 | zlib | Not yet built |
+| GLFW | github.com/glfw/glfw | `92dcf4ce` | 3.5.1-1 | zlib | **Built** as `gameengine::glfw` (static, `/MD`) when `GAMEENGINE_BUILD_EDITOR=ON`; link-tested headless |
 | GLM | github.com/g-truc/glm | `6f14f479` | 1.0.0-139 | MIT | Codex (headers) |
-| Dear ImGui | github.com/ocornut/imgui | `d88f238d` | v1.93.0-docking-10 | MIT | Codex (editor, not yet built) |
+| Dear ImGui | github.com/ocornut/imgui | `d88f238d` | v1.93.0-docking-10 | MIT | **Built** as `gameengine::imgui` (core + GLFW platform backend) for Codex's editor; null-backend smoke test |
 | miniaudio | github.com/mackron/miniaudio | `9634bedb` | 0.11.25 | Public domain / MIT-0 | Not yet built |
 | spdlog | github.com/gabime/spdlog | `6d9805df` | v1.17.0-66 | MIT | Codex (headers) |
 | Tracy | github.com/wolfpld/tracy | `1f4c5357` | v0.14.1-262 | BSD-3-Clause | Not yet built |
 | glTF-Transform | github.com/donmccurdy/glTF-Transform | `8e2a94a2` | v4.5.1-6 | MIT | JavaScript asset tooling, not a C++ dependency |
 | Ninja (source) | github.com/ninja-build/ninja | `3ccb2270` | development | Apache-2.0 | Not used; builds use an installed Ninja binary |
 | vcpkg | github.com/microsoft/vcpkg | `5363acb7` | 2026.10.16-184 | MIT | **Not bootstrapped** (no `vcpkg.exe`, no installed ports) |
+
+The M2 asset pipeline (`engine::assets`) adds **no** dependency: OBJ, TGA and PPM are parsed by
+engine code. `stb_image`/`cgltf` exist only inside `filament/third_party` and are deliberately unused.
 
 Several checkouts are development commits past their last tag (`-N` suffix). They are pinned by
 commit, not by tag, so builds are reproducible but not "release" versions.
