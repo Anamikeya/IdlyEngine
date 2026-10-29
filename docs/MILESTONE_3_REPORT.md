@@ -3,8 +3,60 @@
 Branch `agent/claude-milestone-3`, worktree `D:\AI\GameEngine-Integration`. Plan: `docs/MILESTONE_3_PLAN.md`
 (approved 2026-10-29).
 
-**Status: in progress. Slices S1 and S2 are complete and verified; S3–S6 are not started.** Milestone 3 is not
-complete: duplication and the hierarchy tree, physics in Play mode, and imported assets are still missing.
+**Status: in progress. Slices S1–S3 are complete and verified; S4–S6 are not started.** Milestone 3 is not
+complete: physics in Play mode and imported assets are still missing.
+
+## S3: hierarchy and duplication (2026-10-29)
+
+### Delivered
+
+| Feature | Implementation |
+|---|---|
+| Duplicate command | `commands::DuplicateEntity{id, name}` copies the entity and its whole subtree with components under the same parent, in one transaction (one undo step). Copies get fresh stable IDs in breadth-first order (`Receipt::created`, root first) and are wired to the copied parents. Registry: 10 commands |
+| Duplicate in the editor | `EditorSession::duplicate` names the copy "<name> (copy)", trimming to the 256-byte limit without splitting a UTF-8 sequence, and selects it. Toolbar **Duplicate**, Ctrl+D, hierarchy menu. In Play mode it affects only the runtime copy |
+| World-preserving reparent | `EditorSession::reparent` sets parent and recomputed local transform in one transaction, so objects do not move on screen; one undo step. It refuses self-parenting, parenting under a descendant (`Cycle`), missing entities, and poses that would need shear under a non-uniformly scaled parent, all without changing the scene. Used by the tree, its menu, and the Inspector's Parent combo (which previously kept the local transform) |
+| Hierarchy tree | Real tree in stable-ID order with expand arrows. Drag a row onto another row to parent it there, or onto the empty area below the tree to move it to the root. Right-click menu: Create child (Empty, Cube, Sphere, Point Light), Duplicate, Move to root, Focus, Delete. Picking an entity in the viewport opens its collapsed ancestors. Clicking the empty area clears the selection |
+| Parent combo | The entity itself and its descendants are listed but disabled |
+| Shortcuts | Delete removes the selected subtree; Ctrl+D duplicates; both are ignored while a text field is active or the unsaved-changes prompt is open |
+| Picking against real shapes | Delivered in S2 (box, sphere, plane) |
+
+### Tests
+
+| Suite | New or changed coverage |
+|---|---|
+| `engine.core.acceptance` | New `duplication` test: whole subtree copied with fresh IDs, breadth-first order, parent wiring, transform and components copied, originals untouched, one undo removes every copy, redo restores the same IDs, empty name keeps the original, missing ID and over-long name rejected, and the copies usable by a later command in the same transaction. Registry size 10. Core: 21/21 |
+| `engine.editor.acceptance`, 9 → 10 groups | `hierarchy_editing`: reparent keeps the world matrix (all 16 values) and is one undo step, local transform recomputed, move to root, undo back to the exact original record; cycle, self, missing parent and missing entity refused atomically; shear under a non-uniformly scaled parent refused atomically; subtree duplicate with name, selection, component copies and one-step undo; long names trimmed in the middle of a two-byte UTF-8 tail; duplication in Play mode stays in the runtime copy |
+
+Results: `windows-msvc-release` and `windows-msvc-ci` build with no warnings outside `resources/filament` and
+pass 132/132 CTest entries. GPU smoke unchanged and passing.
+
+### Real-input verification
+
+| Check | Observed | Result |
+|---|---|---|
+| Drag to reparent | Sphere (X = 2) dragged onto Cube: now its child with local (2, 0, 0); world position (2, 0.5, 0) and on-screen position unchanged; "Reparented (world transform kept)" | Pass |
+| Ctrl+D | Cube with its child duplicated as "Cube (copy)" with its own Sphere child, selected, one revision | Pass |
+| Right-click menu | Lists Create child ▸ (Empty, Cube, Sphere, Point Light), Duplicate, Move to root (disabled on a root), Focus, Delete | Pass |
+| Move to root | Child Sphere moved to the root with world position kept (local becomes (2, 0.5, 0)) | Pass |
+| Pick reveals tree | With "Cube (copy)" collapsed, clicking its child sphere in the viewport opens the node and highlights the child | Pass |
+| Delete key and undo | Delete removes the selected child sphere (4 → 3 entities); Ctrl+Z restores it | Pass |
+| Create child, drag to root zone | Child Cube created at local Y 1 (world 1.5); dragged onto the empty area it moves to the root with local Y 1.5 | Pass |
+| Parent combo | For "Cube (copy)", itself and its child Sphere are disabled; other entities selectable | Pass |
+| Close with unsaved changes | Prompt appears; Discard changes exits with "Editor stopped cleanly." | Pass |
+
+Driver issues found and fixed during the run (not editor defects):
+
+- The first Delete-key press did nothing. The driver sent `VK_DELETE` without the extended-key flag, so Windows
+  reported the numpad scan code and GLFW saw keypad-decimal. A real Delete key sets the flag; the driver now does
+  too for navigation keys, after which Delete worked.
+- Cursor drift again (jumps of up to 530 px) disrupted one drag and one click; both succeeded when retried. While
+  idle, the cursor stayed still for 3 s, so the movement was intermittent and external to the driver.
+
+### Limitations
+
+- Drag-and-drop only reparents; it does not reorder siblings (order is by stable ID).
+- Duplicates are placed exactly on top of the original, as in most editors; the selection moves to the copy.
+- No multi-selection, so Duplicate and Delete act on one subtree at a time.
 
 ## S2: component model (2026-10-29)
 

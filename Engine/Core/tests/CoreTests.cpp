@@ -1,4 +1,5 @@
-﻿#include <cmath>
+﻿#include <algorithm>
+#include <cmath>
 #include <engine/core/Application.hpp>
 #include <functional>
 #include <iomanip>
@@ -41,7 +42,7 @@ void creation_and_flecs() {
         ++count;
     });
     check(count == 1, "Entity not stored in Flecs");
-    check(registry().size() == 9, "Registry incomplete");
+    check(registry().size() == 10, "Registry incomplete");
     check(describe(Command{DeleteEntity{id}}).name == "entity.delete", "Typed registry mismatch");
 }
 void permissions_and_revision() {
@@ -162,6 +163,50 @@ void serialization_roundtrip() {
     std::ostringstream again;
     ok(write_scene(again, dest.snapshot()));
     check(again.str() == out.str(), "Serialization not deterministic");
+}
+void duplication() {
+    Scene s;
+    CommandBus b(s);
+    const auto holder = create(b, "Holder");
+    Transform t; t.position = {1, 2, 3};
+    const auto root = create(b, "Root", holder, t);
+    const auto child = create(b, "Child", root);
+    const auto grandchild = create(b, "Grandchild", child);
+    const auto sibling = create(b, "Sibling", root);
+    const MeshComponent red{BuiltinMesh::Sphere, {1, 0, 0}, 0.2, 0.3};
+    ok(b.execute(owner, b.revision(), SetMesh{grandchild, red}));
+    const auto before = s.snapshot();
+    auto r = b.execute(owner, b.revision(), DuplicateEntity{root, "Root (copy)"});
+    ok(r);
+    const auto &created = r.value().created;
+    check(created.size() == 4 && s.size() == before.entities.size() + 4, "Whole subtree copied");
+    for (const auto id : created)
+        check(id >= before.next_id, "Copies get fresh stable IDs");
+    const auto copy = *s.inspect(created[0]);
+    check(copy.name == "Root (copy)" && copy.parent == holder && copy.transform == t, "Root copy keeps parent and transform, takes the name");
+    // Breadth first: the root's children (by ID) come before the grandchild.
+    const auto child_copy = *s.inspect(created[1]), sibling_copy = *s.inspect(created[2]), grand_copy = *s.inspect(created[3]);
+    check(child_copy.name == "Child" && child_copy.parent == created[0] && sibling_copy.name == "Sibling" &&
+              sibling_copy.parent == created[0] && grand_copy.name == "Grandchild" && grand_copy.parent == created[1],
+          "Copies are wired to copied parents");
+    check(grand_copy.components.mesh == red, "Components copied");
+    for (const auto id : {holder, root, child, grandchild, sibling})
+        check(*s.inspect(id) == *std::find_if(before.entities.begin(), before.entities.end(), [&](const EntityRecord &e) { return e.id == id; }),
+              "Originals untouched");
+    ok(b.undo(owner, b.revision()));
+    check(s.snapshot().entities == before.entities, "One undo removes every copy");
+    ok(b.redo(owner, b.revision()));
+    check(s.inspect(created[3]) && s.inspect(created[3])->parent == created[1], "Redo restores the same IDs");
+    ok(b.execute(owner, b.revision(), DuplicateEntity{grandchild, ""}));
+    check(s.inspect(s.snapshot().entities.back().id)->name == "Grandchild", "Empty name keeps the original");
+    error(b.execute(owner, b.revision(), DuplicateEntity{999, ""}), ErrorCode::NotFound);
+    error(b.execute(owner, b.revision(), DuplicateEntity{root, std::string(257, 'x')}), ErrorCode::InvalidArgument);
+    // Inside a batch, later commands see the copies.
+    const auto revision = b.revision();
+    const auto next = s.snapshot().next_id;
+    const Command batch[] = {DuplicateEntity{sibling, "Twin"}, RenameEntity{next, "Twin renamed"}};
+    ok(b.execute(owner, revision, std::span<const Command>(batch)));
+    check(s.inspect(next)->name == "Twin renamed" && b.revision() == revision + 1, "Duplicate composes in one transaction");
 }
 void components() {
     Scene s;
@@ -513,6 +558,7 @@ int main() {
         {"transform_validation", transform_validation},
         {"serialization_roundtrip", serialization_roundtrip},
         {"components", components},
+        {"duplication", duplication},
         {"malformed_serialization", malformed_serialization},
         {"history_bound_and_noop", history_bound_and_noop},
         {"thread_boundary", thread_boundary},

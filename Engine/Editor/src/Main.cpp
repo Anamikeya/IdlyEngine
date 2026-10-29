@@ -17,6 +17,9 @@
 #include <cstdio>
 #include <iostream>
 #include <optional>
+#include <cstring>
+#include <map>
+#include <set>
 #include <string>
 #include <thread>
 #include <vector>
@@ -80,8 +83,8 @@ struct EditorUI {
     }
     bool playing() const { return session.play_state() != editor::PlayState::Editing; }
     // Creates and selects an entity in one command, so it is one undo step.
-    void spawn(const char *label, Components c, Transform t = {{0,0.5,0}, {}, {1,1,1}}) {
-        auto r = session.execute(commands::CreateEntity{label, t, 0, 0, std::move(c)});
+    void spawn(const char *label, Components c, Transform t = {{0,0.5,0}, {}, {1,1,1}}, EntityId parent = 0) {
+        auto r = session.execute(commands::CreateEntity{label, t, parent, 0, std::move(c)});
         if (report(r, (std::string("Created ") + label).c_str())) session.select(r.value().created.front());
     }
     static Transform aimed(Vec3 position, double pitch_degrees, double yaw_degrees) {
@@ -164,7 +167,8 @@ struct EditorUI {
         ImGui::SameLine(); if (ImGui::Button("Create...")) ImGui::OpenPopup("Create");
         create_menu();
         ImGui::SameLine(); ImGui::BeginDisabled(!session.selection());
-        if (ImGui::Button("Delete")) report(session.execute(commands::DeleteEntity{session.selection()}), "Deleted entity subtree");
+        if (ImGui::Button("Duplicate")) duplicate_selection();
+        ImGui::SameLine(); if (ImGui::Button("Delete")) delete_selection();
         ImGui::SameLine(); if (ImGui::Button("Focus [F]")) session.focus();
         ImGui::EndDisabled();
         ImGui::SameLine(); ImGui::BeginDisabled(playing() || !session.commands().undo_size());
@@ -192,26 +196,84 @@ struct EditorUI {
         ImGui::SameLine(); ImGui::SetNextItemWidth(100); ImGui::Combo("##coordinates", &coordinates, "Local\0World\0");
         ImGui::End();
     }
+    // ---- Scene Hierarchy: a tree in stable-ID order. Drag a row onto another to parent it there, or onto the
+    // empty area below the tree to move it to the root; both keep the world transform. Right-click for actions.
+    static constexpr const char *entity_payload = "ENGINE_ENTITY";
+    std::map<EntityId, EntityRecord> records;
+    std::map<EntityId, std::vector<EntityId>> children;
+    EntityId revealed = 0; // Selection whose ancestors were last opened, so viewport picks show up in the tree.
+    void drop_onto(EntityId parent) {
+        if (!ImGui::BeginDragDropTarget()) return;
+        if (const auto *payload = ImGui::AcceptDragDropPayload(entity_payload)) {
+            EntityId dragged = 0; std::memcpy(&dragged, payload->Data, sizeof dragged);
+            if (dragged != parent) report(session.reparent(dragged, parent), parent ? "Reparented (world transform kept)" : "Moved to root (world transform kept)");
+        }
+        ImGui::EndDragDropTarget();
+    }
+    void duplicate_selection() { if (session.selection()) report(session.duplicate(session.selection()), "Duplicated entity subtree"); }
+    void delete_selection() { if (session.selection()) report(session.execute(commands::DeleteEntity{session.selection()}), "Deleted entity subtree"); }
+    void tree_node(EntityId id, const std::set<EntityId> &open_path) {
+        const auto &e = records.at(id);
+        const auto kids = children.find(id);
+        const bool leaf = kids == children.end();
+        ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_SpanAvailWidth | ImGuiTreeNodeFlags_DefaultOpen;
+        if (leaf) flags |= ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen;
+        if (session.selection() == id) flags |= ImGuiTreeNodeFlags_Selected;
+        if (open_path.contains(id)) ImGui::SetNextItemOpen(true);
+        const bool open = ImGui::TreeNodeEx(reinterpret_cast<void *>(static_cast<uintptr_t>(id)), flags, "%s", e.name.c_str());
+        if (ImGui::IsItemClicked(ImGuiMouseButton_Left) && !ImGui::IsItemToggledOpen()) session.select(id);
+        if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) { session.select(id); session.focus(); }
+        if (ImGui::BeginDragDropSource()) {
+            ImGui::SetDragDropPayload(entity_payload, &id, sizeof id);
+            ImGui::Text("Move '%s'", e.name.c_str());
+            ImGui::EndDragDropSource();
+        }
+        drop_onto(id);
+        if (ImGui::BeginPopupContextItem()) {
+            session.select(id);
+            if (ImGui::BeginMenu("Create child")) {
+                const Transform above{{0,1,0}, {}, {1,1,1}};
+                if (ImGui::MenuItem("Empty")) spawn("Empty", {}, above, id);
+                if (ImGui::MenuItem("Cube")) spawn("Cube", {MeshComponent{BuiltinMesh::Cube}, {}, {}}, above, id);
+                if (ImGui::MenuItem("Sphere")) spawn("Sphere", {MeshComponent{BuiltinMesh::Sphere}, {}, {}}, above, id);
+                if (ImGui::MenuItem("Point Light")) spawn("Point Light", {{}, {}, LightComponent{LightType::Point, {1,1,1}, 1500000, 10}}, above, id);
+                ImGui::EndMenu();
+            }
+            if (ImGui::MenuItem("Duplicate", "Ctrl+D")) duplicate_selection();
+            if (ImGui::MenuItem("Move to root", nullptr, false, e.parent != 0)) report(session.reparent(id, 0), "Moved to root (world transform kept)");
+            if (ImGui::MenuItem("Focus", "F")) session.focus();
+            ImGui::Separator();
+            if (ImGui::MenuItem("Delete", "Del")) delete_selection();
+            ImGui::EndPopup();
+        }
+        const auto &c = e.components;
+        if (c.light || c.camera) {
+            ImGui::SameLine(); ImGui::TextDisabled("%s%s", c.light ? (c.light->type == LightType::Point ? " point light" : " directional light") : "",
+                                                   c.camera ? (c.camera->primary ? " camera (primary)" : " camera") : "");
+        }
+        if (open && !leaf) {
+            for (const auto child : kids->second) tree_node(child, open_path);
+            ImGui::TreePop();
+        }
+    }
     void hierarchy() {
         ImGui::Begin("Scene Hierarchy");
-        const auto snapshot = session.scene().snapshot();
-        ImGui::TextDisabled("%zu entities", snapshot.entities.size());
-        for (const auto &entity : snapshot.entities) {
-            unsigned depth = 0; EntityId parent = entity.parent;
-            while (parent && depth < 32) { auto p = session.scene().inspect(parent); if (!p) break; parent = p->parent; ++depth; }
-            ImGui::PushID(reinterpret_cast<void *>(static_cast<uintptr_t>(entity.id)));
-            // Indent(0) would apply the default IndentSpacing, so roots must skip it entirely.
-            if (depth) ImGui::Indent(float(depth) * 12);
-            if (ImGui::Selectable(entity.name.c_str(), session.selection() == entity.id)) session.select(entity.id);
-            if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(0)) session.focus();
-            const auto &c = entity.components;
-            if (c.light || c.camera) {
-                ImGui::SameLine(); ImGui::TextDisabled("%s%s", c.light ? (c.light->type == LightType::Point ? " point light" : " directional light") : "",
-                                                       c.camera ? (c.camera->primary ? " camera (primary)" : " camera") : "");
-            }
-            if (depth) ImGui::Unindent(float(depth) * 12);
-            ImGui::PopID();
+        records.clear(); children.clear();
+        for (auto &e : session.scene().snapshot().entities) { children[e.parent].push_back(e.id); records.emplace(e.id, std::move(e)); }
+        children.erase(EntityId{0});
+        ImGui::TextDisabled("%zu entities  (drag to reparent, right-click for actions)", records.size());
+        std::set<EntityId> open_path;
+        if (session.selection() != revealed) {
+            revealed = session.selection();
+            if (records.contains(revealed))
+                for (EntityId p = records.at(revealed).parent; p && records.contains(p); p = records.at(p).parent) open_path.insert(p);
         }
+        for (const auto &[id, e] : records) if (!e.parent) tree_node(id, open_path);
+        // The rest of the panel is a drop zone for moving entities back to the root.
+        const auto room = ImGui::GetContentRegionAvail();
+        ImGui::InvisibleButton("##hierarchy-root", {std::max(room.x, 1.f), std::max(room.y, 24.f)});
+        drop_onto(0);
+        if (ImGui::IsItemClicked(ImGuiMouseButton_Left)) session.select(0);
         ImGui::End();
     }
     void inspector() {
@@ -247,10 +309,14 @@ struct EditorUI {
         ImGui::TextDisabled("Rotation: XYZ Euler degrees");
         ImGui::TextWrapped("Each drag commits on release as one undo step.");
         if (ImGui::BeginCombo("Parent", record->parent ? session.scene().inspect(record->parent)->name.c_str() : "(root)")) {
-            if (ImGui::Selectable("(root)", !record->parent)) report(session.execute(commands::SetParent{record->id,0}), "Reparented (local transform preserved)");
-            for (const auto &e : session.scene().snapshot().entities) if (e.id != record->id) {
+            if (ImGui::Selectable("(root)", !record->parent)) report(session.reparent(record->id, 0), "Moved to root (world transform kept)");
+            for (const auto &e : session.scene().snapshot().entities) {
+                // The entity itself and its descendants would form a cycle.
+                bool own = false;
+                for (EntityId p = e.id; p && !own; p = session.scene().inspect(p)->parent) own = p == record->id;
                 ImGui::PushID(reinterpret_cast<void *>(static_cast<uintptr_t>(e.id)));
-                if (ImGui::Selectable(e.name.c_str(), record->parent == e.id)) report(session.execute(commands::SetParent{record->id,e.id}), "Reparented (local transform preserved)");
+                if (ImGui::Selectable(e.name.c_str(), record->parent == e.id, own ? ImGuiSelectableFlags_Disabled : 0))
+                    report(session.reparent(record->id, e.id), "Reparented (world transform kept)");
                 ImGui::PopID();
             }
             ImGui::EndCombo();
@@ -445,6 +511,8 @@ struct EditorUI {
             if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Y)) report(session.redo(), "Redo");
             if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_S)) report(session.save(scene_path.data()), "Scene saved");
             if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_N)) request(Pending::NewScene);
+            if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_D, false)) duplicate_selection();
+            if (!io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Delete, false)) delete_selection();
         }
     }
 };

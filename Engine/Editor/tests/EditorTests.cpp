@@ -1,4 +1,5 @@
 #include <engine/editor/EditorSession.hpp>
+#include <algorithm>
 #include <cmath>
 #include <glm/glm.hpp>
 #include <glm/gtc/type_ptr.hpp>
@@ -283,10 +284,70 @@ void external_camera_validation() {
     std::thread worker([&] { auto r = renderer::extract_frame(scene,{1,0,1},lens,camera.world(),{},{}); rejected = !r && r.error().code == ErrorCode::WrongThread; }); worker.join();
     check(rejected,"external extraction enforces owner thread");
 }
+bool same_world(const WorldTransform &a, const WorldTransform &b) {
+    for (int i = 0; i < 16; ++i) if (!near(a.matrix[i], b.matrix[i])) return false;
+    return true;
+}
+void hierarchy_editing() {
+    EditorSession s;
+    ok(s.create("A")); const auto a = s.selection();
+    Transform ta; ta.position = {2, 0, 0}; ta.rotation = {0, std::sin(0.25), 0, std::cos(0.25)}; ta.scale = {2, 2, 2};
+    ok(s.execute(commands::SetTransform{a, ta}));
+    ok(s.create("B")); const auto b = s.selection();
+    Transform tb; tb.position = {5, 1, 0}; ok(s.execute(commands::SetTransform{b, tb}));
+    const auto world_b = *s.scene().world_transform(b);
+    const auto history = s.commands().undo_size();
+    // Reparenting keeps the world transform and is one undo step.
+    ok(s.reparent(b, a));
+    check(s.scene().inspect(b)->parent == a && same_world(*s.scene().world_transform(b), world_b) && s.commands().undo_size() == history + 1,
+          "reparent keeps world transform");
+    check(!(s.scene().inspect(b)->transform == tb), "local transform recomputed under the parent");
+    ok(s.reparent(b, 0));
+    check(!s.scene().inspect(b)->parent && same_world(*s.scene().world_transform(b), world_b), "move to root keeps world transform");
+    ok(s.undo()); check(s.scene().inspect(b)->parent == a, "undo move to root");
+    ok(s.undo()); check(!s.scene().inspect(b)->parent && s.scene().inspect(b)->transform == tb, "undo reparent restores the original record");
+    // Cycles and self-parenting are refused without touching the scene.
+    ok(s.reparent(b, a));
+    auto revision = s.commands().revision();
+    auto cycle = s.reparent(a, b);
+    check(!cycle && cycle.error().code == ErrorCode::Cycle && !s.scene().inspect(a)->parent, "parenting under a descendant refused");
+    check(!s.reparent(a, a) && !s.reparent(a, 999) && !s.reparent(999, a), "self, missing parent and missing entity refused");
+    check(s.commands().revision() == revision, "refused reparents are atomic");
+    // A world pose that cannot be expressed under a non-uniformly scaled parent is refused.
+    ok(s.create("Squash")); const auto squash = s.selection();
+    Transform tall; tall.scale = {1, 3, 1}; ok(s.execute(commands::SetTransform{squash, tall}));
+    ok(s.create("Tilted")); const auto tilted = s.selection();
+    Transform tilt; tilt.rotation = {0, 0, std::sin(0.3926990817), std::cos(0.3926990817)}; ok(s.execute(commands::SetTransform{tilted, tilt}));
+    revision = s.commands().revision();
+    check(!s.reparent(tilted, squash) && s.commands().revision() == revision && !s.scene().inspect(tilted)->parent, "shear refused atomically");
+    // Duplication copies the subtree as one undo step and selects the copy.
+    ok(s.create("Leaf", b)); const auto leaf = s.selection();
+    ok(s.execute(commands::SetMesh{leaf, MeshComponent{BuiltinMesh::Sphere, {0, 1, 0}, 0.5, 0}}));
+    const auto size = s.scene().size(); const auto before_copy = s.commands().undo_size();
+    ok(s.duplicate(a));
+    const auto copy = s.selection();
+    check(copy != a && s.scene().inspect(copy)->name == "A (copy)" && !s.scene().inspect(copy)->parent && s.scene().size() == size + 3 &&
+          s.commands().undo_size() == before_copy + 1, "subtree duplicated and selected");
+    const auto copies = s.scene().snapshot().entities;
+    check(std::count_if(copies.begin(), copies.end(), [](const EntityRecord &e) { return e.components.mesh && e.components.mesh->mesh == BuiltinMesh::Sphere; }) == 2,
+          "components copied with the subtree");
+    ok(s.undo()); check(s.scene().size() == size && !s.scene().inspect(copy), "one undo removes the copies");
+    std::string wide(247, 'x'); for (int i = 0; i < 4; ++i) wide += "\xC3\xA9"; // 255 bytes; the 249-byte cut lands in the two-byte tail
+    ok(s.execute(commands::RenameEntity{leaf, wide}));
+    ok(s.duplicate(leaf));
+    const auto trimmed = s.scene().inspect(s.selection())->name;
+    check(trimmed.size() <= 256 && trimmed.ends_with(" (copy)") && trimmed.substr(0, trimmed.size() - 7).find_first_not_of('x') == std::string::npos,
+          "long names trimmed without splitting a UTF-8 sequence");
+    // In Play mode duplicates live only in the runtime copy.
+    const auto editor_before = s.editor_scene().snapshot();
+    ok(s.play()); ok(s.duplicate(b));
+    check(s.scene().size() > editor_before.entities.size(), "runtime duplicate");
+    ok(s.stop()); check(s.editor_scene().snapshot() == editor_before, "editor scene untouched");
+}
 }
 int main() {
-    try { editing(); persistence(); camera_and_picking(); world_edits(); documents(); play_mode(); components_and_rendering(); acceptance_workflow();
-        external_camera_validation();
-        std::cout << "9 editor acceptance groups passed\n"; return 0;
+    try { editing(); persistence(); camera_and_picking(); world_edits(); documents(); play_mode(); components_and_rendering(); hierarchy_editing();
+        acceptance_workflow(); external_camera_validation();
+        std::cout << "10 editor acceptance groups passed\n"; return 0;
     } catch (const std::exception &e) { std::cerr << e.what() << '\n'; return 1; }
 }

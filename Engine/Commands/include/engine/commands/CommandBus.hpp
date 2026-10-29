@@ -51,8 +51,15 @@ struct SetLight {
     EntityId id;
     std::optional<LightComponent> light;
 };
+// Copies the entity and its whole subtree, components included, under the same parent. Copies get new
+// stable IDs in breadth-first order (Receipt::created, the copy of `id` first). An empty name keeps the
+// original name for the copied root; descendants always keep theirs.
+struct DuplicateEntity {
+    EntityId id;
+    std::string name;
+};
 using Command = std::variant<CreateEntity, DeleteEntity, RenameEntity, SetTransform, SetParent,
-                             ReplaceScene, SetMesh, SetCamera, SetLight>;
+                             ReplaceScene, SetMesh, SetCamera, SetLight, DuplicateEntity>;
 struct CommandDescriptor {
     std::string_view name;
     Capability permission;

@@ -39,6 +39,8 @@ class EditorSession {
     std::string view_camera_issue_;
     void reconcile();
     Result<void> editing_only(const char *action) const;
+    // Local TRS that places an entity at `world` under `parent` (0 = root); rejects shear.
+    Result<Transform> local_from_world(EntityId parent, const WorldTransform &world) const;
 public:
     static constexpr std::chrono::nanoseconds fixed_step{16'666'667}; // 60 Hz runtime ticks
     static constexpr int max_ticks_per_update = 5;
@@ -72,6 +74,11 @@ public:
     // Treats the current editor scene as saved, e.g. for a starter scene the user has not touched.
     void mark_clean();
     Result<void> set_world(EntityId, const WorldTransform &);
+    // Moves the entity under `parent` (0 = root) keeping its world transform: one undo step. Rejects cycles
+    // and parents whose transform would force shear.
+    Result<commands::Receipt> reparent(EntityId id, EntityId parent);
+    // Copies the entity and its subtree, components included, as "<name> (copy)": one undo step. Selects the copy.
+    Result<commands::Receipt> duplicate(EntityId id);
     void focus();
     // Extracts the shown scene: mesh components become lit built-in meshes, light components scene lights.
     // Edit mode views through the editor camera. Play mode views through the first primary camera component

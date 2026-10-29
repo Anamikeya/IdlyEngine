@@ -167,11 +167,9 @@ Result<void> EditorSession::load(const std::filesystem::path &path) {
     mark_clean();
     return {};
 }
-Result<void> EditorSession::set_world(EntityId id, const WorldTransform &world) {
-    const auto record = scene().inspect(id);
-    if (!record) return fail(ErrorCode::NotFound, "Entity no longer exists");
+Result<Transform> EditorSession::local_from_world(EntityId parent, const WorldTransform &world) const {
     auto local = glm::make_mat4(world.matrix.data());
-    if (record->parent) local = glm::inverse(glm::make_mat4(scene().world_transform(record->parent)->matrix.data())) * local;
+    if (parent) local = glm::inverse(glm::make_mat4(scene().world_transform(parent)->matrix.data())) * local;
     glm::dvec3 scale, position, skew;
     glm::dvec4 perspective;
     glm::dquat rotation;
@@ -181,10 +179,45 @@ Result<void> EditorSession::set_world(EntityId id, const WorldTransform &world) 
     for (int c = 0; c < 4; ++c) for (int r = 0; r < 4; ++r)
         if (!std::isfinite(local[c][r]) || std::abs(local[c][r] - recomposed[c][r]) > 1e-5 * std::max(1.0, std::abs(local[c][r])))
             return fail(ErrorCode::InvalidArgument, "World edit introduces shear; use local inspector or uniform parent scale");
-    Transform t{{position.x, position.y, position.z}, {rotation.x, rotation.y, rotation.z, rotation.w}, {scale.x, scale.y, scale.z}};
-    auto result = execute(commands::SetTransform{id, t});
+    return Transform{{position.x, position.y, position.z}, {rotation.x, rotation.y, rotation.z, rotation.w}, {scale.x, scale.y, scale.z}};
+}
+Result<void> EditorSession::set_world(EntityId id, const WorldTransform &world) {
+    const auto record = scene().inspect(id);
+    if (!record) return fail(ErrorCode::NotFound, "Entity no longer exists");
+    auto t = local_from_world(record->parent, world);
+    if (!t) return t.error();
+    auto result = execute(commands::SetTransform{id, t.value()});
     if (!result) return result.error();
     return {};
+}
+Result<commands::Receipt> EditorSession::reparent(EntityId id, EntityId parent) {
+    const auto record = scene().inspect(id);
+    if (!record) return fail(ErrorCode::NotFound, "Entity no longer exists");
+    if (parent && !scene().inspect(parent)) return fail(ErrorCode::NotFound, "New parent no longer exists");
+    for (EntityId ancestor = parent; ancestor; ancestor = scene().inspect(ancestor)->parent)
+        if (ancestor == id) return fail(ErrorCode::Cycle, "Cannot parent an entity under itself or one of its descendants");
+    auto local = local_from_world(parent, *scene().world_transform(id));
+    if (!local) return fail(ErrorCode::InvalidArgument, "Cannot keep the world transform under that parent: " + local.error().message);
+    const commands::Command batch[] = {commands::SetParent{id, parent}, commands::SetTransform{id, local.value()}};
+    auto &bus = runtime_ ? runtime_->bus : bus_;
+    auto result = bus.execute(context_, bus.revision(), std::span<const commands::Command>(batch));
+    reconcile();
+    return result;
+}
+Result<commands::Receipt> EditorSession::duplicate(EntityId id) {
+    const auto record = scene().inspect(id);
+    if (!record) return fail(ErrorCode::NotFound, "Entity no longer exists");
+    // "<name> (copy)", trimmed to the 256-byte name limit without splitting a UTF-8 sequence.
+    constexpr std::string_view suffix = " (copy)";
+    auto name = record->name;
+    if (name.size() + suffix.size() > 256) {
+        name.resize(256 - suffix.size());
+        while (!name.empty() && (static_cast<unsigned char>(name.back()) & 0xC0) == 0x80) name.pop_back();
+        if (!name.empty() && static_cast<unsigned char>(name.back()) >= 0xC0) name.pop_back();
+    }
+    auto result = execute(commands::DuplicateEntity{id, name + std::string(suffix)});
+    if (result) selected_ = result.value().created.front();
+    return result;
 }
 void EditorSession::focus() {
     if (const auto w = scene().world_transform(selected_)) {

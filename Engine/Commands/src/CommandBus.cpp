@@ -6,7 +6,7 @@
 #include <type_traits>
 namespace engine::commands {
 namespace {
-constexpr std::array<CommandDescriptor, 9> descriptors{
+constexpr std::array<CommandDescriptor, 10> descriptors{
     {{"entity.create", Capability::Edit, "name, transform, parent, optional new stable ID, components"},
      {"entity.delete", Capability::Edit, "stable ID; deletes subtree"},
      {"entity.rename", Capability::Edit, "stable ID, name"},
@@ -15,7 +15,8 @@ constexpr std::array<CommandDescriptor, 9> descriptors{
      {"scene.replace", Capability::Edit, "validated versioned snapshot"},
      {"component.mesh.set", Capability::Edit, "stable ID, built-in mesh and surface, or none to remove"},
      {"component.camera.set", Capability::Edit, "stable ID, perspective lens and primary flag, or none to remove"},
-     {"component.light.set", Capability::Edit, "stable ID, light type, color, intensity, range, or none to remove"}}};
+     {"component.light.set", Capability::Edit, "stable ID, light type, color, intensity, range, or none to remove"},
+     {"entity.duplicate", Capability::Edit, "stable ID, optional name for the copy; copies the subtree with new IDs"}}};
 struct Guard {
     bool &busy;
     explicit Guard(bool &b) : busy(b) {
@@ -106,6 +107,33 @@ Result<Receipt> CommandBus::execute(const Context &ctx, std::uint64_t expected,
                     staged.emplace(id, EntityRecord{id, cmd.name, cmd.parent, cmd.transform, cmd.components});
                     next = id + 1;
                     receipt.created.push_back(id);
+                } else if constexpr (std::is_same_v<T, DuplicateEntity>) {
+                    const auto source = staged.find(cmd.id);
+                    if (source == staged.end())
+                        return fail(ErrorCode::NotFound, "Entity does not exist");
+                    std::map<EntityId, std::vector<EntityId>> children;
+                    for (const auto &[id, e] : staged)
+                        children[e.parent].push_back(id);
+                    // (original, parent of its copy), breadth first; parents are always copied first.
+                    std::vector<std::pair<EntityId, EntityId>> queue{{cmd.id, source->second.parent}};
+                    std::map<EntityId, bool> visited; // A staged cycle must not loop forever.
+                    for (std::size_t i = 0; i < queue.size(); ++i) {
+                        const auto [original, parent] = queue[i];
+                        if (!visited.emplace(original, true).second)
+                            continue;
+                        if (staged.size() >= Scene::max_entities || next == std::numeric_limits<EntityId>::max())
+                            return fail(ErrorCode::InvalidArgument, "Scene entity limit exceeded");
+                        auto copy = staged.at(original);
+                        copy.id = next++;
+                        copy.parent = parent;
+                        if (i == 0 && !cmd.name.empty())
+                            copy.name = cmd.name;
+                        receipt.created.push_back(copy.id);
+                        if (const auto kids = children.find(original); kids != children.end())
+                            for (const auto child : kids->second)
+                                queue.emplace_back(child, copy.id);
+                        staged.emplace(copy.id, std::move(copy));
+                    }
                 } else if constexpr (std::is_same_v<T, ReplaceScene>) {
                     auto valid = Scene::validate(cmd.snapshot);
                     if (!valid)
