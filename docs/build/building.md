@@ -109,3 +109,21 @@ cmake --preset windows-msvc-debug && cmake --build --preset windows-msvc-debug &
 ```
 
 Adjust the toolset and SDK versions to the installed ones. Prefer `dev-shell.ps1` whenever it works.
+
+This recipe only works with `-DGAMEENGINE_BUILD_EDITOR=OFF`. The editor builds Filament, which fails
+configure whenever `MSYSTEM` is set ("MSYS2 Subsystem detected"), and Git Bash re-adds `MSYSTEM` to every
+Windows process it starts, so `unset` does not help. For editor builds, set the same `INCLUDE`/`LIB`/`PATH`
+variables in PowerShell (`$env:INCLUDE = ...`) and run the cmake commands from there.
+
+## Editor build (Filament) requirements
+
+- Configure from an MSVC x64 environment (`vcvars64.bat` or `dev-shell.ps1`) and pass
+  `-DCMAKE_C_COMPILER=cl -DCMAKE_CXX_COMPILER=cl` (the presets do this). Without both, CMake picks the first
+  compiler on `PATH`, which on the reference machine is Strawberry GCC, and the editor is skipped.
+- Put the build directory on the same drive as `GAMEENGINE_RESOURCES_DIR`. Filament's tool manifest path is
+  passed as a path relative to its source root, and a relative path cannot cross drives.
+- A build directory first configured before 2026-10-29 may hold the relative `CMAKE_INSTALL_PREFIX=install`
+  written by Filament's glslang, which makes every re-configure fail in Box3D's `file(RELATIVE_PATH)`. Re-run
+  configure once with an absolute `-DCMAKE_INSTALL_PREFIX=...`, or use a fresh directory.
+- `could not load cache` / `ninja: error: loading 'build.ninja'` only mean that the configure step for that
+  directory never finished; fix the configure error first.

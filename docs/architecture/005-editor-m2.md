@@ -71,12 +71,12 @@ From the repository root, with the existing dependencies available:
 ./cmake/scripts/dev-shell.ps1 cmake -S Engine/Editor -B out/editor -G Ninja -DCMAKE_BUILD_TYPE=Release -DGAMEENGINE_RESOURCES_DIR=D:/AI/GameEngine/resources
 ./cmake/scripts/dev-shell.ps1 cmake --build out/editor --parallel 4
 ctest --test-dir out/editor --output-on-failure
-Push-Location out/editor
+Push-Location out/editor/bin
 ./engine_editor.exe --smoke
 Pop-Location
 ```
 
-Launch `out/editor/engine_editor.exe` without arguments for normal editing.
+Launch `out/editor/bin/engine_editor.exe` without arguments for normal editing.
 Scene paths are relative to the working directory. The smoke run creates
 `smoke.scene` and `editor-smoke.ppm` there. Set `ENGINE_EDITOR_GPU_TESTS=ON` at
 configure time to register the visible GPU smoke run in CTest; leave it off on

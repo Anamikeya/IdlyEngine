@@ -1,15 +1,25 @@
 cmake_minimum_required(VERSION 3.25)
-project(GameEngineEditor LANGUAGES C CXX)
-enable_testing()
-set(CMAKE_CXX_STANDARD 20)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
-if(NOT WIN32 OR NOT MSVC)
-    message(FATAL_ERROR "The M2 desktop adapter currently supports Windows/MSVC only")
+# Standalone entry point (cmake -S Engine/Editor): configure the root foundation build, which adds this
+# directory back as a subdirectory with a different binary dir. (GameEngine_SOURCE_DIR cannot be the guard:
+# project() caches it, so a re-configure would skip this branch.)
+if(CMAKE_CURRENT_BINARY_DIR STREQUAL CMAKE_BINARY_DIR)
+    project(GameEngineEditor LANGUAGES C CXX)
+    # CTest reads CTestTestfile.cmake from the top binary dir, which only exists when testing is enabled here.
+    enable_testing()
+    if(NOT WIN32 OR NOT MSVC)
+        message(FATAL_ERROR "The M2 desktop adapter currently supports Windows/MSVC only")
+    endif()
+    set(GAMEENGINE_RESOURCES_DIR "" CACHE PATH "Existing read-only dependency sources")
+    set(CMAKE_INSTALL_PREFIX "${CMAKE_BINARY_DIR}/install" CACHE PATH "Local staging" FORCE)
+    set(GAMEENGINE_BUILD_EDITOR ON CACHE BOOL "" FORCE)
+    add_subdirectory(../.. foundation)
+    return()
 endif()
-set(GAMEENGINE_RESOURCES_DIR "" CACHE PATH "Existing read-only dependency sources")
-set(CMAKE_INSTALL_PREFIX "${CMAKE_BINARY_DIR}/install" CACHE PATH "Local staging" FORCE)
-add_subdirectory(../.. foundation)
+if(NOT WIN32 OR NOT MSVC)
+    message(STATUS "Engine/Editor skipped: the M2 desktop adapter currently supports Windows/MSVC only")
+    return()
+endif()
+gameengine_verify_dependency(filament)
 set(USE_STATIC_CRT OFF CACHE BOOL "" FORCE)
 set(FILAMENT_BUILD_TESTING OFF CACHE BOOL "" FORCE)
 set(SPIRV_SKIP_TESTS ON CACHE BOOL "Do not register dependency maintenance tests" FORCE)
@@ -19,15 +29,17 @@ set(FILAMENT_SUPPORTS_OPENGL ON CACHE BOOL "" FORCE)
 set(FILAMENT_SUPPORTS_VULKAN OFF CACHE BOOL "" FORCE)
 set(FILAMENT_SUPPORTS_WEBGPU OFF CACHE BOOL "" FORCE)
 set(FILAMENT_ENABLE_MATDBG OFF CACHE BOOL "" FORCE)
+# ON (upstream default) adds /D_ITERATOR_DEBUG_LEVEL=0 to Debug, which cannot link against the engine's Debug libraries.
+set(FILAMENT_SHORTEN_MSVC_COMPILATION OFF CACHE BOOL "" FORCE)
+# Filament's glslang force-caches CMAKE_INSTALL_PREFIX to the relative "install" when the prefix was defaulted, after
+# which every re-configure fails in Box3D's file(RELATIVE_PATH). Directory scope: hides the flag from Filament only.
+set(CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT OFF)
 # Upstream concatenates this path with its source root even for export. Redirect
 # the generated tool manifest back to our build tree, keeping resources read-only.
+# file(RELATIVE_PATH) cannot cross drives, so the build dir must be on the same drive as GAMEENGINE_RESOURCES_DIR.
 file(RELATIVE_PATH IMPORT_EXECUTABLES_DIR "${GAMEENGINE_RESOURCES_DIR}/filament" "${CMAKE_CURRENT_BINARY_DIR}/filament-tools")
 add_subdirectory("${GAMEENGINE_RESOURCES_DIR}/filament" filament EXCLUDE_FROM_ALL SYSTEM)
-set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
-set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
-set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
-set(GLFW_INSTALL OFF CACHE BOOL "" FORCE)
-add_subdirectory("${GAMEENGINE_RESOURCES_DIR}/glfw" glfw EXCLUDE_FROM_ALL SYSTEM)
+# GLFW comes from the root (cmake/GameEngineEditorDependencies.cmake) as the `glfw` target.
 set(IMGUI_ROOT "${GAMEENGINE_RESOURCES_DIR}/imgui")
 add_library(editor_imgui STATIC
     "${IMGUI_ROOT}/imgui.cpp" "${IMGUI_ROOT}/imgui_draw.cpp"
