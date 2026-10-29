@@ -3,8 +3,75 @@
 Branch `agent/claude-milestone-3`, worktree `D:\AI\GameEngine-Integration`. Plan: `docs/MILESTONE_3_PLAN.md`
 (approved 2026-10-29).
 
-**Status: in progress. Slice S1 is complete and verified; S2–S6 are not started.** Milestone 3 is not complete:
-components, assets and physics in Play mode are still missing.
+**Status: in progress. Slices S1 and S2 are complete and verified; S3–S6 are not started.** Milestone 3 is not
+complete: duplication and the hierarchy tree, physics in Play mode, and imported assets are still missing.
+
+## S2: component model (2026-10-29)
+
+### Delivered
+
+| Feature | Implementation |
+|---|---|
+| Components in the scene | `MeshComponent` (built-in cube, sphere or plane; sRGB color, roughness, metallic), `CameraComponent` (vertical FOV, near, far, primary), `LightComponent` (directional or point; sRGB color, intensity in lux or lumens, range). They live in `EntityRecord::components`, so commands, undo/redo, Play-mode copies and files carry them like the transform. `Scene::commit` mirrors them into Flecs components; `Scene::validate` enforces their ranges for every command and every load |
+| Commands | `SetMesh`, `SetCamera`, `SetLight` (an empty value removes the component), and `CreateEntity` takes components, so creating a light or camera is one undo step. Registry: 9 commands |
+| Scene format v3 | `MESH`, `CAMERA`, `LIGHT` records, documented in `docs/architecture/006-scene-format.md`. v1 and v2 files load with a default cube on every entity, which is how they were drawn before |
+| Rendering | `extract_frame` carries a per-object `Surface` (linear color, roughness, metallic, validated to [0, 1]). The desktop renderer has built-in cube, UV-sphere and plane meshes, a lit material `lit.mat` (replaces `cube.mat`) with one material instance per object, and mirrors scene lights into Filament directional and point lights. The editor's two default lights are used only while the scene has no lights |
+| Play-mode camera | Play views through the first primary camera component by entity ID. If there is none, or its transform is scaled (not rigid), the editor camera is used and the viewport says why |
+| Picking | Ray tests against the real shape in local space (box, sphere, plane) instead of a unit box for everything |
+| Editor UI | **Create...** menu (Cube, Sphere, Plane, Empty, Directional Light, Point Light, Camera); Asset Browser buttons for the three built-in meshes; Inspector sections for Mesh Renderer, Camera and Light with **Remove** and **Add Component**; hierarchy tags for lights and cameras; clickable viewport markers for lights and cameras (directional lights also show their direction); a hint when editor lighting is in use |
+
+### Tests
+
+| Suite | New or changed coverage |
+|---|---|
+| `engine.core.acceptance` | New `components` test: create with components, set/remove each kind, Flecs mirroring (including removal), undo/redo, delete-undo restores components, invalid values and missing entities rejected atomically, exact and deterministic text round trip, 12 malformed component inputs, records in any order. `malformed_serialization`: v1 and v2 files get default cubes; version 4 rejected. Registry size 9 |
+| `engine.renderer.snapshot` | Surface carried into the frame; out-of-range and NaN surfaces rejected |
+| `engine.editor.acceptance`, 8 → 9 groups | `components_and_rendering`: only mesh components are drawn, built-in handles, sRGB→linear surface and light colors, light extraction; picking misses a sphere at a cube-only corner and hits it as a cube, plane hit and miss; mesh change undo; Play views through the primary camera (lens and pose), a scaled camera falls back with a reason, edit mode never uses scene cameras; component edits in Play stay in the runtime copy; save/New/load round trip with components |
+| GPU smoke | Reads back the viewport center: a red surface under editor lighting read **(73, 1, 1)**; the same probe made white and lit only by a blue directional scene light read **(0, 0, 151)**, with exactly one scene light mirrored (editor lights off) |
+
+Results: `windows-msvc-release` and `windows-msvc-ci` build with no warnings outside `resources/filament` and
+pass 132/132 CTest entries (`engine_core_tests` 20/20, `engine_editor_tests` 9 groups). The GPU smoke exits 0.
+
+### Real-input verification
+
+Same driver as S1. It now re-asserts the cursor immediately before every button event and reports any cursor
+movement it did not make.
+
+| Check | Observed | Result |
+|---|---|---|
+| Mesh color | Typed R/G/B 1, 0.15, 0.1: three "Mesh renderer changed" commits; the cube renders red | Pass |
+| Mesh shape and undo | Mesh combo → Sphere renders a sphere; Ctrl+Z back to the cube; Ctrl+Y sphere again | Pass |
+| Create menu | All seven entries listed; Plane (10 × 10) and Point Light created and selected | Pass |
+| Scene lights replace editor lights | With a point light present the editor lights switch off and the hint disappears; the light pools on the plane | Pass |
+| Light marker | Clicking the point light's marker selects it, also with the plane behind it | Pass |
+| Light edits | Intensity typed as 6,000,000 lm and color (1, 0.5, 0.2): three "Light changed" commits, orange and brighter | Pass |
+| Directional light and camera | Created; the directional light lights the scene and shows its direction line; the camera is tagged "camera (primary)" | Pass |
+| Play through the camera | Banner "Viewing through camera 'Camera'"; the view is from the camera's position; Stop returns to the editor camera | Pass |
+| Remove / Add Component | Remove Mesh Renderer hides the cube; Add Component → Mesh Renderer brings it back; two undos restore the original | Pass |
+| Save / New / Load | Saved file has `ENGINE_SCENE 3 6 5`, two `MESH`, two `LIGHT`, one `CAMERA` record; New empties the scene; Load restores all five entities | Pass |
+| Documented example | The example from `006-scene-format.md`, saved as a file, loads: red sphere, "Sun", "Camera" | Pass |
+
+Issues found by this run:
+
+- **Point-light preset too dim (fixed).** At the first preset, 400,000 lm, the scene looked almost black: the editor
+  camera uses daylight exposure (sunny 16, EV100 ≈ 15). The Create-menu preset is now 1,500,000 lm, which
+  visibly lights a 2 m radius. Scene exposure control is not implemented; see limitations.
+- **Interference, not a defect.** Two marker clicks first failed. Temporary click logging showed the clicks arriving
+  up to 15 px away from where the driver had put the cursor, and the drift report showed jumps of up to 140 px
+  between positioning and the button press. Something else was moving the mouse while the run was in progress.
+  With the cursor re-asserted and the mouse left alone, every marker click selected its light. The S1 step-5 miss
+  was most likely the same cause.
+
+### Limitations
+
+- Exposure is fixed (sunny 16) for the editor and Play cameras, so indoor-scale point lights need about 10⁶ lm.
+- No shadows (shadowing is disabled in the view) and no image-based lighting, so surfaces facing away from every
+  light are black.
+- Camera components have no frustum gizmo; the marker shows position only. A camera at the editor eye or behind it
+  has no visible marker.
+- Inspector values pass through `float` (ImGui), so typed values such as 0.2 are stored as 0.20000000298023224.
+- A color change through the picker popup commits on every change (several undo steps); typed values and inline
+  drags commit once.
 
 ## S1: acceptance slice (2026-10-29)
 

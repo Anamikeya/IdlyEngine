@@ -35,6 +35,8 @@ class EditorSession {
     std::vector<EntityRecord> clean_;
     mutable std::uint64_t dirty_revision_ = ~std::uint64_t(0);
     mutable bool dirty_ = false;
+    EntityId view_camera_ = 0;
+    std::string view_camera_issue_;
     void reconcile();
     Result<void> editing_only(const char *action) const;
 public:
@@ -56,7 +58,9 @@ public:
     EntityId selection() const { return selected_; }
     void select(EntityId id);
     Result<commands::Receipt> execute(commands::Command);
-    Result<commands::Receipt> create(std::string name = "Cube", EntityId parent = 0);
+    // Creates an entity 0.5 m above the parent's origin and selects it. The default is a built-in cube.
+    Result<commands::Receipt> create(std::string name = "Cube", EntityId parent = 0,
+                                     Components components = Components{MeshComponent{}, {}, {}});
     Result<commands::Receipt> undo();
     Result<commands::Receipt> redo();
     // Replaces the editor scene with an empty one (undoable) and starts a clean document.
@@ -69,8 +73,14 @@ public:
     void mark_clean();
     Result<void> set_world(EntityId, const WorldTransform &);
     void focus();
+    // Extracts the shown scene: mesh components become lit built-in meshes, light components scene lights.
+    // Edit mode views through the editor camera. Play mode views through the first primary camera component
+    // (by entity ID) and falls back to the editor camera when there is none or it cannot be used.
     Result<renderer::Frame> frame(double aspect);
-    // Ray versus transformed unit cubes; nearest positive hit, zero is empty space.
+    // Camera entity the last frame() looked through (0 = editor camera), and why a scene camera was skipped.
+    EntityId view_camera() const { return view_camera_; }
+    const std::string &view_camera_issue() const { return view_camera_issue_; }
+    // Ray versus the rendered shapes (box, sphere, plane) in their local space; nearest hit, zero is empty space.
     EntityId pick(const renderer::FrameSnapshot &, double ndc_x, double ndc_y) const;
 
     // ---- Play mode ----

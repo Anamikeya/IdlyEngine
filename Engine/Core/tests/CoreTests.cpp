@@ -41,7 +41,7 @@ void creation_and_flecs() {
         ++count;
     });
     check(count == 1, "Entity not stored in Flecs");
-    check(registry().size() == 6, "Registry incomplete");
+    check(registry().size() == 9, "Registry incomplete");
     check(describe(Command{DeleteEntity{id}}).name == "entity.delete", "Typed registry mismatch");
 }
 void permissions_and_revision() {
@@ -163,11 +163,86 @@ void serialization_roundtrip() {
     ok(write_scene(again, dest.snapshot()));
     check(again.str() == out.str(), "Serialization not deterministic");
 }
+void components() {
+    Scene s;
+    CommandBus b(s);
+    const MeshComponent red{BuiltinMesh::Sphere, {1, 0, 0}, 0.25, 0.5};
+    auto created = b.execute(owner, 0, CreateEntity{"Ball", {}, 0, 0, {red, {}, {}}});
+    ok(created);
+    const auto ball = created.value().created.at(0);
+    check(s.inspect(ball)->components == Components{red, {}, {}}, "CreateEntity components");
+    const auto lamp = create(b, "Lamp");
+    check(s.inspect(lamp)->components == Components{}, "Entities start without components");
+    const CameraComponent lens{45, 0.5, 200, false};
+    const LightComponent point{LightType::Point, {1, 0.5, 0.25}, 1500, 4};
+    ok(b.execute(owner, b.revision(), SetCamera{lamp, lens}));
+    ok(b.execute(owner, b.revision(), SetLight{lamp, point}));
+    check(s.inspect(lamp)->components == Components{{}, lens, point}, "Set camera and light");
+    // The scene mirrors components into Flecs; inspect() reads them back from there.
+    int meshes = 0, lights = 0;
+    s.ecs().native().each([&](const StableId &id, const MeshComponent &m) { meshes += id.value == ball && m == red; });
+    s.ecs().native().each([&](const StableId &id, const LightComponent &l) { lights += id.value == lamp && l == point; });
+    check(meshes == 1 && lights == 1, "Components not mirrored into Flecs");
+    ok(b.execute(owner, b.revision(), SetLight{lamp, std::nullopt}));
+    check(!s.inspect(lamp)->components.light, "Remove light");
+    lights = 0;
+    s.ecs().native().each([&](const StableId &, const LightComponent &) { ++lights; });
+    check(lights == 0, "Removed component still in Flecs");
+    ok(b.undo(owner, b.revision()));
+    check(s.inspect(lamp)->components.light == point, "Undo remove light");
+    ok(b.redo(owner, b.revision()));
+    ok(b.undo(owner, b.revision()));
+    ok(b.execute(owner, b.revision(), DeleteEntity{ball}));
+    ok(b.undo(owner, b.revision()));
+    check(s.inspect(ball)->components.mesh == red, "Delete undo restores components");
+    // Invalid values are rejected without changing the scene.
+    const auto revision = b.revision();
+    const auto before = s.snapshot();
+    MeshComponent bright = red; bright.color.x = 1.5;
+    CameraComponent flat = lens; flat.far_plane = flat.near_plane;
+    LightComponent dark = point; dark.intensity = -1;
+    MeshComponent unknown = red; unknown.mesh = BuiltinMesh(9);
+    error(b.execute(owner, revision, SetMesh{ball, bright}), ErrorCode::InvalidArgument);
+    error(b.execute(owner, revision, SetMesh{ball, unknown}), ErrorCode::InvalidArgument);
+    error(b.execute(owner, revision, SetCamera{lamp, flat}), ErrorCode::InvalidArgument);
+    error(b.execute(owner, revision, SetLight{lamp, dark}), ErrorCode::InvalidArgument);
+    error(b.execute(owner, revision, SetMesh{999, red}), ErrorCode::NotFound);
+    check(b.revision() == revision && s.snapshot() == before, "Rejected component edit changed the scene");
+    // Exact text round trip with every component kind, and a deterministic writer.
+    std::ostringstream out;
+    ok(write_scene(out, s.snapshot()));
+    check(out.str().find("MESH 1 sphere 1 0 0 0.25 0.5\n") != std::string::npos &&
+              out.str().find("CAMERA 2 45 0.5 200 0\n") != std::string::npos &&
+              out.str().find("LIGHT 2 point 1 0.5 0.25 1500 4\n") != std::string::npos,
+          "Component lines not written as documented");
+    std::istringstream in(out.str());
+    auto loaded = read_scene(in);
+    ok(loaded);
+    check(loaded.value() == s.snapshot(), "Lossy component serialization");
+    std::ostringstream again;
+    ok(write_scene(again, loaded.value()));
+    check(again.str() == out.str(), "Component serialization not deterministic");
+    const std::string head = "ENGINE_SCENE 3 3 2 ENTITY 1 0 \"A\" 0 0 0 0 0 0 1 1 1 1 ENTITY 2 0 \"B\" 0 0 0 0 0 0 1 1 1 1 ";
+    for (const std::string body :
+         {"COMPONENTS 1 MESH 7 cube 1 1 1 0.5 0", "COMPONENTS 2 MESH 1 cube 1 1 1 0.5 0 MESH 1 cube 1 1 1 0.5 0",
+          "COMPONENTS 1 MESH 1 cone 1 1 1 0.5 0", "COMPONENTS 1 MESH 1 cube 1 1", "COMPONENTS 1 MESH 1 cube 2 1 1 0.5 0",
+          "COMPONENTS 1 CAMERA 1 60 0.1 100 2", "COMPONENTS 1 CAMERA 1 60 1 1 1", "COMPONENTS 1 LIGHT 1 spot 1 1 1 1 1",
+          "COMPONENTS 1 LIGHT 1 point 1 1 1 1 0", "COMPONENTS 1 AUDIO 1", "COMPONENTS 7", "COMPONENTS 0 MESH 1 cube 1 1 1 0.5 0"}) {
+        std::istringstream bad(head + body);
+        check(!read_scene(bad), "Malformed component record accepted");
+    }
+    std::istringstream good(head + "COMPONENTS 2 LIGHT 2 directional 1 1 1 0 10 MESH 1 plane 0 0 0 0 1");
+    auto parsed = read_scene(good);
+    ok(parsed);
+    check(parsed.value().entities[0].components.mesh->mesh == BuiltinMesh::Plane && parsed.value().entities[1].components.light &&
+              !parsed.value().entities[0].components.light,
+          "Component records in any order");
+}
 void malformed_serialization() {
     for (const auto *text :
          {"WRONG 1 1 0", "ENGINE_SCENE 2 1 0", "ENGINE_SCENE 1 0 0", "ENGINE_SCENE 1 1 100001",
           "ENGINE_SCENE 1 1 0 trailing", "ENGINE_SCENE 1 2 1 ENTITY 1 0 \"x\" 0 0",
-          "ENGINE_SCENE 0 1 0", "ENGINE_SCENE 3 1 0 COMPONENTS 0", "ENGINE_SCENE 2 1 0 COMPONENTS",
+          "ENGINE_SCENE 0 1 0", "ENGINE_SCENE 4 1 0 COMPONENTS 0", "ENGINE_SCENE 2 1 0 COMPONENTS",
           "ENGINE_SCENE 2 1 0 COMPONENTS -1", "ENGINE_SCENE 2 1 0 COMPONENTS 1 MESH 1",
           "ENGINE_SCENE 2 1 0 COMPONENTS 0 trailing", "ENGINE_SCENE 1 1 0 COMPONENTS 0"}) {
         std::istringstream in(text);
@@ -181,11 +256,18 @@ void malformed_serialization() {
               upgraded.value().entities[0].name == "Legacy" &&
               upgraded.value().entities[0].transform.position == Vec3{1, 2, 3},
           "Version 1 scene not read");
+    // Before components existed every entity was drawn as the built-in cube; the upgrade keeps that.
+    check(upgraded.value().entities[0].components == Components{MeshComponent{}, {}, {}},
+          "Version 1 entities must become default cubes");
     std::ostringstream rewritten;
     ok(write_scene(rewritten, upgraded.value()));
     check(rewritten.str().rfind("ENGINE_SCENE " + std::to_string(scene_format_version) + " 3 1\n", 0) == 0 &&
-              rewritten.str().ends_with("COMPONENTS 0\n"),
+              rewritten.str().find("\nCOMPONENTS 1\nMESH 2 cube ") != std::string::npos,
           "Scene not written in the current format");
+    std::istringstream v2("ENGINE_SCENE 2 3 1\nENTITY 2 0 \"S1\" 0 0 0 0 0 0 1 1 1 1\nCOMPONENTS 0\n");
+    auto from_v2 = read_scene(v2);
+    ok(from_v2);
+    check(from_v2.value().entities[0].components.mesh == MeshComponent{}, "Version 2 entities must become default cubes");
     std::istringstream huge("ENGINE_SCENE 1 2 1 ENTITY 1 0 \"" + std::string(1000, 'x') +
                             "\" 0 0 0 0 0 0 1 1 1 1");
     check(!read_scene(huge), "Unbounded name accepted");
@@ -430,6 +512,7 @@ int main() {
         {"delete_restore_and_ids", delete_restore_and_ids},
         {"transform_validation", transform_validation},
         {"serialization_roundtrip", serialization_roundtrip},
+        {"components", components},
         {"malformed_serialization", malformed_serialization},
         {"history_bound_and_noop", history_bound_and_noop},
         {"thread_boundary", thread_boundary},

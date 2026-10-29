@@ -18,6 +18,7 @@ struct CreateEntity {
     Transform transform;
     EntityId parent = 0;
     EntityId requested_id = 0;
+    Components components;
 };
 struct DeleteEntity {
     EntityId id;
@@ -37,8 +38,21 @@ struct SetParent {
 struct ReplaceScene {
     SceneSnapshot snapshot;
 };
-using Command =
-    std::variant<CreateEntity, DeleteEntity, RenameEntity, SetTransform, SetParent, ReplaceScene>;
+// Component commands add or replace a component; an empty optional removes it.
+struct SetMesh {
+    EntityId id;
+    std::optional<MeshComponent> mesh;
+};
+struct SetCamera {
+    EntityId id;
+    std::optional<CameraComponent> camera;
+};
+struct SetLight {
+    EntityId id;
+    std::optional<LightComponent> light;
+};
+using Command = std::variant<CreateEntity, DeleteEntity, RenameEntity, SetTransform, SetParent,
+                             ReplaceScene, SetMesh, SetCamera, SetLight>;
 struct CommandDescriptor {
     std::string_view name;
     Capability permission;

@@ -1,5 +1,7 @@
 #include <engine/editor/EditorSession.hpp>
 #include <cmath>
+#include <glm/glm.hpp>
+#include <glm/gtc/type_ptr.hpp>
 #include <fstream>
 #include <iostream>
 #include <stdexcept>
@@ -195,6 +197,74 @@ void acceptance_workflow() {
     std::filesystem::remove(path);
     std::filesystem::remove(test_directory());
 }
+// NDC of a world point in a frame, for aiming pick rays at known spots.
+std::pair<double, double> ndc(const renderer::FrameSnapshot &f, glm::dvec3 p) {
+    const auto clip = glm::make_mat4(f.camera.projection.matrix.data()) * glm::make_mat4(f.camera.view.matrix.data()) * glm::dvec4(p, 1);
+    return {clip.x / clip.w, clip.y / clip.w};
+}
+void components_and_rendering() {
+    EditorSession s;
+    ok(s.create("Ball", 0, {MeshComponent{BuiltinMesh::Sphere, {0.5, 1, 0}, 0.3, 0.7}, {}, {}})); const auto ball = s.selection();
+    ok(s.create("Box")); const auto box = s.selection();
+    check(s.scene().inspect(box)->components.mesh == MeshComponent{}, "default create is a cube");
+    ok(s.create("Lamp", 0, {{}, {}, LightComponent{LightType::Point, {1, 0.5, 0}, 2000, 6}})); const auto lamp = s.selection();
+    ok(s.create("Empty", 0, {}));
+    auto f = s.frame(1); ok(f);
+    const auto &objects = f.value()->objects;
+    check(objects.size() == 2 && objects[0].entity == ball && objects[1].entity == box, "only mesh components are drawn");
+    check(objects[0].mesh == renderer::builtin_sphere && objects[1].mesh == renderer::builtin_cube && objects[0].material == renderer::builtin_lit,
+          "built-in mesh handles");
+    check(near(objects[0].surface.linear_color.x, 0.21404114) && objects[0].surface.linear_color.y == 1 && objects[0].surface.linear_color.z == 0 &&
+          objects[0].surface.roughness == 0.3 && objects[0].surface.metallic == 0.7, "sRGB color converted to linear, surface carried");
+    check(f.value()->lights.size() == 1 && f.value()->lights[0].entity == lamp && f.value()->lights[0].kind == renderer::LightKind::Point &&
+          near(f.value()->lights[0].linear_color.y, 0.21404114) && f.value()->lights[0].intensity == 2000 && f.value()->lights[0].range == 6,
+          "light component becomes a scene light");
+    // Picking follows the real shape: a ray through a cube-only corner misses the sphere.
+    ok(s.execute(commands::DeleteEntity{box}));
+    s.camera.yaw = 0; s.camera.pitch = 0; s.camera.target = {0, 0.5, 0}; s.camera.distance = 8;
+    f = s.frame(1); ok(f);
+    auto [cx, cy] = ndc(*f.value(), {0, 0.5, 0});
+    check(s.pick(*f.value(), cx, cy) == ball, "sphere center hit");
+    auto [kx, ky] = ndc(*f.value(), {0.45, 0.95, 0.45});
+    check(s.pick(*f.value(), kx, ky) == 0, "cube corner is outside the sphere");
+    ok(s.execute(commands::SetMesh{ball, MeshComponent{}}));
+    f = s.frame(1); ok(f);
+    check(s.pick(*f.value(), kx, ky) == ball, "the same ray hits it as a cube");
+    ok(s.undo()); check(s.scene().inspect(ball)->components.mesh->mesh == BuiltinMesh::Sphere, "mesh change undoable");
+    ok(s.create("Floor", 0, {MeshComponent{BuiltinMesh::Plane}, {}, {}})); const auto floor = s.selection();
+    Transform wide; wide.position = {0, 0, 3}; wide.scale = {10, 1, 10}; ok(s.execute(commands::SetTransform{floor, wide}));
+    s.camera.pitch = 0.6; s.camera.target = {0, 0, 3};
+    f = s.frame(1); ok(f);
+    check(s.pick(*f.value(), 0, 0) == floor, "plane hit from above");
+    s.camera.pitch = 0;
+    f = s.frame(1); ok(f);
+    check(s.pick(*f.value(), 0, 0.5) == 0, "ray above the horizon misses the plane");
+    // Play mode looks through the first primary camera; edit mode never does.
+    Transform eye; eye.position = {0, 1.5, 6};
+    ok(s.create("Side", 0, {{}, CameraComponent{40, 0.1, 100, false}, {}}));
+    ok(s.create("Main", 0, {{}, CameraComponent{50, 0.2, 300, true}, {}})); const auto main_camera = s.selection();
+    ok(s.execute(commands::SetTransform{main_camera, eye}));
+    f = s.frame(1.5); ok(f); check(s.view_camera() == 0 && f.value()->camera.lens.entity == 0, "edit mode uses the editor camera");
+    ok(s.play());
+    f = s.frame(1.5); ok(f);
+    check(s.view_camera() == main_camera && f.value()->camera.lens.entity == main_camera && near(f.value()->camera.world.matrix[14], 6) &&
+          near(f.value()->camera.lens.vertical_fov_radians, glm::radians(50.0)) && f.value()->camera.lens.far_plane == 300,
+          "play mode views through the primary camera");
+    eye.scale = {2, 2, 2}; ok(s.execute(commands::SetTransform{main_camera, eye}));
+    f = s.frame(1.5); ok(f);
+    check(s.view_camera() == 0 && !s.view_camera_issue().empty() && f.value()->camera.lens.entity == 0, "scaled camera falls back with a reason");
+    // Component edits in Play mode stay in the runtime copy.
+    ok(s.execute(commands::SetLight{lamp, std::nullopt}));
+    check(!s.scene().inspect(lamp)->components.light, "runtime light removed");
+    ok(s.stop());
+    check(s.scene().inspect(lamp)->components.light && s.scene().inspect(main_camera)->transform.scale.x == 1, "editor components untouched by Play");
+    // Components round-trip through a scene file exactly.
+    const auto path = test_directory() / "components.scene";
+    const auto before = s.editor_scene().snapshot();
+    ok(s.save(path)); ok(s.new_scene()); ok(s.load(path));
+    check(s.editor_scene().snapshot().entities == before.entities, "components saved and loaded");
+    std::filesystem::remove(path);
+}
 void external_camera_validation() {
     Scene scene;
     renderer::PerspectiveCamera lens;
@@ -215,8 +285,8 @@ void external_camera_validation() {
 }
 }
 int main() {
-    try { editing(); persistence(); camera_and_picking(); world_edits(); documents(); play_mode(); acceptance_workflow();
+    try { editing(); persistence(); camera_and_picking(); world_edits(); documents(); play_mode(); components_and_rendering(); acceptance_workflow();
         external_camera_validation();
-        std::cout << "8 editor acceptance groups passed\n"; return 0;
+        std::cout << "9 editor acceptance groups passed\n"; return 0;
     } catch (const std::exception &e) { std::cerr << e.what() << '\n'; return 1; }
 }

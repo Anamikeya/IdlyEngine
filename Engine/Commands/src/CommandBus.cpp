@@ -6,13 +6,16 @@
 #include <type_traits>
 namespace engine::commands {
 namespace {
-constexpr std::array<CommandDescriptor, 6> descriptors{
-    {{"entity.create", Capability::Edit, "name, transform, parent, optional new stable ID"},
+constexpr std::array<CommandDescriptor, 9> descriptors{
+    {{"entity.create", Capability::Edit, "name, transform, parent, optional new stable ID, components"},
      {"entity.delete", Capability::Edit, "stable ID; deletes subtree"},
      {"entity.rename", Capability::Edit, "stable ID, name"},
      {"transform.set", Capability::Edit, "stable ID, finite local TRS"},
      {"hierarchy.reparent", Capability::Edit, "stable ID, parent; preserves local transform"},
-     {"scene.replace", Capability::Edit, "validated versioned snapshot"}}};
+     {"scene.replace", Capability::Edit, "validated versioned snapshot"},
+     {"component.mesh.set", Capability::Edit, "stable ID, built-in mesh and surface, or none to remove"},
+     {"component.camera.set", Capability::Edit, "stable ID, perspective lens and primary flag, or none to remove"},
+     {"component.light.set", Capability::Edit, "stable ID, light type, color, intensity, range, or none to remove"}}};
 struct Guard {
     bool &busy;
     explicit Guard(bool &b) : busy(b) {
@@ -100,7 +103,7 @@ Result<Receipt> CommandBus::execute(const Context &ctx, std::uint64_t expected,
                                     "Requested ID is recycled or exhausted");
                     if (staged.size() >= Scene::max_entities)
                         return fail(ErrorCode::InvalidArgument, "Scene entity limit exceeded");
-                    staged.emplace(id, EntityRecord{id, cmd.name, cmd.parent, cmd.transform});
+                    staged.emplace(id, EntityRecord{id, cmd.name, cmd.parent, cmd.transform, cmd.components});
                     next = id + 1;
                     receipt.created.push_back(id);
                 } else if constexpr (std::is_same_v<T, ReplaceScene>) {
@@ -119,6 +122,12 @@ Result<Receipt> CommandBus::execute(const Context &ctx, std::uint64_t expected,
                         it->second.transform = cmd.transform;
                     else if constexpr (std::is_same_v<T, SetParent>)
                         it->second.parent = cmd.parent;
+                    else if constexpr (std::is_same_v<T, SetMesh>)
+                        it->second.components.mesh = cmd.mesh;
+                    else if constexpr (std::is_same_v<T, SetCamera>)
+                        it->second.components.camera = cmd.camera;
+                    else if constexpr (std::is_same_v<T, SetLight>)
+                        it->second.components.light = cmd.light;
                     else if constexpr (std::is_same_v<T, DeleteEntity>) {
                         std::map<EntityId, std::vector<EntityId>> children;
                         for (const auto &[id, e] : staged)

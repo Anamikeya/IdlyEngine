@@ -39,11 +39,43 @@ struct Parent {
 struct WorldTransform {
     std::array<double, 16> matrix{};
 };
+// ---- Authoring components. Each is optional per entity and part of the entity record, so commands,
+// undo/redo, play-mode copies and scene files carry them like the transform. Colors are sRGB in [0, 1]
+// as picked in the editor; hosts convert to linear for rendering.
+enum class BuiltinMesh : std::uint8_t { Cube = 1, Sphere = 2, Plane = 3 }; // Unit size, centered at the origin.
+struct MeshComponent {
+    BuiltinMesh mesh = BuiltinMesh::Cube;
+    Vec3 color{0.53, 0.78, 0.96};
+    double roughness = 0.65, metallic = 0;
+    bool operator==(const MeshComponent &) const = default;
+};
+// Looks down the entity's local -Z axis. The entity's world transform must be rigid (no scale) to render.
+struct CameraComponent {
+    double vertical_fov_degrees = 60, near_plane = 0.1, far_plane = 1000;
+    bool primary = true; // Play mode renders through the first primary camera, by entity ID.
+    bool operator==(const CameraComponent &) const = default;
+};
+enum class LightType : std::uint8_t { Directional = 1, Point = 2 };
+// Directional lights shine along the entity's local -Z axis; point lights emit from its position.
+struct LightComponent {
+    LightType type = LightType::Directional;
+    Vec3 color{1, 1, 1};
+    double intensity = 100000; // Directional: lux. Point: lumens.
+    double range = 10;         // Point light falloff radius in meters.
+    bool operator==(const LightComponent &) const = default;
+};
+struct Components {
+    std::optional<MeshComponent> mesh;
+    std::optional<CameraComponent> camera;
+    std::optional<LightComponent> light;
+    bool operator==(const Components &) const = default;
+};
 struct EntityRecord {
     EntityId id = 0;
     std::string name;
     EntityId parent = 0;
     Transform transform;
+    Components components;
     bool operator==(const EntityRecord &) const = default;
 };
 struct SceneSnapshot {
@@ -78,7 +110,7 @@ class Scene final {
     static Result<void> validate(const SceneSnapshot &);
 };
 // Text scene format, docs/architecture/006-scene-format.md. Writes the current version; reads 1..current.
-inline constexpr unsigned scene_format_version = 2;
+inline constexpr unsigned scene_format_version = 3;
 Result<void> write_scene(std::ostream &, const SceneSnapshot &);
 Result<SceneSnapshot> read_scene(std::istream &);
 } // namespace engine

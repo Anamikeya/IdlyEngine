@@ -21,6 +21,42 @@ WorldTransform copy(const glm::dmat4 &m) {
     return result;
 }
 glm::dvec3 vector(Vec3 v) { return {v.x, v.y, v.z}; }
+double linear(double c) { return c <= 0.04045 ? c / 12.92 : std::pow((c + 0.055) / 1.055, 2.4); }
+Vec3 linear(const Vec3 &srgb) { return {linear(srgb.x), linear(srgb.y), linear(srgb.z)}; }
+renderer::MeshHandle mesh_handle(BuiltinMesh mesh) {
+    switch (mesh) {
+    case BuiltinMesh::Sphere: return renderer::builtin_sphere;
+    case BuiltinMesh::Plane: return renderer::builtin_plane;
+    default: return renderer::builtin_cube;
+    }
+}
+// Nearest t in [0, limit] where the local ray origin + t * ray enters the shape, or a negative value for a miss.
+double hit(const renderer::MeshHandle &mesh, const glm::dvec3 &origin, const glm::dvec3 &ray, double limit) {
+    if (mesh == renderer::builtin_sphere) {
+        const double a = glm::dot(ray, ray), b = 2 * glm::dot(origin, ray), c = glm::dot(origin, origin) - 0.25;
+        const double disc = b * b - 4 * a * c;
+        if (a < 1e-24 || disc < 0) return -1;
+        const double root = std::sqrt(disc), t0 = (-b - root) / (2 * a), t1 = (-b + root) / (2 * a);
+        const double t = t0 >= 0 ? t0 : t1; // Inside the sphere, the exit point is the first hit ahead.
+        return t >= 0 && t <= limit ? t : -1;
+    }
+    if (mesh == renderer::builtin_plane) {
+        if (std::abs(ray.y) < 1e-12) return -1;
+        const double t = -origin.y / ray.y;
+        const auto p = origin + t * ray;
+        return t >= 0 && t <= limit && std::abs(p.x) <= 0.5 && std::abs(p.z) <= 0.5 ? t : -1;
+    }
+    double low = 0, high = limit;
+    for (int axis = 0; axis < 3; ++axis) {
+        if (std::abs(ray[axis]) < 1e-12) {
+            if (std::abs(origin[axis]) > 0.5) return -1;
+        } else {
+            const double t0 = (-0.5 - origin[axis]) / ray[axis], t1 = (0.5 - origin[axis]) / ray[axis];
+            low = std::max(low, std::min(t0, t1)); high = std::min(high, std::max(t0, t1));
+        }
+    }
+    return high >= low ? low : -1;
+}
 }
 void OrbitCamera::orbit(double dx, double dy) {
     yaw = std::remainder(yaw - dx * 0.008, 6.283185307179586);
@@ -67,9 +103,9 @@ Result<commands::Receipt> EditorSession::execute(commands::Command cmd) {
     reconcile();
     return result;
 }
-Result<commands::Receipt> EditorSession::create(std::string name, EntityId parent) {
+Result<commands::Receipt> EditorSession::create(std::string name, EntityId parent, Components components) {
     Transform t; t.position.y = 0.5;
-    auto r = execute(commands::CreateEntity{std::move(name), t, parent});
+    auto r = execute(commands::CreateEntity{std::move(name), t, parent, 0, std::move(components)});
     if (r) selected_ = r.value().created.front();
     return r;
 }
@@ -159,11 +195,32 @@ void EditorSession::focus() {
 }
 Result<renderer::Frame> EditorSession::frame(double aspect) {
     const auto &shown = scene();
-    std::vector<renderer::MeshBinding> bindings;
-    for (const auto &e : shown.snapshot().entities) bindings.push_back({e.id, {1, 1}, {1, 1}});
-    renderer::PerspectiveCamera lens; lens.aspect_ratio = aspect;
+    const auto entities = shown.snapshot().entities;
+    std::vector<renderer::MeshBinding> meshes;
+    std::vector<renderer::LightBinding> lights;
+    for (const auto &e : entities) {
+        if (const auto &m = e.components.mesh)
+            meshes.push_back({e.id, mesh_handle(m->mesh), renderer::builtin_lit, true, {linear(m->color), m->roughness, m->metallic}});
+        if (const auto &l = e.components.light)
+            lights.push_back({e.id, l->type == LightType::Point ? renderer::LightKind::Point : renderer::LightKind::Directional,
+                              linear(l->color), l->intensity, l->range});
+    }
     // Each play session is a distinct scene identity, so the renderer never reuses editor objects for it.
-    return renderer::extract_frame(shown, {scene_identity(), scene_revision(), ++frame_}, lens, camera.world(), bindings, {});
+    const renderer::FrameStamp stamp{scene_identity(), scene_revision(), ++frame_};
+    view_camera_ = 0; view_camera_issue_.clear();
+    if (runtime_) {
+        const auto primary = std::find_if(entities.begin(), entities.end(),
+            [](const EntityRecord &e) { return e.components.camera && e.components.camera->primary; });
+        if (primary != entities.end()) {
+            const auto &c = *primary->components.camera;
+            const renderer::PerspectiveCamera lens{primary->id, glm::radians(c.vertical_fov_degrees), aspect, c.near_plane, c.far_plane};
+            auto through_camera = renderer::extract_frame(shown, stamp, lens, meshes, lights);
+            if (through_camera) { view_camera_ = primary->id; return through_camera; }
+            view_camera_issue_ = "Camera '" + primary->name + "' cannot be used: " + through_camera.error().message;
+        }
+    }
+    renderer::PerspectiveCamera lens; lens.aspect_ratio = aspect;
+    return renderer::extract_frame(shown, stamp, lens, camera.world(), meshes, lights);
 }
 std::uint64_t EditorSession::scene_identity() const { return runtime_ ? 1 + play_sessions_ : 1; }
 std::uint64_t EditorSession::scene_revision() const { return runtime_ ? runtime_->bus.revision() : bus_.revision(); }
@@ -215,21 +272,14 @@ EntityId EditorSession::pick(const renderer::FrameSnapshot &frame, double x, dou
     const auto segment = glm::dvec3(b - a);
     double nearest = glm::length(segment);
     const auto direction = segment / nearest;
-    EntityId hit = 0;
+    EntityId nearest_entity = 0;
     for (const auto &object : frame.objects) {
         const auto inverse = glm::inverse(glm::make_mat4(object.world.matrix.data()));
+        // The local ray is not normalized, so t stays a world-space distance along the pick ray.
         const glm::dvec3 origin(inverse * a), ray(inverse * glm::dvec4(direction, 0));
-        double low = 0, high = nearest;
-        for (int axis = 0; axis < 3; ++axis) {
-            if (std::abs(ray[axis]) < 1e-12) {
-                if (std::abs(origin[axis]) > 0.5) { high = -1; break; }
-            } else {
-                const double t0 = (-0.5 - origin[axis]) / ray[axis], t1 = (0.5 - origin[axis]) / ray[axis];
-                low = std::max(low, std::min(t0, t1)); high = std::min(high, std::max(t0, t1));
-            }
-        }
-        if (high >= low && low < nearest) { nearest = low; hit = object.entity; }
+        const double t = hit(object.mesh, origin, ray, nearest);
+        if (t >= 0 && t < nearest) { nearest = t; nearest_entity = object.entity; }
     }
-    return hit;
+    return nearest_entity;
 }
 } // namespace engine::editor

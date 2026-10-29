@@ -14,11 +14,21 @@ struct MaterialHandle {
     std::uint32_t index = 0, generation = 0;
     bool operator==(const MaterialHandle &) const = default;
 };
+// Built-in resources every renderer provides. Unit size, centered at the origin; the plane lies in XZ facing +Y.
+inline constexpr MeshHandle builtin_cube{1, 1}, builtin_sphere{2, 1}, builtin_plane{3, 1};
+inline constexpr MaterialHandle builtin_lit{1, 1}; // Lit PBR material driven by Surface.
+// Per-object parameters of the material. Color is linear, components in [0, 1].
+struct Surface {
+    Vec3 linear_color{1, 1, 1};
+    double roughness = 0.65, metallic = 0;
+    bool operator==(const Surface &) const = default;
+};
 struct MeshBinding {
     EntityId entity = 0;
     MeshHandle mesh;
     MaterialHandle material;
     bool visible = true;
+    Surface surface;
 };
 struct PerspectiveCamera {
     EntityId entity = 0;
@@ -39,6 +49,7 @@ struct RenderObject {
     MeshHandle mesh;
     MaterialHandle material;
     WorldTransform world;
+    Surface surface;
 };
 struct RenderLight {
     EntityId entity;

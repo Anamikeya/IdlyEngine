@@ -9,6 +9,42 @@
 #include <stdexcept>
 namespace engine {
 namespace {
+bool unit(double v) { return std::isfinite(v) && v >= 0 && v <= 1; }
+bool color(const Vec3 &c) { return unit(c.x) && unit(c.y) && unit(c.z); }
+Result<void> validate_components(const Components &c) {
+    if (const auto &m = c.mesh) {
+        if (m->mesh != BuiltinMesh::Cube && m->mesh != BuiltinMesh::Sphere && m->mesh != BuiltinMesh::Plane)
+            return fail(ErrorCode::InvalidArgument, "Unknown built-in mesh");
+        if (!color(m->color) || !unit(m->roughness) || !unit(m->metallic))
+            return fail(ErrorCode::InvalidArgument, "Mesh color, roughness and metallic must be within [0, 1]");
+    }
+    if (const auto &cam = c.camera) {
+        if (!std::isfinite(cam->vertical_fov_degrees) || cam->vertical_fov_degrees < 1 || cam->vertical_fov_degrees > 179 ||
+            !std::isfinite(cam->near_plane) || !std::isfinite(cam->far_plane) || cam->near_plane <= 0 ||
+            cam->far_plane <= cam->near_plane)
+            return fail(ErrorCode::InvalidArgument, "Camera needs a 1..179 degree field of view and 0 < near < far");
+    }
+    if (const auto &l = c.light) {
+        if (l->type != LightType::Directional && l->type != LightType::Point)
+            return fail(ErrorCode::InvalidArgument, "Unknown light type");
+        if (!color(l->color) || !std::isfinite(l->intensity) || l->intensity < 0 || !std::isfinite(l->range) ||
+            l->range <= 0)
+            return fail(ErrorCode::InvalidArgument, "Light color must be within [0, 1], intensity >= 0 and range > 0");
+    }
+    return {};
+}
+template <class T> void mirror(flecs::entity e, const std::optional<T> &value) {
+    if (!value) {
+        if (e.has<T>())
+            e.remove<T>();
+    } else if (!e.has<T>() || e.get<T>() != *value)
+        e.set<T>(*value);
+}
+template <class T> std::optional<T> read(flecs::entity e) {
+    if (!e.has<T>())
+        return std::nullopt;
+    return e.get<T>();
+}
 Result<std::map<EntityId, WorldTransform>> matrices(const SceneSnapshot &s) {
     if (s.entities.size() > Scene::max_entities)
         return fail(ErrorCode::InvalidArgument, "Scene entity limit exceeded");
@@ -38,6 +74,8 @@ Result<std::map<EntityId, WorldTransform>> matrices(const SceneSnapshot &s) {
             return fail(ErrorCode::InvalidArgument, "Quaternion must have unit length");
         if (std::abs(t.scale.x) < 1e-8 || std::abs(t.scale.y) < 1e-8 || std::abs(t.scale.z) < 1e-8)
             return fail(ErrorCode::InvalidArgument, "Scale must be invertible");
+        if (auto components = validate_components(e.components); !components)
+            return components.error();
         records.emplace(e.id, &e);
         children[e.parent].push_back(e.id);
     }
@@ -76,6 +114,9 @@ Scene::Scene() {
     w.component<Parent>();
     w.component<Transform>();
     w.component<WorldTransform>();
+    w.component<MeshComponent>();
+    w.component<CameraComponent>();
+    w.component<LightComponent>();
 }
 std::optional<EntityRecord> Scene::inspect(EntityId id) const {
     if (!on_owner_thread())
@@ -84,7 +125,8 @@ std::optional<EntityRecord> Scene::inspect(EntityId id) const {
     if (it == entities_.end())
         return std::nullopt;
     const auto e = world_.native().entity(it->second);
-    return EntityRecord{id, e.get<Name>().value, e.get<Parent>().value, e.get<Transform>()};
+    return EntityRecord{id, e.get<Name>().value, e.get<Parent>().value, e.get<Transform>(),
+                        {read<MeshComponent>(e), read<CameraComponent>(e), read<LightComponent>(e)}};
 }
 SceneSnapshot Scene::snapshot() const {
     if (!on_owner_thread())
@@ -150,6 +192,9 @@ Result<void> Scene::commit(const SceneSnapshot &s) {
                 e.set<Transform>(record.transform);
         }
         auto e = w.entity(entities_.at(record.id));
+        mirror(e, record.components.mesh);
+        mirror(e, record.components.camera);
+        mirror(e, record.components.light);
         const auto &desired_transform = transforms.value().at(record.id);
         if (!e.has<WorldTransform>() || e.get<WorldTransform>().matrix != desired_transform.matrix)
             e.set<WorldTransform>(desired_transform);

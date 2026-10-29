@@ -156,6 +156,16 @@ void invalid_meshes() {
     error(extract_frame(f.scene, {}, f.camera, {}, {}), ErrorCode::InvalidArgument);
     std::vector<MeshBinding> oversized(Scene::max_entities + 1);
     error(f.extract(oversized), ErrorCode::InvalidArgument);
+    // Surface parameters are carried per object and must stay within [0, 1].
+    auto surfaced = mesh(id); surfaced.surface = {{0.25, 0.5, 1}, 0.1, 0.9};
+    auto carried = f.extract({&surfaced, 1});
+    ok(carried);
+    check(carried.value()->objects.at(0).surface == surfaced.surface, "Surface not carried into the frame");
+    for (auto bad : {Surface{{1.5, 0, 0}, 0.5, 0}, Surface{{0, -0.1, 0}, 0.5, 0}, Surface{{0, 0, 0}, 2, 0},
+                     Surface{{0, 0, 0}, 0.5, std::numeric_limits<double>::quiet_NaN()}}) {
+        invalid = mesh(id); invalid.surface = bad;
+        error(f.extract({&invalid, 1}), ErrorCode::InvalidArgument);
+    }
 }
 void invalid_cameras() {
     Fixture f;

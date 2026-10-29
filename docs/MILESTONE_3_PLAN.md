@@ -1,7 +1,7 @@
 # Milestone 3 plan: functional 3D editor
 
 Branch `agent/claude-milestone-3` (from `main` at `37db654`), worktree `D:\AI\GameEngine-Integration`.
-Status: **approved 2026-10-29. S1 complete; S2 next.** Progress and evidence: `docs/MILESTONE_3_REPORT.md`.
+Status: **approved 2026-10-29. S1 and S2 complete; S3 next.** Progress and evidence: `docs/MILESTONE_3_REPORT.md`.
 
 M3 turns the M2 prototype editor into a usable scene editor without replacing Filament, Flecs, ImGui docking,
 GLFW or the typed `CommandBus`. M3 work is not merged into `main` without explicit approval.
