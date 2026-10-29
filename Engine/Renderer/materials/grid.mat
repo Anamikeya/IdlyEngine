@@ -1,0 +1,12 @@
+material {
+    name: EditorGrid,
+    requires: [color],
+    shadingModel: unlit,
+    culling: none
+}
+fragment {
+    void material(inout MaterialInputs material) {
+        prepareMaterial(material);
+        material.baseColor = getColor();
+    }
+}

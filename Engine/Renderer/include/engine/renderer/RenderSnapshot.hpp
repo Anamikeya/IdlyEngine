@@ -70,4 +70,9 @@ using Frame = std::shared_ptr<const FrameSnapshot>;
 // Backend adapters convert projection/depth conventions as necessary.
 Result<Frame> extract_frame(const Scene &, FrameStamp, const PerspectiveCamera &,
                             std::span<const MeshBinding>, std::span<const LightBinding>);
+// Editor navigation is host state, not a managed scene entity or undo operation.
+// The same rigid-camera validation applies. lens.entity is zero for this overload.
+Result<Frame> extract_frame(const Scene &, FrameStamp, const PerspectiveCamera &,
+                            const WorldTransform &camera_world,
+                            std::span<const MeshBinding>, std::span<const LightBinding>);
 } // namespace engine::renderer

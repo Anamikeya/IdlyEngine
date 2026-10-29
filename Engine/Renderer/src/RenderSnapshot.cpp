@@ -20,7 +20,11 @@ WorldTransform matrix(const glm::dmat4 &m) {
 bool rigid(const glm::dmat4 &m) {
     const glm::dvec3 x(m[0]), y(m[1]), z(m[2]);
     constexpr double tolerance = 1e-6;
-    return std::abs(glm::dot(x, x) - 1) < tolerance &&
+    return std::abs(m[0][3]) < tolerance &&
+           std::abs(m[1][3]) < tolerance &&
+           std::abs(m[2][3]) < tolerance &&
+           std::abs(m[3][3] - 1) < tolerance &&
+           std::abs(glm::dot(x, x) - 1) < tolerance &&
            std::abs(glm::dot(y, y) - 1) < tolerance &&
            std::abs(glm::dot(z, z) - 1) < tolerance &&
            std::abs(glm::dot(x, y)) < tolerance &&
@@ -37,6 +41,17 @@ Result<Frame> extract_frame(const Scene &scene, FrameStamp stamp, const Perspect
                             std::span<const LightBinding> lights) {
     if (!scene.on_owner_thread())
         return fail(ErrorCode::WrongThread, "Frame extraction requires the scene owner thread");
+    const auto camera_world = scene.world_transform(camera.entity);
+    if (!camera_world)
+        return fail(ErrorCode::NotFound, "Camera entity does not exist");
+    return extract_frame(scene, stamp, camera, *camera_world, meshes, lights);
+}
+Result<Frame> extract_frame(const Scene &scene, FrameStamp stamp, const PerspectiveCamera &camera,
+                            const WorldTransform &camera_world,
+                            std::span<const MeshBinding> meshes,
+                            std::span<const LightBinding> lights) {
+    if (!scene.on_owner_thread())
+        return fail(ErrorCode::WrongThread, "Frame extraction requires the scene owner thread");
     if (!stamp.scene || meshes.size() > Scene::max_entities || lights.size() > Scene::max_entities)
         return fail(ErrorCode::InvalidArgument, "Invalid scene identity or binding count");
     if (!std::isfinite(camera.vertical_fov_radians) || camera.vertical_fov_radians <= 0 ||
@@ -45,11 +60,8 @@ Result<Frame> extract_frame(const Scene &scene, FrameStamp stamp, const Perspect
         !std::isfinite(camera.near_plane) || !std::isfinite(camera.far_plane) ||
         camera.near_plane <= 0 || camera.far_plane <= camera.near_plane)
         return fail(ErrorCode::InvalidArgument, "Invalid perspective camera lens");
-    const auto camera_world = scene.world_transform(camera.entity);
-    if (!camera_world)
-        return fail(ErrorCode::NotFound, "Camera entity does not exist");
-    const auto world = glm::make_mat4(camera_world->matrix.data());
-    if (!finite(*camera_world) || !rigid(world))
+    const auto world = glm::make_mat4(camera_world.matrix.data());
+    if (!finite(camera_world) || !rigid(world))
         return fail(ErrorCode::InvalidArgument, "Camera world transform must be rigid and unreflected");
     const auto view = matrix(glm::inverse(world));
     const auto projection = matrix(glm::perspectiveRH_NO(camera.vertical_fov_radians,
@@ -57,7 +69,7 @@ Result<Frame> extract_frame(const Scene &scene, FrameStamp stamp, const Perspect
     if (!finite(view) || !finite(projection) || projection.matrix[0] <= 0 ||
         projection.matrix[5] <= 0 || projection.matrix[14] >= 0)
         return fail(ErrorCode::InvalidArgument, "Camera matrix is not numerically representable");
-    FrameSnapshot frame{stamp, {camera, *camera_world, view, projection}, {}, {}};
+    FrameSnapshot frame{stamp, {camera, camera_world, view, projection}, {}, {}};
     frame.objects.reserve(meshes.size());
     frame.lights.reserve(lights.size());
     std::set<EntityId> seen;
