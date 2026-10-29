@@ -119,10 +119,12 @@ struct EditorUI {
             unsigned depth = 0; EntityId parent = entity.parent;
             while (parent && depth < 32) { auto p = session.scene().inspect(parent); if (!p) break; parent = p->parent; ++depth; }
             ImGui::PushID(reinterpret_cast<void *>(static_cast<uintptr_t>(entity.id)));
-            ImGui::Indent(float(depth) * 12);
+            // Indent(0) would apply the default IndentSpacing, so roots must skip it entirely.
+            if (depth) ImGui::Indent(float(depth) * 12);
             if (ImGui::Selectable(entity.name.c_str(), session.selection() == entity.id)) session.select(entity.id);
             if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(0)) session.focus();
-            ImGui::Unindent(float(depth) * 12); ImGui::PopID();
+            if (depth) ImGui::Unindent(float(depth) * 12);
+            ImGui::PopID();
         }
         ImGui::End();
     }

@@ -4,7 +4,10 @@ Branch `integration/milestone-2`, worktree `D:\AI\GameEngine-Integration`. Date 
 Auditor: Claude (single agent). Toolchain: MSVC 19.44.35228 x64 (14.44.35207), CMake 3.31.2, Ninja 1.12.0
 (Strawberry, first on `PATH`), Windows 10 Pro 19045, NVIDIA RTX 3080 (driver 576.28, OpenGL 4.5).
 
-**Verdict: CONDITIONAL PASS** (see section 10).
+**Verdict: PASS for local integration; hosted CI unavailable** (see section 10). Sections 1–9 record the first
+audit pass (commit `28d389f`); section 11 records the follow-up verification run later the same day, which built the
+`windows-msvc-release` and `windows-msvc-ci` presets, drove the editor with real mouse and keyboard input, and fixed
+one hierarchy display defect. Where the two disagree, section 11 is current.
 
 ## 1. Git integration status
 
@@ -49,8 +52,10 @@ needed changing.
 | `docs/architecture/005-editor-m2.md` | Executable path `out/editor/bin` (kept from the earlier change) | The root sets `CMAKE_RUNTIME_OUTPUT_DIRECTORY` to `bin` |
 | `.gitignore` | `/build-*/` | `build-msvc/`, `build-claude-audit-*` showed up as untracked |
 | `docs/MILESTONE_2_INTEGRATION_AUDIT.md` | This report | |
+| `Engine/Editor/src/Main.cpp` (follow-up run) | Skip `ImGui::Indent`/`Unindent` for depth 0 in the hierarchy | #11, section 11 |
 
-No engine C++ source, test, or shared dependency (`D:\AI\GameEngine\resources`) was modified. No test was removed,
+In the first pass no engine C++ source, test, or shared dependency (`D:\AI\GameEngine\resources`) was modified;
+the follow-up run changed only the four hierarchy lines in `Main.cpp` (#11). No test was removed,
 weakened or skipped.
 
 ## 4. Configuration result
@@ -143,8 +148,9 @@ Run on the local interactive desktop (RTX 3080). The Debug executable was used.
 | Shutdown | `WM_CLOSE` (`CloseMainWindow`) → exit 0, `Editor stopped cleanly.`, empty stderr. Smoke exit 0 | Verified |
 | Scene persistence | `smoke.scene`: `ENGINE_SCENE 1 2 1` / `ENTITY 1 0 "Cube" 1.5 0.75 0 0 0 0 1 1.5 1.5 1.5` | Verified |
 
-Not verified (no input automation): real mouse-driven orbit/pan/zoom, click picking and gizmo dragging, keyboard
-shortcuts, dragging dock splitters, DPI changes, extended minimized periods. Picking, camera and world-edit maths are
+Not verified in this first pass (no input automation): real mouse-driven orbit/pan/zoom, click picking and gizmo
+dragging, keyboard shortcuts, dragging dock splitters, DPI changes, extended minimized periods. All of these except
+DPI changes were later verified with real input; see section 11. Picking, camera and world-edit maths are
 covered by `engine.editor.acceptance` on the CPU side. Visual verification used the GPU readback, not a desktop
 screenshot.
 
@@ -186,12 +192,13 @@ P2:
 - **Two ImGui builds.** `gameengine::imgui` (root, used by `editor_dependency_smoke`) and `editor_imgui` (editor,
   adds ImGuizmo) compile the same sources. They are never linked into one binary, so no ODR clash, but the headless
   smoke test does not exercise the library the editor ships with.
-- **GUI interaction not automated** (section 7).
-- **The combined `windows-msvc-release`/`windows-msvc-ci` presets were not built** in this audit. Release was
-  built, tested and smoke-run through the standalone entry point, which compiles the same root tree.
-- **Orphan process.** `cmake -S . -B build-msvc ...` (PID 47348, started 12:40, 1 CPU-second) is still alive from the
-  user's earlier attempt, idle after the recursion in #1. It was not killed. `build-msvc/` (498 nested dirs) and the old
-  `build/` (Strawberry GCC) can be deleted once that process is gone.
+- ~~GUI interaction not automated~~: resolved in section 11 (real SendInput mouse/keyboard against the editor).
+- ~~The combined `windows-msvc-release`/`windows-msvc-ci` presets were not built~~: resolved in section 11 (both
+  configure, build and pass 132/132 from fresh directories).
+- **Stale build directories.** The orphan `cmake -S . -B build-msvc ...` (PID 47348) noted by the first pass had
+  exited by the follow-up run. `build-msvc/` (498 nested dirs from the recursion in #1) and the old `build/`
+  (Strawberry GCC) remain in this worktree. They are ignored by Git and were deliberately left in place: this audit
+  deletes nothing. Remove them by hand when convenient.
 - GNS remains compile-check only (user decision); miniaudio and Tracy are pinned in the lock but not integrated (not in
   M2 scope).
 
@@ -222,14 +229,115 @@ P3:
 
 ## 10. Final readiness verdict
 
-**CONDITIONAL PASS.** The clean MSVC Debug configure and serial build succeed; all 133 tests pass, including the
-visible GPU smoke test; and the editor launches, renders Filament frames inside the ImGui docking layout, survives
-OS resize and minimize/restore, and shuts down cleanly. The blocking build defects (#1, #7, #10) and the
-re-configure defects (#5, #6) are fixed and verified.
+First pass: **CONDITIONAL PASS.** The clean MSVC Debug configure and serial build succeed; all 133 tests pass,
+including the visible GPU smoke test; and the editor launches, renders Filament frames inside the ImGui docking
+layout, survives OS resize and minimize/restore, and shuts down cleanly. The blocking build defects (#1, #7, #10)
+and the re-configure defects (#5, #6) were fixed and verified. Open at that point: interactive input, the
+`windows-msvc-release`/`windows-msvc-ci` presets, and GitHub CI.
 
-Non-blocking limitations: CI changes are unverified on GitHub, the build dir must share a drive with the resources,
-interactive input is not automated, and the `windows-msvc-ci` preset (`/WX`, RelWithDebInfo) was not built in this
-audit. Release was built and verified through the standalone entry point: 132/132 tests and a 91-frame GPU smoke run.
+After the follow-up run (section 11): **PASS for local integration.** Both presets build and pass 132/132 from fresh
+directories, and every essential editor interaction was exercised with real input and checked on screen. One P2
+display defect found that way (hierarchy indentation) is fixed. No P0/P1 defect is open.
 
-Next reproducible actions: run `.github/workflows/ci.yml` on GitHub; build `--preset windows-msvc-release` and
-`windows-msvc-ci` from a fresh directory; once PID 47348 is gone, delete `build-msvc/` and `build/`.
+Remaining limitations: **hosted CI is unavailable** (the repository has no Git remote, so `ci.yml`, including fix
+#9, has never run on GitHub); the build dir must share a drive with the resources; DPI-change handling and the
+section 11 P3 items are not addressed.
+
+Next reproducible action: once a GitHub remote exists, push `integration/milestone-2` (or `main`) and run
+`.github/workflows/ci.yml`; its Windows job builds the same two presets verified locally in section 11.
+
+## 11. Follow-up verification run (2026-10-29, evening)
+
+Everything in this section was run during the follow-up session; nothing is carried over from the first pass.
+
+### Git and environment
+
+| Check | Result |
+|---|---|
+| Worktrees | `main` a0933b5 (`D:\AI\GameEngine`), `agent/claude-systems-m2` a143cb0, `agent/codex-editor-m2` 064eb68, `integration/milestone-2` 28d389f before this commit. All as expected |
+| Ancestry | `main` is an ancestor of `integration/milestone-2` (3 commits ahead: a143cb0, 73435db, 28d389f), so `main` can fast-forward |
+| Remotes | `git remote -v` is empty in every worktree. No push, PR or hosted CI is possible |
+| Local changes at start | Integration: untracked `audit.txt`, `build-log.txt` only (left untouched and uncommitted). Claude and Codex worktrees clean |
+| MSVC environment | `cmake/scripts/dev-shell.ps1` loaded `vcvars64.bat` in 2 s; `cl` = `...\14.44.35207\bin\HostX64\x64\cl.exe` |
+
+### Preset builds (fresh directories)
+
+```powershell
+$env:GAMEENGINE_RESOURCES_DIR = 'D:\AI\GameEngine\resources'
+./cmake/scripts/dev-shell.ps1      # imports vcvars64 into the session
+cmake --preset windows-msvc-release -B build-m2-windows-msvc-release
+cmake --build build-m2-windows-msvc-release
+ctest --test-dir build-m2-windows-msvc-release --output-on-failure
+# same three commands with windows-msvc-ci / build-m2-windows-msvc-ci
+```
+
+| Preset | Configure | Build | CTest |
+|---|---|---|---|
+| `windows-msvc-release` | exit 0; `Dependency filament: 4e2df5e... (locked)`; `editor=ON` | 882/882, exit 0 (about 4 min, parallel) | 132/132 passed |
+| `windows-msvc-ci` (RelWithDebInfo, `/WX` on engine targets, strict lock) | exit 0 | 882/882, exit 0 | 132/132 passed |
+| Both again, after the indentation fix below | n/a | exit 0 (incremental) | 132/132 passed each |
+
+Warnings: about 380 per preset, all in Filament sources under `resources/filament` (for example
+`libs/filaflat/src/DictionaryReader.cpp` via `xutility`). None come from `Engine/` or `Tests/`, and the CI preset's
+`/WX` on engine targets passed. Logs: `build-m2-logs/` (ignored by Git).
+
+GPU smoke from the Release preset: `build-m2-windows-msvc-release\bin\engine_editor.exe --smoke` →
+`GPU smoke passed: 91 frames; transform, undo/redo, save/load, resize and capture.` / `Editor stopped cleanly.`,
+exit 0.
+
+### Interactive editor verification with real input
+
+Method: a PowerShell driver sends real mouse and keyboard events with `SendInput` (cursor moves, button down/up,
+wheel, key presses) to the editor's GLFW window, then captures the window's client area from the screen with
+`Graphics.CopyFromScreen`. These are desktop captures, not GPU readbacks. Every result below was read off the
+capture taken after the action (Inspector values, toolbar revision, Console log, viewport contents) or off the
+saved scene file. The driver binds to the window owned by the PID it launched, never by window title. Display: 150%
+scaling (144 DPI), RTX 3080.
+
+Runs: the standalone Release editor from the first pass (`build-claude-audit-standalone2`, same sources) for the
+full interaction sweep, then the `windows-msvc-release` preset editor, rebuilt after the indentation fix, for the
+regression and persistence pass.
+
+| Area | Action (real input) | Observed result | Status |
+|---|---|---|---|
+| Rendering | Launch | Filament OpenGL frame in the docked 3D Viewport: lit cube, grid, axis lines, translate gizmo; all six panels docked | Verified |
+| Picking | Left-click empty viewport, then the cube | Inspector clears ("Select an entity…"), then shows Stable ID 1; hierarchy row highlights | Verified |
+| Move gizmo | Drag the X arrow | Position X 0 → 2.810, revision 1 → 2, Console `Gizmo transform committed`, cube moves | Verified |
+| Undo / redo | Ctrl+Z, Ctrl+Y | X back to 0.000, then 2.810; Console `Undo` / `Redo` | Verified |
+| Orbit / pan / zoom / focus | Right-drag, middle-drag, wheel ±, F | View rotates, translates, dollies; F centres the selection; revision unchanged (navigation is not authoring) | Verified |
+| Rotate gizmo | Combo → Rotate, drag the Y ring | Rotation Y 0 → 53.570°, revision 5 | Verified |
+| Scale gizmo | Combo → Scale, drag the Y handle | Scale Y 1 → 2.150, revision 6 | Verified |
+| Inspector edit | Double-click Position X, type `1.25`, Enter | X = 1.250, world position 1.250, revision 7 | Verified |
+| Rename | Name field, type, Enter | Hierarchy and Inspector show the new name; Console `Renamed entity` | Verified |
+| Create / reparent | `+ Cube`, Parent combo → parent | Second entity (ID 2) created; after reparent its world position composes the parent's rotation and scale (1.250, 1.575, 0) | Verified |
+| Delete / undo delete | Select parent, Delete; Ctrl+Z | 0 entities (subtree), then both restored with stable IDs and parent link | Verified |
+| Save | Ctrl+S and the Save button | `Untitled.scene` holds `ENGINE_SCENE 1 …` plus one `ENTITY` line per entity with the edited TRS and parent | Verified |
+| Load / undo load | Load button; Ctrl+Z | Scene replaced from file; undo restores the previous scene | Verified |
+| Persistence across restart | Save, close the editor, relaunch, Load | Child keeps local X 2.303, parent link, world (2.303, 1.000, 0.000) | Verified |
+| Docking | Drag the Console tab onto the hierarchy node; drag the viewport/Inspector splitter | Console docks as a tab beside Scene Hierarchy; viewport and Inspector resize live | Verified |
+| Window resize | `SetWindowPos` to 900×600 and 1800×1100 | Layout and viewport follow; no errors (small sizes squeeze the viewport, see below) | Verified |
+| Minimize / restore | `ShowWindow` minimize, about 2 min minimized, restore | Scene and revision intact after restore; rendering resumes | Verified |
+| Shutdown | `WM_CLOSE` | Exit in 288 ms, stdout `Editor stopped cleanly.`, empty stderr; `imgui.ini` written with a `DockSpace` tree | Verified |
+
+Not verified: DPI changes while running; multi-monitor moves; Ctrl+Shift+Z (Ctrl+Y was used); OS multi-viewport
+windows (disabled by design).
+
+### Defect found and fixed
+
+| # | Symptom | Root cause | Fix | Verification | Severity |
+|---|---|---|---|---|---|
+| 11 | In Scene Hierarchy, a child is drawn *less* indented than its root parent | `ImGui::Indent(0)` applies the default `IndentSpacing` (about 21 px), so depth-0 rows were indented more than depth-1 rows (12 px) | `Engine/Editor/src/Main.cpp`: indent only when `depth > 0` | Real input on the rebuilt preset editor: roots flush left, child indented under its parent; both presets 132/132 | P2 (display only; data was correct) |
+
+### Additional observations (not fixed, P3)
+
+- At 150% Windows scaling the ImGui UI is not DPI-scaled, so text is small (the window is DPI-aware; fonts are not
+  scaled).
+- The Console does not auto-scroll to new messages.
+- The default dock layout keeps side-panel widths in pixels, so a small window leaves a narrow viewport.
+- The hierarchy lists entities in ID order with indentation, not as a tree. A child created before its parent would
+  be listed above it. M3 tree-view work.
+
+### Hosted CI
+
+No remote is configured, so nothing was pushed and no PR or GitHub Actions run exists. Hosted CI remains an
+outstanding limitation, not a failure.
