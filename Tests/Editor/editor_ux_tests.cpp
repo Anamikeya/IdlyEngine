@@ -247,9 +247,16 @@ ENGINE_TEST(default_table_has_unique_ids_and_no_conflicts_within_a_context) {
 		ENGINE_CHECK(!command.tooltip.empty());
 		ENGINE_CHECK(r.add(std::move(command)));
 	}
+	// Two commands in one context would be a real conflict. A panel's binding over a global one is a choice: it is what
+	// the routing is for. Those are listed here so that a new one is a decision too.
+	const std::string allowed[] = {"Edit.Rename F2", "Asset.Rename F2", "Edit.Deselect Esc", "Assets.CloseDrawer Esc"};
 	for (const auto& command : r.commands())
 		for (const auto chord : command.chords)
-			if (!r.conflicts(command.info.id, chord).empty()) ENGINE_CHECK_EQ(command.info.id + " " + to_string(chord), std::string("no conflict"));
+			for (const auto* other : r.conflicts(command.info.id, chord)) {
+				const auto entry = command.info.id + " " + to_string(chord);
+				ENGINE_CHECK(other->info.context != command.info.context);
+				if (std::ranges::find(allowed, entry) == std::end(allowed)) ENGINE_CHECK_EQ(entry, std::string("no overlap"));
+			}
 }
 ENGINE_TEST(default_table_keeps_the_existing_shortcuts) {
 	CommandRegistry r;
