@@ -10,6 +10,7 @@
 #include <chrono>
 #include <cmath>
 #include <numbers>
+#include <optional>
 #include <thread>
 #include <vector>
 
@@ -19,11 +20,16 @@ using namespace std::chrono_literals;
 namespace commands = engine::commands;
 using engine::Application;
 using engine::ApplicationClient;
+using engine::BodyKind;
+using engine::ColliderComponent;
+using engine::ColliderShape;
+using engine::Components;
 using engine::EntityId;
 using engine::ErrorCode;
 using engine::FixedUpdate;
 using engine::LoopConfig;
 using engine::Result;
+using engine::RigidBodyComponent;
 using engine::Scene;
 using engine::SceneSnapshot;
 using engine::Transform;
@@ -47,27 +53,38 @@ Transform at(double x, double y, double z)
 	return t;
 }
 
-Collider sphere(float radius, bool contact_events = false)
+// Authoring helpers produce the scene's physics components; the bridge converts them when it syncs.
+ColliderComponent sphere(float radius, bool events = false)
 {
-	Collider c;
-	c.shape = SphereShape{radius, {}};
-	c.enable_contact_events = contact_events;
+	ColliderComponent c;
+	c.shape = ColliderShape::Sphere;
+	c.radius = radius;
+	c.events = events;
 	return c;
 }
 
-Collider box(Vec3 half_extents, bool contact_events = false)
+ColliderComponent box(Vec3 half_extents, bool events = false)
 {
-	Collider c;
-	c.shape = BoxShape{half_extents, {}};
-	c.enable_contact_events = contact_events;
+	ColliderComponent c;
+	c.shape = ColliderShape::Box;
+	c.half_extents = {half_extents.x, half_extents.y, half_extents.z};
+	c.events = events;
 	return c;
 }
 
-RigidBody body_of(BodyType type)
+RigidBodyComponent body_of(BodyType type)
 {
-	RigidBody b;
-	b.type = type;
+	RigidBodyComponent b;
+	b.kind = type == BodyType::Static ? BodyKind::Static : type == BodyType::Kinematic ? BodyKind::Kinematic : BodyKind::Dynamic;
 	return b;
+}
+
+Components physical(std::optional<RigidBodyComponent> body, std::vector<ColliderComponent> colliders)
+{
+	Components c;
+	c.body = body;
+	c.colliders = std::move(colliders);
+	return c;
 }
 
 // One scene with an editor bus (undo history) and a history-free runtime bus for physics (contract C-1).
@@ -79,11 +96,24 @@ struct Fixture {
 	commands::Context physics_ctx{"physics", all_grants};
 	ScenePhysics physics = make_physics();
 
-	EntityId create(const char* name, Transform transform = {}, EntityId parent = 0)
+	EntityId create(const char* name, Transform transform = {}, EntityId parent = 0, Components components = {})
 	{
-		auto receipt = editor.execute(editor_ctx, editor.revision(), commands::CreateEntity{name, transform, parent, 0});
+		auto receipt =
+			editor.execute(editor_ctx, editor.revision(), commands::CreateEntity{name, transform, parent, 0, std::move(components)});
 		ENGINE_REQUIRE(static_cast<bool>(receipt));
 		return receipt.value().created.front();
+	}
+
+	// Sets body and colliders as one editor transaction, as the Inspector does.
+	Result<commands::Receipt> author(EntityId id, std::optional<RigidBodyComponent> body, std::vector<ColliderComponent> colliders)
+	{
+		const commands::Command batch[] = {commands::SetRigidBody{id, body}, commands::SetColliders{id, std::move(colliders)}};
+		return editor.execute(editor_ctx, editor.revision(), std::span<const commands::Command>(batch));
+	}
+
+	void set_colliders(EntityId id, std::vector<ColliderComponent> colliders)
+	{
+		ENGINE_REQUIRE(static_cast<bool>(editor.execute(editor_ctx, editor.revision(), commands::SetColliders{id, std::move(colliders)})));
 	}
 
 	void move(EntityId id, Transform transform)
@@ -93,18 +123,12 @@ struct Fixture {
 
 	EntityId ground()
 	{
-		const EntityId id = create("ground", at(0, -0.5, 0));
-		ENGINE_REQUIRE(static_cast<bool>(physics.set_rigid_body(scene, id, body_of(BodyType::Static))));
-		ENGINE_REQUIRE(static_cast<bool>(physics.add_collider(id, box({50.0f, 0.5f, 50.0f}, true))));
-		return id;
+		return create("ground", at(0, -0.5, 0), 0, physical(body_of(BodyType::Static), {box({50.0f, 0.5f, 50.0f}, true)}));
 	}
 
 	EntityId ball(double y, float radius = 0.5f, bool contact_events = false)
 	{
-		const EntityId id = create("ball", at(0, y, 0));
-		ENGINE_REQUIRE(static_cast<bool>(physics.set_rigid_body(scene, id, body_of(BodyType::Dynamic))));
-		ENGINE_REQUIRE(static_cast<bool>(physics.add_collider(id, sphere(radius, contact_events))));
-		return id;
+		return create("ball", at(0, y, 0), 0, physical(body_of(BodyType::Dynamic), {sphere(radius, contact_events)}));
 	}
 
 	TickReport tick()
@@ -207,8 +231,7 @@ ENGINE_TEST(simulation_is_deterministic_under_fixed_timestep)
 		f.ground();
 		for (int i = 0; i < 6; ++i) {
 			const EntityId id = f.create("box", at(0.1 * i, 0.6 + 1.05 * i, 0.05 * i));
-			ENGINE_REQUIRE(static_cast<bool>(f.physics.set_rigid_body(f.scene, id, body_of(BodyType::Dynamic))));
-			ENGINE_REQUIRE(static_cast<bool>(f.physics.add_collider(id, box({0.5f, 0.5f, 0.5f}))));
+			ENGINE_REQUIRE(static_cast<bool>(f.author(id, body_of(BodyType::Dynamic), {box({0.5f, 0.5f, 0.5f})})));
 		}
 		f.physics.set_simulation_enabled(true);
 		f.ticks(180);
@@ -248,8 +271,7 @@ ENGINE_TEST(kinematic_body_follows_scene_without_teleport_and_stops)
 {
 	Fixture f;
 	const EntityId platform = f.create("platform", at(0, 0, 0));
-	ENGINE_REQUIRE(static_cast<bool>(f.physics.set_rigid_body(f.scene, platform, body_of(BodyType::Kinematic))));
-	ENGINE_REQUIRE(static_cast<bool>(f.physics.add_collider(platform, box({1.0f, 0.1f, 1.0f}))));
+	ENGINE_REQUIRE(static_cast<bool>(f.author(platform, body_of(BodyType::Kinematic), {box({1.0f, 0.1f, 1.0f})})));
 	f.physics.set_simulation_enabled(true);
 	f.tick();
 
@@ -282,8 +304,7 @@ ENGINE_TEST(parented_dynamic_body_publishes_local_transform)
 	Transform child_local = at(1, 3, 0);
 	child_local.scale = {0.5, 0.5, 0.5};
 	const EntityId child = f.create("ball", child_local, parent);
-	ENGINE_REQUIRE(static_cast<bool>(f.physics.set_rigid_body(f.scene, child, body_of(BodyType::Dynamic))));
-	ENGINE_REQUIRE(static_cast<bool>(f.physics.add_collider(child, sphere(0.5f))));
+	ENGINE_REQUIRE(static_cast<bool>(f.author(child, body_of(BodyType::Dynamic), {sphere(0.5f)})));
 
 	f.physics.set_simulation_enabled(true);
 	f.ticks(20);
@@ -307,14 +328,13 @@ ENGINE_TEST(unsupported_hierarchies_are_reported_not_simulated)
 	Fixture f;
 	const EntityId outer = f.ball(5.0);
 	const EntityId nested = f.create("nested", at(0, 2, 0), outer);
-	ENGINE_REQUIRE(static_cast<bool>(f.physics.set_rigid_body(f.scene, nested, body_of(BodyType::Dynamic))));
-	ENGINE_REQUIRE(static_cast<bool>(f.physics.add_collider(nested, sphere(0.25f))));
+	ENGINE_REQUIRE(static_cast<bool>(f.author(nested, body_of(BodyType::Dynamic), {sphere(0.25f)})));
 
 	Transform stretched = at(10, 0, 0);
 	stretched.scale = {1, 3, 1};
 	const EntityId stretched_parent = f.create("stretched", stretched);
 	const EntityId under_stretch = f.create("child", at(0, 1, 0), stretched_parent);
-	ENGINE_REQUIRE(static_cast<bool>(f.physics.set_rigid_body(f.scene, under_stretch, body_of(BodyType::Dynamic))));
+	ENGINE_REQUIRE(static_cast<bool>(f.author(under_stretch, body_of(BodyType::Dynamic), {})));
 
 	f.tick();
 	const PhysicsDiagnostics d = f.physics.diagnostics();
@@ -325,6 +345,51 @@ ENGINE_TEST(unsupported_hierarchies_are_reported_not_simulated)
 	ENGINE_CHECK(!f.physics.body_state(nested).has_value());
 }
 
+// The verdict can change while the entity's own world matrix stays exactly the same.
+ENGINE_TEST(hierarchy_issues_follow_changes_that_keep_the_world_transform)
+{
+	Fixture f;
+	const EntityId outer = f.ball(5.0);
+	const EntityId ball = f.ball(2.0);
+	f.tick();
+	ENGINE_CHECK(f.physics.diagnostics().issues.empty());
+
+	// Reparented under a dynamic body, world pose unchanged (as the editor's reparent does).
+	const commands::Command under[] = {commands::SetParent{ball, outer}, commands::SetTransform{ball, at(0, -3, 0)}};
+	ENGINE_REQUIRE(static_cast<bool>(f.editor.execute(f.editor_ctx, f.editor.revision(), std::span<const commands::Command>(under))));
+	ENGINE_CHECK_EQ(f.world_position(ball).y, 2.0f);
+	f.tick();
+	auto issues = f.physics.diagnostics().issues;
+	ENGINE_REQUIRE(issues.size() == 1);
+	ENGINE_CHECK_EQ(issues[0].entity, ball);
+	ENGINE_CHECK(!f.physics.body_state(ball).has_value());
+
+	// Moved back out, world pose unchanged: the issue clears and the body returns.
+	const commands::Command out[] = {commands::SetParent{ball, 0}, commands::SetTransform{ball, at(0, 2, 0)}};
+	ENGINE_REQUIRE(static_cast<bool>(f.editor.execute(f.editor_ctx, f.editor.revision(), std::span<const commands::Command>(out))));
+	f.tick();
+	ENGINE_CHECK(f.physics.diagnostics().issues.empty());
+	ENGINE_REQUIRE(f.physics.body_state(ball).has_value());
+	ENGINE_CHECK_EQ(f.physics.body_state(ball)->pose.position.y, 2.0f);
+
+	// A parent that becomes dynamic flags its child; turning it static again clears the issue.
+	const EntityId holder = f.create("holder", at(10, 0, 0));
+	const EntityId child = f.ball(1.0);
+	const commands::Command adopt[] = {commands::SetParent{child, holder}, commands::SetTransform{child, at(-10, 1, 0)}};
+	ENGINE_REQUIRE(static_cast<bool>(f.editor.execute(f.editor_ctx, f.editor.revision(), std::span<const commands::Command>(adopt))));
+	f.tick();
+	ENGINE_CHECK(f.physics.diagnostics().issues.empty());
+	ENGINE_REQUIRE(static_cast<bool>(f.author(holder, body_of(BodyType::Dynamic), {sphere(0.5f)})));
+	f.tick();
+	issues = f.physics.diagnostics().issues;
+	ENGINE_REQUIRE(issues.size() == 1);
+	ENGINE_CHECK_EQ(issues[0].entity, child);
+	ENGINE_REQUIRE(static_cast<bool>(f.author(holder, body_of(BodyType::Static), {sphere(0.5f)})));
+	f.tick();
+	ENGINE_CHECK(f.physics.diagnostics().issues.empty());
+	ENGINE_CHECK(f.physics.body_state(child).has_value());
+}
+
 ENGINE_TEST(world_scale_is_baked_into_colliders)
 {
 	Fixture f;
@@ -332,8 +397,7 @@ ENGINE_TEST(world_scale_is_baked_into_colliders)
 	Transform scaled = at(0, 4, 0);
 	scaled.scale = {2, 2, 2};
 	const EntityId ball = f.create("big ball", scaled);
-	ENGINE_REQUIRE(static_cast<bool>(f.physics.set_rigid_body(f.scene, ball, body_of(BodyType::Dynamic))));
-	ENGINE_REQUIRE(static_cast<bool>(f.physics.add_collider(ball, sphere(0.5f))));
+	ENGINE_REQUIRE(static_cast<bool>(f.author(ball, body_of(BodyType::Dynamic), {sphere(0.5f)})));
 	f.physics.set_simulation_enabled(true);
 	f.ticks(240);
 	// Radius 0.5 * scale 2 rests with its centre ~1 m above the ground.
@@ -354,12 +418,10 @@ ENGINE_TEST(non_uniform_scale_accepts_axis_aligned_boxes_only)
 	Transform stretched = at(0, 0, 0);
 	stretched.scale = {1, 2, 3};
 	const EntityId a = f.create("stretched box", stretched);
-	ENGINE_REQUIRE(static_cast<bool>(f.physics.set_rigid_body(f.scene, a, body_of(BodyType::Static))));
-	ENGINE_REQUIRE(static_cast<bool>(f.physics.add_collider(a, box({0.5f, 0.5f, 0.5f}))));
+	ENGINE_REQUIRE(static_cast<bool>(f.author(a, body_of(BodyType::Static), {box({0.5f, 0.5f, 0.5f})})));
 	stretched.position = {5, 0, 0};
 	const EntityId b = f.create("stretched sphere", stretched);
-	ENGINE_REQUIRE(static_cast<bool>(f.physics.set_rigid_body(f.scene, b, body_of(BodyType::Static))));
-	ENGINE_REQUIRE(static_cast<bool>(f.physics.add_collider(b, sphere(0.5f))));
+	ENGINE_REQUIRE(static_cast<bool>(f.author(b, body_of(BodyType::Static), {sphere(0.5f)})));
 	f.tick();
 
 	ENGINE_CHECK(f.physics.body_state(a).has_value());
@@ -390,28 +452,46 @@ ENGINE_TEST(entity_delete_destroys_body_and_undo_restores_it)
 	f.tick();
 	PhysicsDiagnostics d = f.physics.diagnostics();
 	ENGINE_CHECK_EQ(d.world.body_count, 0);
-	ENGINE_CHECK_EQ(d.detached_entities, std::size_t{1});
-	ENGINE_CHECK_EQ(d.authored_entities, std::size_t{1});
+	// Authoring lives in the scene record, so the deleted entity takes it along...
+	ENGINE_CHECK_EQ(d.authored_entities, std::size_t{0});
 
+	// ...and undo brings both back.
 	ENGINE_REQUIRE(static_cast<bool>(f.editor.undo(f.editor_ctx, f.editor.revision())));
 	f.tick();
 	d = f.physics.diagnostics();
 	ENGINE_CHECK_EQ(d.world.body_count, 1);
-	ENGINE_CHECK_EQ(d.detached_entities, std::size_t{0});
+	ENGINE_CHECK_EQ(d.authored_entities, std::size_t{1});
 	ENGINE_CHECK_EQ(f.physics.colliders(ball).size(), std::size_t{1});
 	ENGINE_CHECK_EQ(f.physics.body_state(ball)->pose.position.y, 2.0f);
 }
 
-ENGINE_TEST(purge_detached_drops_authoring_of_missing_entities)
+ENGINE_TEST(entities_that_lose_physics_components_are_dropped)
 {
 	Fixture f;
 	const EntityId keep = f.ball(1.0);
 	const EntityId gone = f.ball(2.0);
 	f.tick();
 	ENGINE_REQUIRE(static_cast<bool>(f.editor.execute(f.editor_ctx, f.editor.revision(), commands::DeleteEntity{gone})));
-	ENGINE_CHECK_EQ(f.physics.purge_detached(f.scene), std::size_t{1});
+	f.tick();
 	ENGINE_CHECK(f.physics.authored_entities() == (std::vector<EntityId>{keep}));
 	ENGINE_CHECK_EQ(f.physics.diagnostics().world.body_count, 1);
+
+	// Removing the components (not the entity) destroys the body too, and undo restores it.
+	ENGINE_REQUIRE(static_cast<bool>(f.author(keep, std::nullopt, {})));
+	f.tick();
+	ENGINE_CHECK(f.physics.authored_entities().empty());
+	ENGINE_CHECK_EQ(f.physics.diagnostics().world.body_count, 0);
+	ENGINE_CHECK(!f.physics.rigid_body(keep).has_value());
+	ENGINE_REQUIRE(static_cast<bool>(f.editor.undo(f.editor_ctx, f.editor.revision())));
+	f.tick();
+	ENGINE_CHECK(f.physics.authored_entities() == (std::vector<EntityId>{keep}));
+	ENGINE_CHECK_EQ(f.physics.diagnostics().world.body_count, 1);
+
+	// Replacing the scene (a load) drops bodies of entities that are not in the new scene.
+	ENGINE_REQUIRE(static_cast<bool>(f.editor.execute(f.editor_ctx, f.editor.revision(), commands::ReplaceScene{SceneSnapshot{}})));
+	f.tick();
+	ENGINE_CHECK(f.physics.authored_entities().empty());
+	ENGINE_CHECK_EQ(f.physics.diagnostics().world.body_count, 0);
 }
 
 ENGINE_TEST(physics_resources_are_released)
@@ -429,10 +509,14 @@ ENGINE_TEST(physics_resources_are_released)
 		f.ticks(30);
 		ENGINE_CHECK_EQ(live_world_count(), worlds_before + 1);
 		for (EntityId id : balls) {
-			ENGINE_CHECK(static_cast<bool>(f.physics.remove_rigid_body(id)));
+			ENGINE_CHECK(static_cast<bool>(f.author(id, std::nullopt, {})));
 		}
+		f.tick();
 		ENGINE_CHECK_EQ(f.physics.diagnostics().world.body_count, 1);
-		ENGINE_CHECK(!f.physics.remove_rigid_body(balls.front()));
+		// Authoring a deleted entity is refused by the scene.
+		ENGINE_REQUIRE(static_cast<bool>(f.editor.execute(f.editor_ctx, f.editor.revision(), commands::DeleteEntity{balls.front()})));
+		const auto missing = f.author(balls.front(), body_of(BodyType::Dynamic), {sphere(0.5f)});
+		ENGINE_CHECK(!missing && missing.error().code == ErrorCode::NotFound);
 	}
 	ENGINE_CHECK_EQ(live_world_count(), worlds_before);
 	ENGINE_CHECK_EQ(allocated_bytes(), bytes_before);
@@ -464,17 +548,14 @@ ENGINE_TEST(sensor_events_report_entity_ids)
 {
 	Fixture f;
 	const EntityId zone = f.create("trigger", at(0, 0, 0));
-	ENGINE_REQUIRE(static_cast<bool>(f.physics.set_rigid_body(f.scene, zone, body_of(BodyType::Kinematic))));
-	Collider trigger = box({2.0f, 0.5f, 2.0f});
-	trigger.is_sensor = true;
-	trigger.enable_sensor_events = true;
-	ENGINE_REQUIRE(static_cast<bool>(f.physics.add_collider(zone, trigger)));
+	ColliderComponent trigger = box({2.0f, 0.5f, 2.0f});
+	trigger.sensor = true;
+	trigger.events = true;
+	ENGINE_REQUIRE(static_cast<bool>(f.author(zone, body_of(BodyType::Kinematic), {trigger})));
 
 	const EntityId ball = f.create("ball", at(0, 3, 0));
-	ENGINE_REQUIRE(static_cast<bool>(f.physics.set_rigid_body(f.scene, ball, body_of(BodyType::Dynamic))));
-	Collider visitor = sphere(0.25f);
-	visitor.enable_sensor_events = true;
-	ENGINE_REQUIRE(static_cast<bool>(f.physics.add_collider(ball, visitor)));
+	const ColliderComponent visitor = sphere(0.25f, true);
+	ENGINE_REQUIRE(static_cast<bool>(f.author(ball, body_of(BodyType::Dynamic), {visitor})));
 
 	f.physics.set_simulation_enabled(true);
 	bool entered = false;
@@ -496,31 +577,90 @@ ENGINE_TEST(sensor_events_report_entity_ids)
 
 // ---- Editor-facing API (C-4) -------------------------------------------------------------------
 
-ENGINE_TEST(authoring_api_validates_input)
+ENGINE_TEST(physics_components_are_validated_by_the_scene)
 {
 	Fixture f;
 	const EntityId id = f.create("thing");
-	ENGINE_CHECK(f.physics.set_rigid_body(f.scene, 999, {}).error().code == ErrorCode::NotFound);
-	RigidBody bad;
-	bad.linear_damping = -1.0f;
-	ENGINE_CHECK(f.physics.set_rigid_body(f.scene, id, bad).error().code == ErrorCode::InvalidArgument);
-	ENGINE_CHECK(f.physics.add_collider(id, sphere(0.5f)).error().code == ErrorCode::NotFound);
+	const auto error_of = [&](commands::Command command) {
+		const auto revision = f.editor.revision();
+		auto result = f.editor.execute(f.editor_ctx, revision, std::move(command));
+		ENGINE_CHECK(f.editor.revision() == revision);
+		return result ? std::optional<ErrorCode>{} : std::optional<ErrorCode>(result.error().code);
+	};
+	ENGINE_CHECK(error_of(commands::SetRigidBody{999, RigidBodyComponent{}}) == ErrorCode::NotFound);
+	ENGINE_CHECK(error_of(commands::SetColliders{999, {sphere(0.5f)}}) == ErrorCode::NotFound);
+	RigidBodyComponent bad;
+	bad.linear_damping = -1.0;
+	ENGINE_CHECK(error_of(commands::SetRigidBody{id, bad}) == ErrorCode::InvalidArgument);
+	bad = {};
+	bad.linear_velocity.x = std::numeric_limits<double>::infinity();
+	ENGINE_CHECK(error_of(commands::SetRigidBody{id, bad}) == ErrorCode::InvalidArgument);
+	ENGINE_CHECK(error_of(commands::SetColliders{id, {sphere(-1.0f)}}) == ErrorCode::InvalidArgument);
+	ColliderComponent zero_quat = box({1, 1, 1});
+	zero_quat.rotation = {0, 0, 0, 0};
+	ENGINE_CHECK(error_of(commands::SetColliders{id, {zero_quat}}) == ErrorCode::InvalidArgument);
+	ColliderComponent bouncy = sphere(0.5f);
+	bouncy.restitution = 1.5;
+	ENGINE_CHECK(error_of(commands::SetColliders{id, {bouncy}}) == ErrorCode::InvalidArgument);
+	const std::vector<ColliderComponent> too_many(engine::max_colliders_per_entity + 1, sphere(0.5f));
+	ENGINE_CHECK(error_of(commands::SetColliders{id, too_many}) == ErrorCode::InvalidArgument);
 
-	ENGINE_REQUIRE(static_cast<bool>(f.physics.set_rigid_body(f.scene, id, {})));
-	ENGINE_CHECK(f.physics.add_collider(id, sphere(-1.0f)).error().code == ErrorCode::InvalidArgument);
-	Collider zero_quat = box({1, 1, 1});
-	std::get<BoxShape>(zero_quat.shape).local_pose.rotation = {0, 0, 0, 0};
-	ENGINE_CHECK(f.physics.add_collider(id, zero_quat).error().code == ErrorCode::InvalidArgument);
-
-	auto index = f.physics.add_collider(id, sphere(0.5f));
-	ENGINE_REQUIRE(static_cast<bool>(index));
-	ENGINE_CHECK_EQ(index.value(), std::size_t{0});
-	ENGINE_CHECK(f.physics.set_collider(id, 1, sphere(1.0f)).error().code == ErrorCode::NotFound);
-	ENGINE_CHECK(static_cast<bool>(f.physics.set_collider(id, 0, sphere(1.0f))));
+	// Colliders without a body form a static collider.
+	f.set_colliders(id, {sphere(0.5f)});
+	f.tick();
+	ENGINE_REQUIRE(f.physics.rigid_body(id).has_value());
+	ENGINE_CHECK(f.physics.rigid_body(id)->type == BodyType::Static);
+	ENGINE_REQUIRE(f.physics.body_state(id).has_value());
+	ENGINE_CHECK(f.physics.body_state(id)->type == BodyType::Static);
+	// Replacing the list updates the built colliders; an empty list removes the body.
+	f.set_colliders(id, {sphere(1.0f), box({1, 1, 1})});
+	f.tick();
+	ENGINE_REQUIRE(f.physics.colliders(id).size() == 2);
 	ENGINE_CHECK_EQ(std::get<SphereShape>(f.physics.colliders(id)[0].shape).radius, 1.0f);
-	ENGINE_CHECK(f.physics.remove_collider(id, 3).error().code == ErrorCode::NotFound);
-	ENGINE_CHECK(static_cast<bool>(f.physics.remove_collider(id, 0)));
+	f.set_colliders(id, {});
+	f.tick();
 	ENGINE_CHECK(f.physics.colliders(id).empty());
+	ENGINE_CHECK(!f.physics.rigid_body(id).has_value());
+	ENGINE_CHECK(!f.physics.body_state(id).has_value());
+}
+
+ENGINE_TEST(scene_components_convert_to_physics_descriptions)
+{
+	ColliderComponent capsule;
+	capsule.shape = ColliderShape::Capsule;
+	capsule.center = {1, 2, 3};
+	const double half = std::numbers::pi / 4.0; // 90 degrees about +Z: the local Y segment lies along -X.
+	capsule.rotation = {0, 0, std::sin(half), std::cos(half)};
+	capsule.radius = 0.25;
+	capsule.half_height = 2;
+	capsule.density = 10;
+	capsule.friction = 0.2;
+	capsule.restitution = 0.4;
+	capsule.events = true;
+	const Collider c = to_collider(capsule);
+	const auto& shape = std::get<CapsuleShape>(c.shape);
+	ENGINE_CHECK_NEAR(shape.point_a.x, 3.0, 1e-5);
+	ENGINE_CHECK_NEAR(shape.point_b.x, -1.0, 1e-5);
+	ENGINE_CHECK_NEAR(shape.point_a.y, 2.0, 1e-5);
+	ENGINE_CHECK_NEAR(shape.point_b.z, 3.0, 1e-5);
+	ENGINE_CHECK_EQ(shape.radius, 0.25f);
+	ENGINE_CHECK(c.density == 10.0f && c.friction == 0.2f && c.restitution == 0.4f);
+	ENGINE_CHECK(c.enable_contact_events && c.enable_sensor_events && !c.is_sensor);
+
+	ColliderComponent offset_box = box({1, 2, 3});
+	offset_box.center = {0, 1, 0};
+	const auto& b = std::get<BoxShape>(to_collider(offset_box).shape);
+	ENGINE_CHECK(b.half_extents == (Vec3{1, 2, 3}) && b.local_pose.position == (Vec3{0, 1, 0}));
+	ENGINE_CHECK(std::get<SphereShape>(to_collider(sphere(0.75f)).shape).radius == 0.75f);
+
+	RigidBodyComponent thrown;
+	thrown.kind = BodyKind::Kinematic;
+	thrown.linear_velocity = {1, 2, 3};
+	thrown.gravity_scale = 0.5;
+	thrown.is_bullet = true;
+	const RigidBody r = to_rigid_body(thrown);
+	ENGINE_CHECK(r.type == BodyType::Kinematic && r.linear_velocity == (Vec3{1, 2, 3}) && r.gravity_scale == 0.5f && r.is_bullet);
+	ENGINE_CHECK(to_rigid_body(std::nullopt).type == BodyType::Static);
 }
 
 ENGINE_TEST(collider_edits_rebuild_the_body)
@@ -529,7 +669,7 @@ ENGINE_TEST(collider_edits_rebuild_the_body)
 	const EntityId ball = f.ball(1.0, 0.5f);
 	f.tick();
 	const float small_mass = f.physics.body_state(ball)->mass;
-	ENGINE_REQUIRE(static_cast<bool>(f.physics.set_collider(ball, 0, sphere(1.0f))));
+	f.set_colliders(ball, {sphere(1.0f)});
 	ENGINE_CHECK_EQ(f.tick().rebuilt, std::size_t{1});
 	ENGINE_CHECK_NEAR(f.physics.body_state(ball)->mass / small_mass, 8.0, 1e-3);
 	ENGINE_CHECK_EQ(f.tick().rebuilt, std::size_t{0});
@@ -539,10 +679,9 @@ ENGINE_TEST(pause_keeps_velocity_and_reset_restores_authored_state)
 {
 	Fixture f;
 	const EntityId ball = f.create("ball", at(0, 50, 0));
-	RigidBody thrown = body_of(BodyType::Dynamic);
-	thrown.linear_velocity = {3.0f, 0.0f, 0.0f};
-	ENGINE_REQUIRE(static_cast<bool>(f.physics.set_rigid_body(f.scene, ball, thrown)));
-	ENGINE_REQUIRE(static_cast<bool>(f.physics.add_collider(ball, sphere(0.5f))));
+	RigidBodyComponent thrown = body_of(BodyType::Dynamic);
+	thrown.linear_velocity = {3.0, 0.0, 0.0};
+	ENGINE_REQUIRE(static_cast<bool>(f.author(ball, thrown, {sphere(0.5f)})));
 	f.physics.set_simulation_enabled(true);
 	f.ticks(30);
 	const BodyState moving = *f.physics.body_state(ball);
@@ -565,18 +704,16 @@ ENGINE_TEST(debug_geometry_outlines_each_shape)
 	const EntityId b = f.create("b", at(5, 0, 0));
 	const EntityId c = f.create("c", at(10, 0, 0));
 	const EntityId t = f.create("t", at(15, 0, 0));
-	ENGINE_REQUIRE(static_cast<bool>(f.physics.set_rigid_body(f.scene, s, body_of(BodyType::Static))));
-	ENGINE_REQUIRE(static_cast<bool>(f.physics.add_collider(s, sphere(1.0f))));
-	ENGINE_REQUIRE(static_cast<bool>(f.physics.set_rigid_body(f.scene, b, body_of(BodyType::Kinematic))));
-	ENGINE_REQUIRE(static_cast<bool>(f.physics.add_collider(b, box({1, 2, 3}))));
-	ENGINE_REQUIRE(static_cast<bool>(f.physics.set_rigid_body(f.scene, c, body_of(BodyType::Dynamic))));
-	Collider capsule;
-	capsule.shape = CapsuleShape{{0, -1, 0}, {0, 1, 0}, 0.5f};
-	ENGINE_REQUIRE(static_cast<bool>(f.physics.add_collider(c, capsule)));
-	ENGINE_REQUIRE(static_cast<bool>(f.physics.set_rigid_body(f.scene, t, body_of(BodyType::Kinematic))));
-	Collider trigger = sphere(1.0f);
-	trigger.is_sensor = true;
-	ENGINE_REQUIRE(static_cast<bool>(f.physics.add_collider(t, trigger)));
+	ENGINE_REQUIRE(static_cast<bool>(f.author(s, body_of(BodyType::Static), {sphere(1.0f)})));
+	ENGINE_REQUIRE(static_cast<bool>(f.author(b, body_of(BodyType::Kinematic), {box({1, 2, 3})})));
+	ColliderComponent capsule; // Segment from (0, -1, 0) to (0, 1, 0).
+	capsule.shape = ColliderShape::Capsule;
+	capsule.radius = 0.5;
+	capsule.half_height = 1;
+	ENGINE_REQUIRE(static_cast<bool>(f.author(c, body_of(BodyType::Dynamic), {capsule})));
+	ColliderComponent trigger = sphere(1.0f);
+	trigger.sensor = true;
+	ENGINE_REQUIRE(static_cast<bool>(f.author(t, body_of(BodyType::Kinematic), {trigger})));
 	f.tick();
 
 	DebugGeometryOptions options;
@@ -649,14 +786,10 @@ ENGINE_TEST(large_publish_is_split_into_bounded_transactions)
 	const int count = 300;
 	std::vector<commands::Command> creates;
 	for (int i = 0; i < count; ++i) {
-		creates.push_back(commands::CreateEntity{"ball", at(3.0 * (i % 20), 5.0, 3.0 * (i / 20)), 0, 0});
+		creates.push_back(commands::CreateEntity{"ball", at(3.0 * (i % 20), 5.0, 3.0 * (i / 20)), 0, 0,
+			physical(body_of(BodyType::Dynamic), {sphere(0.5f)})});
 		if (creates.size() == commands::CommandBus::max_transaction || i == count - 1) {
-			auto receipt = f.editor.execute(f.editor_ctx, f.editor.revision(), std::span<const commands::Command>(creates));
-			ENGINE_REQUIRE(static_cast<bool>(receipt));
-			for (EntityId id : receipt.value().created) {
-				ENGINE_REQUIRE(static_cast<bool>(f.physics.set_rigid_body(f.scene, id, body_of(BodyType::Dynamic))));
-				ENGINE_REQUIRE(static_cast<bool>(f.physics.add_collider(id, sphere(0.5f))));
-			}
+			ENGINE_REQUIRE(static_cast<bool>(f.editor.execute(f.editor_ctx, f.editor.revision(), std::span<const commands::Command>(creates))));
 			creates.clear();
 		}
 	}
@@ -700,17 +833,12 @@ struct PhysicsClient final : ApplicationClient {
 		physics.emplace(std::move(created.value()));
 		runtime = std::make_unique<commands::CommandBus>(*app.scene(), 0);
 		const commands::Context ctx{"host", all_grants};
-		auto receipt = app.commands()->execute(ctx, app.commands()->revision(), commands::CreateEntity{"ball", at(0, 20, 0), 0, 0});
+		auto receipt = app.commands()->execute(ctx, app.commands()->revision(),
+			commands::CreateEntity{"ball", at(0, 20, 0), 0, 0, physical(RigidBodyComponent{}, {sphere(0.5f)})});
 		if (!receipt) {
 			return receipt.error();
 		}
 		ball = receipt.value().created.front();
-		if (auto r = physics->set_rigid_body(*app.scene(), ball, {}); !r) {
-			return r;
-		}
-		if (auto r = physics->add_collider(ball, sphere(0.5f)); !r) {
-			return r.error();
-		}
 		physics->set_simulation_enabled(true);
 		return {};
 	}

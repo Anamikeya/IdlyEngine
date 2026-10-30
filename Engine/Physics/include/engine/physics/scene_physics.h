@@ -3,8 +3,10 @@
 // Bridge between engine::physics and the engine::core scene (stable EntityIds on Flecs).
 // Contracts C-1..C-4 in docs/integration/m2-contracts.md define the ownership rules implemented here.
 //
-// Physics never mutates managed scene components directly: poses reach the scene only as
-// commands::SetTransform batches executed on a CommandBus the host supplies.
+// Authoring lives in the scene: RigidBodyComponent and ColliderComponent on each entity, edited through
+// commands (undoable, saved with the scene). sync() builds bodies from them; an entity with colliders but
+// no body is a static collider. Physics never mutates managed scene components directly: poses reach the
+// scene only as commands::SetTransform batches executed on a CommandBus the host supplies.
 
 #include "engine/physics/physics_world.h"
 
@@ -23,7 +25,7 @@
 
 namespace engine::physics {
 
-// Authoring data for an entity's body. Initial velocities apply whenever the body is (re)built.
+// Body settings as built from the scene. Initial velocities apply whenever the body is (re)built.
 struct RigidBody {
 	BodyType type = BodyType::Dynamic;
 	Vec3 linear_velocity;
@@ -37,8 +39,12 @@ struct RigidBody {
 	friend bool operator==(const RigidBody&, const RigidBody&) = default;
 };
 
-// Collider authoring data in the entity's unscaled local frame. World scale is baked in when the body is built.
+// Collider in the entity's unscaled local frame. World scale is baked in when the body is built.
 using Collider = ColliderDesc;
+
+// Conversions from the scene's authoring components. No component means a static body.
+[[nodiscard]] RigidBody to_rigid_body(const std::optional<RigidBodyComponent>& body) noexcept;
+[[nodiscard]] Collider to_collider(const ColliderComponent& collider) noexcept;
 
 struct CollisionEvent {
 	enum class Kind : std::uint8_t {
@@ -94,8 +100,6 @@ struct PhysicsDiagnostics {
 	WorldStats world;
 	std::size_t authored_entities = 0;
 	std::size_t active_bodies = 0;
-	// Authored entities that are currently absent from the scene (deleted, possibly to be undone).
-	std::size_t detached_entities = 0;
 	TickReport last_tick;
 	std::vector<EntityIssue> issues;
 };
@@ -130,7 +134,7 @@ struct DebugGeometry {
 // Linear RGBA suggestion per category. Renderers are free to use their own palette.
 [[nodiscard]] std::array<float, 4> default_color(DebugCategory category) noexcept;
 
-// Owns one PhysicsWorld plus the physics authoring data of a scene, keyed by stable EntityId.
+// Owns one PhysicsWorld whose bodies mirror the physics components of one scene, keyed by stable EntityId.
 // Move-only. Every call must happen on the scene owner thread.
 class ScenePhysics {
 public:
@@ -142,25 +146,13 @@ public:
 	ScenePhysics(const ScenePhysics&) = delete;
 	ScenePhysics& operator=(const ScenePhysics&) = delete;
 
-	// ---- Authoring (editor). Changes take effect on the next sync/fixed_update. ----
-
-	// Adds or replaces the body of an existing scene entity. Keeps its colliders.
-	Result<void> set_rigid_body(const Scene& scene, EntityId entity, const RigidBody& body);
-	// Removes body and colliders, including authoring data. Destroys the runtime body immediately.
-	Result<void> remove_rigid_body(EntityId entity);
-	// Returns the new collider's index.
-	Result<std::size_t> add_collider(EntityId entity, const Collider& collider);
-	Result<void> set_collider(EntityId entity, std::size_t index, const Collider& collider);
-	// Later colliders shift down by one.
-	Result<void> remove_collider(EntityId entity, std::size_t index);
+	// ---- Authoring as last synced from the scene (edit it through scene commands) ----
 
 	[[nodiscard]] std::optional<RigidBody> rigid_body(EntityId entity) const;
-	// Valid until the entity's colliders are next modified.
+	// Unscaled, as authored. Valid until the next sync.
 	[[nodiscard]] std::span<const Collider> colliders(EntityId entity) const;
-	// Ascending.
+	// Entities with a body or colliders at the last sync, ascending.
 	[[nodiscard]] std::vector<EntityId> authored_entities() const;
-	// Drops authoring data of entities absent from the scene. Call after loading a different scene.
-	std::size_t purge_detached(const Scene& scene);
 
 	// ---- Simulation ----
 
@@ -177,7 +169,8 @@ public:
 		const commands::Context& context);
 
 	// The pieces of fixed_update, for hosts that need to interleave their own work.
-	// Brings bodies in line with the scene: builds, rebuilds, destroys, teleports. Never writes the scene.
+	// Brings bodies in line with the scene: reads body and collider components, then builds, rebuilds,
+	// destroys and teleports bodies. Never writes the scene.
 	Result<void> sync(const Scene& scene);
 	// Steps the world once if simulation is enabled, then collects events and dynamic poses to publish.
 	Result<void> step();

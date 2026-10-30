@@ -6,13 +6,19 @@
 #include <type_traits>
 namespace engine::commands {
 namespace {
-constexpr std::array<CommandDescriptor, 6> descriptors{
-    {{"entity.create", Capability::Edit, "name, transform, parent, optional new stable ID"},
+constexpr std::array<CommandDescriptor, 12> descriptors{
+    {{"entity.create", Capability::Edit, "name, transform, parent, optional new stable ID, components"},
      {"entity.delete", Capability::Edit, "stable ID; deletes subtree"},
      {"entity.rename", Capability::Edit, "stable ID, name"},
      {"transform.set", Capability::Edit, "stable ID, finite local TRS"},
      {"hierarchy.reparent", Capability::Edit, "stable ID, parent; preserves local transform"},
-     {"scene.replace", Capability::Edit, "validated versioned snapshot"}}};
+     {"scene.replace", Capability::Edit, "validated versioned snapshot"},
+     {"component.mesh.set", Capability::Edit, "stable ID, built-in mesh and surface, or none to remove"},
+     {"component.camera.set", Capability::Edit, "stable ID, perspective lens and primary flag, or none to remove"},
+     {"component.light.set", Capability::Edit, "stable ID, light type, color, intensity, range, or none to remove"},
+     {"entity.duplicate", Capability::Edit, "stable ID, optional name for the copy; copies the subtree with new IDs"},
+     {"component.body.set", Capability::Edit, "stable ID, rigid body kind and initial motion, or none to remove"},
+     {"component.colliders.set", Capability::Edit, "stable ID, complete collider list (empty removes all)"}}};
 struct Guard {
     bool &busy;
     explicit Guard(bool &b) : busy(b) {
@@ -100,9 +106,36 @@ Result<Receipt> CommandBus::execute(const Context &ctx, std::uint64_t expected,
                                     "Requested ID is recycled or exhausted");
                     if (staged.size() >= Scene::max_entities)
                         return fail(ErrorCode::InvalidArgument, "Scene entity limit exceeded");
-                    staged.emplace(id, EntityRecord{id, cmd.name, cmd.parent, cmd.transform});
+                    staged.emplace(id, EntityRecord{id, cmd.name, cmd.parent, cmd.transform, cmd.components});
                     next = id + 1;
                     receipt.created.push_back(id);
+                } else if constexpr (std::is_same_v<T, DuplicateEntity>) {
+                    const auto source = staged.find(cmd.id);
+                    if (source == staged.end())
+                        return fail(ErrorCode::NotFound, "Entity does not exist");
+                    std::map<EntityId, std::vector<EntityId>> children;
+                    for (const auto &[id, e] : staged)
+                        children[e.parent].push_back(id);
+                    // (original, parent of its copy), breadth first; parents are always copied first.
+                    std::vector<std::pair<EntityId, EntityId>> queue{{cmd.id, source->second.parent}};
+                    std::map<EntityId, bool> visited; // A staged cycle must not loop forever.
+                    for (std::size_t i = 0; i < queue.size(); ++i) {
+                        const auto [original, parent] = queue[i];
+                        if (!visited.emplace(original, true).second)
+                            continue;
+                        if (staged.size() >= Scene::max_entities || next == std::numeric_limits<EntityId>::max())
+                            return fail(ErrorCode::InvalidArgument, "Scene entity limit exceeded");
+                        auto copy = staged.at(original);
+                        copy.id = next++;
+                        copy.parent = parent;
+                        if (i == 0 && !cmd.name.empty())
+                            copy.name = cmd.name;
+                        receipt.created.push_back(copy.id);
+                        if (const auto kids = children.find(original); kids != children.end())
+                            for (const auto child : kids->second)
+                                queue.emplace_back(child, copy.id);
+                        staged.emplace(copy.id, std::move(copy));
+                    }
                 } else if constexpr (std::is_same_v<T, ReplaceScene>) {
                     auto valid = Scene::validate(cmd.snapshot);
                     if (!valid)
@@ -119,6 +152,16 @@ Result<Receipt> CommandBus::execute(const Context &ctx, std::uint64_t expected,
                         it->second.transform = cmd.transform;
                     else if constexpr (std::is_same_v<T, SetParent>)
                         it->second.parent = cmd.parent;
+                    else if constexpr (std::is_same_v<T, SetMesh>)
+                        it->second.components.mesh = cmd.mesh;
+                    else if constexpr (std::is_same_v<T, SetCamera>)
+                        it->second.components.camera = cmd.camera;
+                    else if constexpr (std::is_same_v<T, SetLight>)
+                        it->second.components.light = cmd.light;
+                    else if constexpr (std::is_same_v<T, SetRigidBody>)
+                        it->second.components.body = cmd.body;
+                    else if constexpr (std::is_same_v<T, SetColliders>)
+                        it->second.components.colliders = cmd.colliders;
                     else if constexpr (std::is_same_v<T, DeleteEntity>) {
                         std::map<EntityId, std::vector<EntityId>> children;
                         for (const auto &[id, e] : staged)

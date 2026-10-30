@@ -8,6 +8,7 @@
 #include <compare>
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -33,8 +34,8 @@ struct AssetId {
 
 enum class AssetType : std::uint8_t {
 	Unknown,
-	Mesh,    // .obj
-	Texture, // .tga, .ppm
+	Mesh,    // .glb, .obj
+	Texture, // .png, .jpg, .jpeg, .tga, .ppm
 };
 
 [[nodiscard]] const char* to_string(AssetType type) noexcept;
@@ -82,11 +83,34 @@ struct Bounds {
 	std::array<float, 3> max{};
 };
 
+// Metallic-roughness values of one part of a model. Colors are linear, as glTF stores them.
+struct MeshMaterial {
+	std::array<float, 4> base_color{1.0f, 1.0f, 1.0f, 1.0f};
+	float roughness = 1.0f;
+	float metallic = 1.0f;
+	// Index into MeshData::images, or -1.
+	int image = -1;
+};
+
+// A run of the index list drawn with one material.
+struct SubMesh {
+	std::uint32_t first_index = 0;
+	std::uint32_t index_count = 0;
+	MeshMaterial material;
+};
+
+struct TextureData;
+
 // Triangle list, counter-clockwise front faces, 32-bit indices.
 struct MeshData {
 	std::vector<MeshVertex> vertices;
 	std::vector<std::uint32_t> indices;
 	Bounds bounds;
+	// GLB models: the parts and their embedded base color images. Empty for sources without materials (OBJ).
+	std::vector<SubMesh> submeshes;
+	std::vector<std::shared_ptr<const TextureData>> images;
+	// Features of the source that were ignored, for the host to show when the asset is imported.
+	std::vector<std::string> warnings;
 	// The source had no normals for some corners; area-weighted normals were generated for the mesh.
 	bool generated_normals = false;
 	// The source had no texture coordinates for some corners; those corners use (0, 0).

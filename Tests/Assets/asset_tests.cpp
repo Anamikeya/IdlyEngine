@@ -6,7 +6,9 @@
 #include "engine/test/test.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -70,6 +72,165 @@ constexpr Rgba white{255, 255, 255, 255};
 
 const char* const triangle_obj = "v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n";
 
+// ---- In-memory PNG and GLB builders ------------------------------------------------------------
+
+void append_be32(std::vector<std::uint8_t>& out, std::uint32_t value)
+{
+	for (int shift = 24; shift >= 0; shift -= 8) {
+		out.push_back(static_cast<std::uint8_t>(value >> shift));
+	}
+}
+
+void append_le32(std::vector<std::uint8_t>& out, std::uint32_t value)
+{
+	for (int shift = 0; shift < 32; shift += 8) {
+		out.push_back(static_cast<std::uint8_t>(value >> shift));
+	}
+}
+
+void png_chunk(std::vector<std::uint8_t>& out, std::string_view type, const std::vector<std::uint8_t>& data)
+{
+	append_be32(out, static_cast<std::uint32_t>(data.size()));
+	const std::size_t start = out.size();
+	out.insert(out.end(), type.begin(), type.end());
+	out.insert(out.end(), data.begin(), data.end());
+	std::uint32_t crc = 0xFFFFFFFFu;
+	for (std::size_t i = start; i < out.size(); ++i) {
+		crc ^= out[i];
+		for (int bit = 0; bit < 8; ++bit) {
+			crc = (crc >> 1) ^ (0xEDB88320u & (0u - (crc & 1u)));
+		}
+	}
+	append_be32(out, ~crc);
+}
+
+// RGBA8 PNG with an uncompressed (stored) deflate stream. Rows are given top to bottom.
+std::vector<std::uint8_t> make_png(std::uint32_t width, std::uint32_t height, const std::vector<Rgba>& pixels)
+{
+	std::vector<std::uint8_t> raw;
+	for (std::uint32_t y = 0; y < height; ++y) {
+		raw.push_back(0); // Filter: none.
+		for (std::uint32_t x = 0; x < width; ++x) {
+			const Rgba& p = pixels[static_cast<std::size_t>(y) * width + x];
+			raw.insert(raw.end(), p.begin(), p.end());
+		}
+	}
+	std::vector<std::uint8_t> zlib{0x78, 0x01, 0x01};
+	const auto size = static_cast<std::uint16_t>(raw.size());
+	zlib.push_back(static_cast<std::uint8_t>(size));
+	zlib.push_back(static_cast<std::uint8_t>(size >> 8));
+	zlib.push_back(static_cast<std::uint8_t>(~size));
+	zlib.push_back(static_cast<std::uint8_t>(~size >> 8));
+	zlib.insert(zlib.end(), raw.begin(), raw.end());
+	std::uint32_t a = 1, b = 0;
+	for (const std::uint8_t byte : raw) {
+		a = (a + byte) % 65521;
+		b = (b + a) % 65521;
+	}
+	append_be32(zlib, (b << 16) | a);
+
+	std::vector<std::uint8_t> png{0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A};
+	std::vector<std::uint8_t> header;
+	append_be32(header, width);
+	append_be32(header, height);
+	header.insert(header.end(), {8, 6, 0, 0, 0}); // 8-bit RGBA.
+	png_chunk(png, "IHDR", header);
+	png_chunk(png, "IDAT", zlib);
+	png_chunk(png, "IEND", {});
+	return png;
+}
+
+std::vector<std::uint8_t> make_glb(std::string json, std::vector<std::uint8_t> bin)
+{
+	while (json.size() % 4 != 0) {
+		json.push_back(' ');
+	}
+	while (bin.size() % 4 != 0) {
+		bin.push_back(0);
+	}
+	std::vector<std::uint8_t> glb{'g', 'l', 'T', 'F'};
+	append_le32(glb, 2);
+	append_le32(glb, static_cast<std::uint32_t>(12 + 8 + json.size() + (bin.empty() ? 0 : 8 + bin.size())));
+	append_le32(glb, static_cast<std::uint32_t>(json.size()));
+	append_le32(glb, 0x4E4F534A);
+	glb.insert(glb.end(), json.begin(), json.end());
+	if (!bin.empty()) {
+		append_le32(glb, static_cast<std::uint32_t>(bin.size()));
+		append_le32(glb, 0x004E4942);
+		glb.insert(glb.end(), bin.begin(), bin.end());
+	}
+	return glb;
+}
+
+void append_floats(std::vector<std::uint8_t>& out, std::initializer_list<float> values)
+{
+	for (const float value : values) {
+		std::uint32_t bits = 0;
+		std::memcpy(&bits, &value, sizeof(bits));
+		append_le32(out, bits);
+	}
+}
+
+// Fields of the one-triangle test model that the cases vary.
+struct GlbSpec {
+	std::string node = R"("translation":[1,0,0])";
+	std::string primitive = R"("attributes":{"POSITION":0},"indices":1,"material":0)";
+	std::string material = R"("pbrMetallicRoughness":{"baseColorFactor":[0.5,0.25,0.125,1],"roughnessFactor":0.4,"metallicFactor":0.2})";
+	std::string buffer = R"("byteLength":44)";
+	std::string extra;
+	std::uint16_t last_index = 2;
+};
+
+// Triangle (0,0,0) (1,0,0) (0,1,0), counter-clockwise seen from +Z: 36 bytes of positions, then 3 u16 indices.
+std::vector<std::uint8_t> triangle_glb(const GlbSpec& spec = {})
+{
+	std::vector<std::uint8_t> bin;
+	append_floats(bin, {0, 0, 0, 1, 0, 0, 0, 1, 0});
+	for (const std::uint16_t index : {std::uint16_t{0}, std::uint16_t{1}, spec.last_index}) {
+		bin.push_back(static_cast<std::uint8_t>(index));
+		bin.push_back(static_cast<std::uint8_t>(index >> 8));
+	}
+	return make_glb(R"({"asset":{"version":"2.0"},"scene":0,"scenes":[{"nodes":[0]}],"nodes":[{"mesh":0,)" + spec.node +
+			R"(}],"meshes":[{"primitives":[{)" + spec.primitive + R"(}]}],"materials":[{)" + spec.material +
+			R"(}],"buffers":[{)" + spec.buffer +
+			R"(}],"bufferViews":[{"buffer":0,"byteOffset":0,"byteLength":36},{"buffer":0,"byteOffset":36,"byteLength":6}],)"
+			R"("accessors":[{"bufferView":0,"componentType":5126,"count":3,"type":"VEC3","min":[0,0,0],"max":[1,1,0]},)"
+			R"({"bufferView":1,"componentType":5123,"count":3,"type":"SCALAR"}])" + spec.extra + "}",
+		bin);
+}
+
+std::string base64(const std::vector<std::uint8_t>& bytes)
+{
+	static constexpr char digits[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+	std::string out;
+	for (std::size_t i = 0; i < bytes.size(); i += 3) {
+		const std::size_t left = bytes.size() - i;
+		const std::uint32_t n = (std::uint32_t{bytes[i]} << 16) | (left > 1 ? std::uint32_t{bytes[i + 1]} << 8 : 0u) | (left > 2 ? std::uint32_t{bytes[i + 2]} : 0u);
+		out.push_back(digits[(n >> 18) & 63]);
+		out.push_back(digits[(n >> 12) & 63]);
+		out.push_back(left > 1 ? digits[(n >> 6) & 63] : '=');
+		out.push_back(left > 2 ? digits[n & 63] : '=');
+	}
+	return out;
+}
+
+void check_glb_error(const std::vector<std::uint8_t>& bytes, std::string_view text, const ImportLimits& limits = {})
+{
+	const auto result = import_glb(bytes, {}, limits);
+	ENGINE_CHECK(!result);
+	if (!result) {
+		ENGINE_CHECK(result.error().message.find(text) != std::string::npos);
+	}
+}
+
+bool has_warning(const MeshData& mesh, std::string_view text)
+{
+	return std::any_of(mesh.warnings.begin(), mesh.warnings.end(),
+		[&](const std::string& w) { return w.find(text) != std::string::npos; });
+}
+
+const fs::path models = fs::path(GAMEENGINE_TEST_RESOURCES_DIR) / "filament";
+
 } // namespace
 
 // ---- Paths and identifiers ---------------------------------------------------------------------
@@ -121,7 +282,12 @@ ENGINE_TEST(asset_types_follow_extensions)
 	ENGINE_CHECK(asset_type_for("a/b.OBJ") == AssetType::Mesh);
 	ENGINE_CHECK(asset_type_for("b.tga") == AssetType::Texture);
 	ENGINE_CHECK(asset_type_for("b.ppm") == AssetType::Texture);
-	ENGINE_CHECK(asset_type_for("b.png") == AssetType::Unknown);
+	ENGINE_CHECK(asset_type_for("c/d.GLB") == AssetType::Mesh);
+	ENGINE_CHECK(asset_type_for("b.png") == AssetType::Texture);
+	ENGINE_CHECK(asset_type_for("b.JPG") == AssetType::Texture);
+	ENGINE_CHECK(asset_type_for("b.jpeg") == AssetType::Texture);
+	ENGINE_CHECK(asset_type_for("b.bmp") == AssetType::Unknown);
+	ENGINE_CHECK(asset_type_for("b.gltf") == AssetType::Unknown);
 	ENGINE_CHECK(asset_type_for("dir.obj/file") == AssetType::Unknown);
 }
 
@@ -458,7 +624,7 @@ ENGINE_TEST(database_scan_reports_catalogue_problems)
 	write_text(root / "c.obj", triangle_obj);
 	write_text(root / "c.obj.meta", "version = 1\nbogus = 1\n");
 	write_text(root / "orphan.tga.meta", "version = 1\n");
-	write_text(root / "picture.png", "not supported");
+	write_text(root / "picture.bmp", "not supported");
 	write_text(root / "good/d.obj", triangle_obj);
 
 	AssetDatabase db = open_scanned(root);
@@ -476,7 +642,7 @@ ENGINE_TEST(database_scan_reports_catalogue_problems)
 	ENGINE_CHECK(has("b.obj", "more than one asset"));
 	ENGINE_CHECK(has("c.obj.meta", "unknown key"));
 	ENGINE_CHECK(has("orphan.tga.meta", "no matching asset"));
-	ENGINE_CHECK(has("picture.png", "unsupported format"));
+	ENGINE_CHECK(has("picture.bmp", "unsupported format"));
 	ENGINE_CHECK_EQ(issues.size(), std::size_t{5});
 
 	// Fixing the collision on disk and rescanning brings both assets back.
@@ -527,4 +693,361 @@ ENGINE_TEST(database_detects_case_only_collisions_where_possible)
 		ENGINE_CHECK(db.assets().empty());
 		ENGINE_CHECK_EQ(db.issues().size(), std::size_t{2});
 	}
+}
+
+// ---- GLB ---------------------------------------------------------------------------------------
+
+ENGINE_TEST(glb_imports_geometry_material_and_transform)
+{
+	if (!gltf_import_available()) {
+		ENGINE_CHECK(!import_glb(triangle_glb()));
+		return;
+	}
+	const auto result = import_glb(triangle_glb());
+	ENGINE_REQUIRE(static_cast<bool>(result));
+	const MeshData& mesh = result.value();
+	ENGINE_REQUIRE(mesh.vertices.size() == 3);
+	ENGINE_CHECK_EQ(mesh.indices.size(), std::size_t{3});
+	ENGINE_CHECK_EQ(mesh.vertices[1].position[0], 2.0f); // The node's translation is baked in.
+	ENGINE_CHECK_EQ(mesh.bounds.min[0], 1.0f);
+	ENGINE_CHECK_EQ(mesh.bounds.max[0], 2.0f);
+	ENGINE_CHECK_EQ(mesh.bounds.max[1], 1.0f);
+	ENGINE_CHECK(mesh.generated_normals);
+	ENGINE_CHECK(mesh.missing_uvs);
+	ENGINE_CHECK_EQ(mesh.vertices[0].normal[2], 1.0f); // Counter-clockwise from +Z.
+	ENGINE_REQUIRE(mesh.submeshes.size() == 1);
+	ENGINE_CHECK_EQ(mesh.submeshes[0].index_count, 3u);
+	const MeshMaterial& material = mesh.submeshes[0].material;
+	ENGINE_CHECK_EQ(material.base_color[0], 0.5f);
+	ENGINE_CHECK_EQ(material.base_color[2], 0.125f);
+	ENGINE_CHECK_EQ(material.roughness, 0.4f);
+	ENGINE_CHECK_EQ(material.metallic, 0.2f);
+	ENGINE_CHECK_EQ(material.image, -1);
+	ENGINE_CHECK(mesh.warnings.empty());
+
+	ImportSettings scaled;
+	scaled.mesh_scale = 2.0f;
+	ENGINE_CHECK_EQ(import_glb(triangle_glb(), scaled).value().bounds.max[0], 4.0f);
+}
+
+ENGINE_TEST(glb_mirroring_node_keeps_front_faces)
+{
+	if (!gltf_import_available()) {
+		return;
+	}
+	GlbSpec spec;
+	spec.node = R"("scale":[-1,1,1])";
+	const auto result = import_glb(triangle_glb(spec));
+	ENGINE_REQUIRE(static_cast<bool>(result));
+	const MeshData& mesh = result.value();
+	ENGINE_CHECK_EQ(mesh.vertices[1].position[0], -1.0f);
+	ENGINE_CHECK_EQ(mesh.indices[1], 2u); // Winding swapped back to counter-clockwise from +Z.
+	ENGINE_CHECK_EQ(mesh.indices[2], 1u);
+	ENGINE_CHECK_EQ(mesh.vertices[0].normal[2], 1.0f);
+}
+
+ENGINE_TEST(glb_embedded_images_are_decoded_top_row_first)
+{
+	if (!gltf_import_available()) {
+		return;
+	}
+	const Rgba red{255, 0, 0, 255}, blue{0, 0, 255, 255};
+	const std::vector<std::uint8_t> png = make_png(1, 2, {red, blue});
+
+	// Stored as a data URI.
+	GlbSpec spec;
+	spec.material = R"("pbrMetallicRoughness":{"baseColorTexture":{"index":0}})";
+	spec.extra = R"(,"textures":[{"source":0}],"images":[{"mimeType":"image/png","uri":"data:image/png;base64,)" + base64(png) + R"("}])";
+	const auto inlined = import_glb(triangle_glb(spec));
+	ENGINE_REQUIRE(static_cast<bool>(inlined));
+	ENGINE_REQUIRE(inlined.value().images.size() == 1);
+	ENGINE_CHECK_EQ(inlined.value().submeshes[0].material.image, 0);
+	const TextureData& image = *inlined.value().images[0];
+	ENGINE_CHECK_EQ(image.width, 1u);
+	ENGINE_CHECK_EQ(image.height, 2u);
+	ENGINE_CHECK(image.srgb);
+	ENGINE_CHECK(pixel(image, 0, 0) == red);
+	ENGINE_CHECK(pixel(image, 0, 1) == blue);
+
+	// Stored in the binary chunk.
+	std::vector<std::uint8_t> bin;
+	append_floats(bin, {0, 0, 0, 1, 0, 0, 0, 1, 0});
+	bin.insert(bin.end(), {0, 0, 1, 0, 2, 0, 0, 0});
+	const std::size_t offset = bin.size();
+	bin.insert(bin.end(), png.begin(), png.end());
+	const std::string json = R"({"asset":{"version":"2.0"},"scene":0,"scenes":[{"nodes":[0]}],"nodes":[{"mesh":0}],)"
+		R"("meshes":[{"primitives":[{"attributes":{"POSITION":0},"indices":1,"material":0}]}],)"
+		R"("materials":[{"pbrMetallicRoughness":{"baseColorTexture":{"index":0}}}],)"
+		R"("textures":[{"source":0}],"images":[{"mimeType":"image/png","bufferView":2}],)"
+		R"("buffers":[{"byteLength":)" + std::to_string(bin.size()) + R"(}],)"
+		R"("bufferViews":[{"buffer":0,"byteOffset":0,"byteLength":36},{"buffer":0,"byteOffset":36,"byteLength":6},)"
+		R"({"buffer":0,"byteOffset":)" + std::to_string(offset) + R"(,"byteLength":)" + std::to_string(png.size()) + R"(}],)"
+		R"("accessors":[{"bufferView":0,"componentType":5126,"count":3,"type":"VEC3","min":[0,0,0],"max":[1,1,0]},)"
+		R"({"bufferView":1,"componentType":5123,"count":3,"type":"SCALAR"}]})";
+	const auto chunk = import_glb(make_glb(json, bin));
+	ENGINE_REQUIRE(static_cast<bool>(chunk));
+	ENGINE_REQUIRE(chunk.value().images.size() == 1);
+	ENGINE_CHECK(pixel(*chunk.value().images[0], 0, 1) == blue);
+
+	// A corrupt embedded image fails the import instead of rendering untextured.
+	GlbSpec corrupt = spec;
+	corrupt.extra = R"(,"textures":[{"source":0}],"images":[{"mimeType":"image/png","uri":"data:image/png;base64,AAAAAAAA"}])";
+	check_glb_error(triangle_glb(corrupt), "image failed to load");
+}
+
+ENGINE_TEST(glb_reports_ignored_features)
+{
+	if (!gltf_import_available()) {
+		return;
+	}
+	GlbSpec spec;
+	spec.extra = R"(,"animations":[{"channels":[],"samplers":[]}],"skins":[{"joints":[0]}],"cameras":[{"type":"perspective","perspective":{"yfov":1,"znear":1}}])";
+	spec.material = R"("alphaMode":"BLEND")";
+	const auto result = import_glb(triangle_glb(spec));
+	ENGINE_REQUIRE(static_cast<bool>(result));
+	ENGINE_CHECK(has_warning(result.value(), "skinning"));
+	ENGINE_CHECK(has_warning(result.value(), "animations"));
+	ENGINE_CHECK(has_warning(result.value(), "cameras"));
+	ENGINE_CHECK(has_warning(result.value(), "transparency"));
+}
+
+ENGINE_TEST(glb_rejects_invalid_and_unsupported_files)
+{
+	if (!gltf_import_available()) {
+		return;
+	}
+	check_glb_error({}, "Invalid GLB");
+	const std::string text = "solid not a glb";
+	check_glb_error(std::vector<std::uint8_t>(text.begin(), text.end()), "Invalid GLB");
+	auto truncated = triangle_glb();
+	truncated.resize(truncated.size() - 20);
+	check_glb_error(truncated, "Invalid GLB");
+
+	GlbSpec bad_index;
+	bad_index.last_index = 7;
+	check_glb_error(triangle_glb(bad_index), "");
+
+	GlbSpec no_position;
+	no_position.primitive = R"("attributes":{"NORMAL":0},"indices":1)";
+	check_glb_error(triangle_glb(no_position), "POSITION");
+
+	GlbSpec external;
+	external.buffer = R"("byteLength":44,"uri":"../../secret.bin")";
+	check_glb_error(triangle_glb(external), "external file");
+
+	GlbSpec required;
+	required.extra = R"(,"extensionsUsed":["KHR_draco_mesh_compression"],"extensionsRequired":["KHR_draco_mesh_compression"])";
+	check_glb_error(triangle_glb(required), "KHR_draco_mesh_compression");
+
+	GlbSpec external_image;
+	external_image.material = R"("pbrMetallicRoughness":{"baseColorTexture":{"index":0}})";
+	external_image.extra = R"(,"textures":[{"source":0}],"images":[{"uri":"../../photo.png"}])";
+	check_glb_error(triangle_glb(external_image), "external file");
+
+	GlbSpec lines;
+	lines.primitive = R"("attributes":{"POSITION":0},"indices":1,"mode":1)";
+	check_glb_error(triangle_glb(lines), "no triangles");
+
+	ImportLimits small;
+	small.max_vertices = 2;
+	check_glb_error(triangle_glb(), "limit", small);
+	small = {};
+	small.max_source_bytes = 16;
+	check_glb_error(triangle_glb(), "size limit", small);
+}
+
+// Real files shipped with Filament, when the dependency tree is present.
+ENGINE_TEST(glb_real_models)
+{
+	if (!gltf_import_available()) {
+		return;
+	}
+	const fs::path box = models / "third_party/cgltf/fuzz/data/Box.glb";
+	if (fs::exists(box)) {
+		const auto mesh = import_glb(read_bytes(box));
+		ENGINE_REQUIRE(static_cast<bool>(mesh));
+		ENGINE_CHECK_EQ(mesh.value().vertices.size(), std::size_t{24});
+		ENGINE_CHECK_EQ(mesh.value().indices.size(), std::size_t{36});
+		ENGINE_CHECK_EQ(mesh.value().bounds.max[0], 0.5f);
+	}
+	const fs::path helmet = models / "third_party/models/DamagedHelmet/DamagedHelmet.glb";
+	if (fs::exists(helmet)) {
+		const auto mesh = import_glb(read_bytes(helmet));
+		ENGINE_REQUIRE(static_cast<bool>(mesh));
+		ENGINE_CHECK_EQ(mesh.value().submeshes.size(), std::size_t{1});
+		ENGINE_REQUIRE(mesh.value().images.size() == 1); // Only the base color map is decoded.
+		ENGINE_CHECK_EQ(mesh.value().images[0]->width, 2048u);
+		ENGINE_CHECK(!mesh.value().missing_uvs);
+		ENGINE_CHECK(!mesh.value().generated_normals);
+		ENGINE_CHECK(has_warning(mesh.value(), "normal, occlusion and emissive"));
+	}
+	const fs::path fox = models / "third_party/models/Fox/Fox.glb";
+	if (fs::exists(fox)) {
+		const auto mesh = import_glb(read_bytes(fox));
+		ENGINE_REQUIRE(static_cast<bool>(mesh));
+		ENGINE_CHECK(has_warning(mesh.value(), "skinning"));
+		ENGINE_CHECK(has_warning(mesh.value(), "animations"));
+	}
+	const fs::path webp = models / "third_party/models/DamagedHelmet/DamagedHelmetWebp.glb";
+	if (fs::exists(webp)) {
+		check_glb_error(read_bytes(webp), "webp");
+	}
+	// Its only defect is in a morph target, which is not read: the base shape imports and the loss is reported.
+	const fs::path bad_target = models / "libs/gltfio/test/data/invalid_accessor_type.glb";
+	if (fs::exists(bad_target)) {
+		const auto mesh = import_glb(read_bytes(bad_target));
+		ENGINE_REQUIRE(static_cast<bool>(mesh));
+		ENGINE_CHECK(has_warning(mesh.value(), "morph targets"));
+	}
+}
+
+// ---- PNG and JPEG ------------------------------------------------------------------------------
+
+ENGINE_TEST(png_decodes_rgba_top_row_first)
+{
+	if (!gltf_import_available()) {
+		ENGINE_CHECK(!import_image(make_png(1, 1, {white})));
+		return;
+	}
+	const Rgba red{255, 0, 0, 255}, translucent{1, 2, 3, 4};
+	ImportSettings linear;
+	linear.texture_srgb = false;
+	const auto result = import_image(make_png(2, 1, {red, translucent}), linear);
+	ENGINE_REQUIRE(static_cast<bool>(result));
+	ENGINE_CHECK_EQ(result.value().width, 2u);
+	ENGINE_CHECK_EQ(result.value().height, 1u);
+	ENGINE_CHECK(!result.value().srgb);
+	ENGINE_CHECK(pixel(result.value(), 0, 0) == red);
+	ENGINE_CHECK(pixel(result.value(), 1, 0) == translucent);
+}
+
+ENGINE_TEST(jpeg_decodes)
+{
+	if (!gltf_import_available()) {
+		return;
+	}
+	const auto result = import_image(read_bytes(fixtures / "images/two_tone.jpg"));
+	ENGINE_REQUIRE(static_cast<bool>(result));
+	const TextureData& image = result.value();
+	ENGINE_CHECK_EQ(image.width, 16u);
+	ENGINE_CHECK_EQ(image.height, 16u);
+	const Rgba top = pixel(image, 8, 2), bottom = pixel(image, 8, 13);
+	ENGINE_CHECK(top[0] > 200 && top[2] < 60);    // Red.
+	ENGINE_CHECK(bottom[2] > 200 && bottom[0] < 60); // Blue.
+	ENGINE_CHECK_EQ(int{top[3]}, 255);
+}
+
+ENGINE_TEST(images_reject_corrupt_and_oversized_data)
+{
+	if (!gltf_import_available()) {
+		return;
+	}
+	ENGINE_CHECK(!import_image({}));
+	const std::string text = "plain text";
+	ENGINE_CHECK(!import_image(std::vector<std::uint8_t>(text.begin(), text.end())));
+	auto truncated = make_png(4, 4, std::vector<Rgba>(16, white));
+	truncated.resize(30);
+	ENGINE_CHECK(!import_image(truncated));
+	ImportLimits small;
+	small.max_texture_dimension = 2;
+	const auto too_big = import_image(make_png(3, 1, {white, white, white}), {}, small);
+	ENGINE_REQUIRE(!too_big);
+	ENGINE_CHECK(too_big.error().message.find("dimension") != std::string::npos);
+}
+
+// ---- Importing files into a database -----------------------------------------------------------
+
+ENGINE_TEST(import_file_copies_writes_a_stable_id_and_never_overwrites)
+{
+	const fs::path root = scratch("import_root");
+	const fs::path outside = scratch("import_outside");
+	write_text(outside / "tri.obj", triangle_obj);
+	write_text(root / "other.obj", triangle_obj);
+	AssetDatabase db = open_scanned(root);
+
+	const auto first = db.import_file(outside / "tri.obj");
+	ENGINE_REQUIRE(static_cast<bool>(first));
+	ENGINE_CHECK(fs::exists(root / "tri.obj"));
+	ENGINE_CHECK(fs::exists(root / "tri.obj.meta"));
+	ENGINE_CHECK(db.state(first.value()) == AssetState::Loaded);
+	ENGINE_CHECK(db.find(first.value())->path == "tri.obj");
+
+	// The same name again gets a new file and a new id; the existing asset is untouched.
+	const auto second = db.import_file(outside / "tri.obj");
+	ENGINE_REQUIRE(static_cast<bool>(second));
+	ENGINE_CHECK(second.value() != first.value());
+	ENGINE_CHECK(db.find(second.value())->path == "tri_1.obj");
+	ENGINE_CHECK(db.find(first.value()).has_value());
+
+	// A file already under the root is not copied.
+	const auto inside_root = db.import_file(root / "other.obj");
+	ENGINE_REQUIRE(static_cast<bool>(inside_root));
+	ENGINE_CHECK_EQ(db.assets().size(), std::size_t{3});
+
+	// Ids survive a reopen: they come from the sidecar.
+	AssetDatabase reopened = open_scanned(root);
+	ENGINE_CHECK(reopened.find(first.value())->path == "tri.obj");
+	ENGINE_CHECK(static_cast<bool>(reopened.load_mesh(second.value())));
+}
+
+ENGINE_TEST(import_file_reports_errors_and_leaves_nothing_behind)
+{
+	const fs::path root = scratch("import_bad_root");
+	const fs::path outside = scratch("import_bad_outside");
+	AssetDatabase db = open_scanned(root);
+	const auto files_in_root = [&] { return std::distance(fs::directory_iterator(root), fs::directory_iterator()); };
+
+	ENGINE_CHECK(db.import_file(outside / "absent.obj").error().code == ErrorCode::NotFound);
+
+	write_text(outside / "photo.bmp", "bm");
+	const auto bmp = db.import_file(outside / "photo.bmp");
+	ENGINE_REQUIRE(!bmp);
+	ENGINE_CHECK(bmp.error().code == ErrorCode::InvalidArgument);
+	ENGINE_CHECK(bmp.error().message.find("unsupported file type '.bmp'") != std::string::npos);
+	ENGINE_CHECK(bmp.error().message.find(".glb") != std::string::npos);
+
+	write_text(outside / "model.gltf", "{}");
+	const auto gltf = db.import_file(outside / "model.gltf");
+	ENGINE_REQUIRE(!gltf);
+	ENGINE_CHECK(gltf.error().message.find("self-contained .glb") != std::string::npos);
+
+	write_text(outside / "broken.obj", "v 0 0 0\nf 1 2 3\n");
+	const auto broken = db.import_file(outside / "broken.obj");
+	ENGINE_REQUIRE(!broken);
+	ENGINE_CHECK(broken.error().message.find("broken.obj") != std::string::npos);
+
+	ENGINE_CHECK_EQ(files_in_root(), std::ptrdiff_t{0});
+	ENGINE_CHECK(db.assets().empty());
+	ENGINE_CHECK(db.issues().empty());
+}
+
+ENGINE_TEST(import_file_handles_glb_and_png_through_the_database)
+{
+	if (!gltf_import_available()) {
+		return;
+	}
+	const fs::path root = scratch("import_glb_root");
+	const fs::path outside = scratch("import_glb_outside");
+	const auto write_bytes = [](const fs::path& path, const std::vector<std::uint8_t>& bytes) {
+		write_text(path, std::string_view(reinterpret_cast<const char*>(bytes.data()), bytes.size()));
+	};
+	write_bytes(outside / "tri.glb", triangle_glb());
+	write_bytes(outside / "two.png", make_png(1, 2, {white, white}));
+	write_text(outside / "fake.glb", "not a model");
+	AssetDatabase db = open_scanned(root);
+
+	const auto mesh = db.import_file(outside / "tri.glb");
+	ENGINE_REQUIRE(static_cast<bool>(mesh));
+	const auto loaded = db.load_mesh(mesh.value());
+	ENGINE_REQUIRE(static_cast<bool>(loaded));
+	ENGINE_CHECK_EQ(loaded.value().data->submeshes.size(), std::size_t{1});
+
+	const auto texture = db.import_file(outside / "two.png");
+	ENGINE_REQUIRE(static_cast<bool>(texture));
+	ENGINE_CHECK_EQ(db.load_texture(texture.value()).value().data->height, 2u);
+
+	const auto fake = db.import_file(outside / "fake.glb");
+	ENGINE_REQUIRE(!fake);
+	ENGINE_CHECK(!fs::exists(root / "fake.glb"));
+	ENGINE_CHECK(!fs::exists(root / "fake.glb.meta"));
 }

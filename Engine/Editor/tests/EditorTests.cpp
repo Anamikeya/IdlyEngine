@@ -1,5 +1,9 @@
+#include <engine/assets/importers.h>
 #include <engine/editor/EditorSession.hpp>
+#include <algorithm>
 #include <cmath>
+#include <glm/glm.hpp>
+#include <glm/gtc/type_ptr.hpp>
 #include <fstream>
 #include <iostream>
 #include <stdexcept>
@@ -88,6 +92,263 @@ void world_edits() {
     check(!s.set_world(child,world), "shear rejected"); check(s.commands().revision() == revision, "rejected world edit atomic");
     ok(s.undo()); check(near(s.scene().inspect(child)->transform.position.x,0), "world edit undo");
 }
+std::filesystem::path test_directory() {
+    const auto directory = std::filesystem::current_path() / "editor-test-files";
+    std::filesystem::create_directories(directory);
+    return directory;
+}
+void documents() {
+    EditorSession s; ok(s.create("Starter")); check(s.dirty(), "new edits are unsaved");
+    s.mark_clean(); check(!s.dirty(), "mark_clean");
+    const auto starter = s.selection();
+    ok(s.new_scene());
+    check(s.scene().size() == 0 && !s.selection() && !s.dirty(), "new scene is empty and clean");
+    ok(s.create("Fresh")); check(s.selection() > starter, "stable IDs are not recycled by New Scene");
+    check(s.dirty(), "edit after New Scene is unsaved");
+    ok(s.undo()); check(!s.dirty(), "undo back to the clean state is clean");
+    ok(s.undo()); check(s.scene().inspect(starter).has_value() && s.dirty(), "New Scene is undoable");
+    const auto path = test_directory() / "documents.scene";
+    ok(s.save(path)); check(!s.dirty(), "save cleans");
+    Transform t; t.position.x = 4; ok(s.execute(commands::SetTransform{starter, t})); check(s.dirty(), "edit after save");
+    ok(s.load(path)); check(!s.dirty(), "load cleans");
+    ok(s.undo()); check(s.dirty(), "undoing a load restores unsaved state");
+    std::filesystem::remove(path);
+}
+void play_mode() {
+    EditorSession s; ok(s.create("Body")); const auto id = s.selection();
+    const auto before = s.editor_scene().snapshot();
+    const auto revision = s.commands().revision(); const auto history = s.commands().undo_size();
+    check(s.play_state() == PlayState::Editing && !s.stop() && !s.pause() && !s.step(), "play controls need Play mode");
+    auto editing_frame = s.frame(1); ok(editing_frame);
+    ok(s.play()); check(s.play_state() == PlayState::Playing && s.selection() == id, "play keeps selection");
+    check(&s.scene() != &s.editor_scene() && s.scene().snapshot() == before, "runtime copy of the editor scene");
+    auto playing_frame = s.frame(1); ok(playing_frame);
+    check(playing_frame.value()->stamp.scene != editing_frame.value()->stamp.scene, "runtime scene has its own identity");
+    Transform moved; moved.position = {5, 6, 7};
+    ok(s.execute(commands::SetTransform{id, moved}));
+    ok(s.create("RuntimeOnly")); const auto runtime_only = s.selection();
+    WorldTransform world = *s.scene().world_transform(id); world.matrix[12] = -1;
+    ok(s.set_world(id, world));
+    check(s.scene().size() == 2 && near(s.scene().inspect(id)->transform.position.x, -1), "runtime edits apply to the copy");
+    check(s.editor_scene().snapshot() == before && s.commands().revision() == revision && s.commands().undo_size() == history,
+          "editor scene, revision and history untouched while playing");
+    check(!s.undo() && !s.redo() && !s.save(test_directory() / "x.scene") && !s.load(test_directory() / "x.scene") &&
+          !s.new_scene() && !s.execute(commands::ReplaceScene{}), "document and history commands blocked while playing");
+    s.update(EditorSession::fixed_step * 3 + EditorSession::fixed_step / 2);
+    check(s.runtime_ticks() == 3, "fixed ticks");
+    s.update(EditorSession::fixed_step - EditorSession::fixed_step / 2); check(s.runtime_ticks() == 4, "remainder carries over");
+    s.update(EditorSession::fixed_step * 100); check(s.runtime_ticks() == 4 + EditorSession::max_ticks_per_update, "tick burst capped");
+    ok(s.pause()); s.update(EditorSession::fixed_step * 3);
+    const auto paused = s.runtime_ticks(); check(s.play_state() == PlayState::Paused, "paused");
+    check(paused == 4 + EditorSession::max_ticks_per_update, "paused time does not advance");
+    ok(s.step()); check(s.runtime_ticks() == paused + 1, "step advances one tick");
+    ok(s.play()); check(s.play_state() == PlayState::Playing && s.runtime_ticks() == paused + 1, "resume keeps the runtime");
+    check(!s.step(), "step only while paused");
+    s.select(runtime_only);
+    ok(s.stop());
+    check(s.play_state() == PlayState::Editing && &s.scene() == &s.editor_scene(), "stop returns to the editor scene");
+    check(s.scene().snapshot() == before && s.commands().revision() == revision, "editor scene unchanged after stop");
+    check(!s.selection(), "selection of a runtime-only entity cleared");
+    check(s.runtime_ticks() == 0, "runtime discarded");
+    ok(s.play()); check(s.scene().snapshot() == before, "a second play starts from the editor scene again");
+    auto second = s.frame(1); ok(second);
+    check(second.value()->stamp.scene != playing_frame.value()->stamp.scene, "each play session is a new scene identity");
+    ok(s.stop());
+    ok(s.undo()); check(s.scene().size() == 0, "editor history still works after Play");
+}
+// A dynamic crate dropped on a static floor in Play mode; Stop restores the editor scene exactly.
+void physics_play() {
+    EditorSession s;
+    Components floor; floor.mesh = MeshComponent{BuiltinMesh::Plane};
+    ColliderComponent slab; slab.half_extents = {0.5, 0.05, 0.5}; slab.center = {0, -0.05, 0};
+    floor.colliders = {slab};
+    ok(s.create("Floor", 0, floor)); const auto floor_id = s.selection();
+    Transform wide; wide.scale = {10, 1, 10}; ok(s.execute(commands::SetTransform{floor_id, wide}));
+    Components crate; crate.mesh = MeshComponent{}; crate.body = RigidBodyComponent{}; crate.colliders = {ColliderComponent{}};
+    ok(s.create("Crate", 0, crate)); const auto id = s.selection();
+    Transform high; high.position = {0, 3, 0}; ok(s.execute(commands::SetTransform{id, high}));
+    const auto y = [&] { return s.scene().world_transform(id)->matrix[13]; };
+    // The edit-mode bridge mirrors the scene but never steps it.
+    ok(s.frame(1));
+    auto d = s.physics_bridge().diagnostics();
+    check(d.active_bodies == 2 && !d.simulation_enabled && d.issues.empty(), "edit-mode bridge mirrors the scene");
+    check(s.physics_bridge().debug_geometry().lines.size() == 24, "collider outlines available while editing");
+    s.update(EditorSession::fixed_step * 3); ok(s.frame(1));
+    check(y() == 3 && s.physics_bridge().diagnostics().simulated_ticks == 0, "nothing simulates outside Play");
+    const auto before = s.editor_scene().snapshot(); const auto revision = s.commands().revision();
+    const auto history = s.commands().undo_size(); const auto was_dirty = s.dirty();
+    // Drop and land.
+    ok(s.play());
+    for (int i = 0; i < 240; ++i) s.update(EditorSession::fixed_step);
+    check(s.runtime_ticks() == 240 && s.physics_bridge().diagnostics().simulated_ticks == 240, "one physics step per tick");
+    check(std::abs(y() - 0.5) < 0.02, "crate rests on the floor");
+    check(s.physics_error().empty(), "no physics failure");
+    check(s.editor_scene().snapshot() == before && s.commands().revision() == revision, "editor scene untouched while simulating");
+    ok(s.stop());
+    check(s.scene().snapshot() == before && s.commands().revision() == revision && s.commands().undo_size() == history && s.dirty() == was_dirty,
+          "Stop restores the editor scene exactly");
+    check(!s.physics_bridge().diagnostics().simulation_enabled, "edit-mode bridge back in charge");
+    // A second Play restarts from the authored pose; Pause freezes it; Step advances one physics tick.
+    ok(s.play()); check(y() == 3, "Play restarts from the editor scene");
+    for (int i = 0; i < 30; ++i) s.update(EditorSession::fixed_step);
+    const auto falling = y(); check(falling < 2.5, "crate falls");
+    ok(s.pause());
+    s.update(EditorSession::fixed_step * 10); check(y() == falling, "paused physics does not move");
+    ok(s.step()); check(y() < falling, "Step advances physics");
+    check(s.physics_bridge().body_state(id)->linear_velocity.y < -1, "bridge reports the body's velocity");
+    ok(s.play());
+    // An edit during Play teleports the body and physics carries on from there.
+    auto lifted = s.scene().inspect(id)->transform; lifted.position.y = 10;
+    ok(s.execute(commands::SetTransform{id, lifted}));
+    s.update(EditorSession::fixed_step); check(y() > 9.5 && y() < 10, "runtime edit teleports the body");
+    ok(s.stop()); check(s.scene().snapshot() == before, "runtime edits discarded");
+    // Authored initial velocity applies when Play starts, and body edits are undoable.
+    RigidBodyComponent thrown; thrown.linear_velocity = {2, 0, 0};
+    ok(s.execute(commands::SetRigidBody{id, thrown}));
+    ok(s.play()); for (int i = 0; i < 30; ++i) s.update(EditorSession::fixed_step);
+    check(s.scene().world_transform(id)->matrix[12] > 0.9, "initial velocity applied");
+    ok(s.stop()); ok(s.undo());
+    check(s.scene().inspect(id)->components.body == RigidBodyComponent{}, "body edit undone");
+    // Unsupported setups are reported by both bridges rather than simulated.
+    ok(s.create("Nested", id, crate)); const auto nested = s.selection();
+    ok(s.frame(1));
+    d = s.physics_bridge().diagnostics();
+    check(d.issues.size() == 1 && d.issues[0].entity == nested, "edit-mode bridge reports the issue");
+    ok(s.play()); s.update(EditorSession::fixed_step);
+    d = s.physics_bridge().diagnostics();
+    check(d.issues.size() == 1 && d.issues[0].entity == nested && !s.physics_bridge().body_state(nested), "runtime bridge reports it too");
+    ok(s.stop()); ok(s.undo());
+    // A world-preserving reparent under a dynamic body is reported too, and clears when undone.
+    ok(s.create("Loose", 0, crate)); const auto loose = s.selection();
+    ok(s.frame(1)); check(s.physics_bridge().diagnostics().issues.empty(), "loose body is fine");
+    ok(s.reparent(loose, id)); ok(s.frame(1));
+    d = s.physics_bridge().diagnostics();
+    check(d.issues.size() == 1 && d.issues[0].entity == loose, "reparenting under a dynamic body is reported");
+    ok(s.undo()); ok(s.frame(1));
+    check(s.physics_bridge().diagnostics().issues.empty() && s.physics_bridge().body_state(loose), "undo clears the issue");
+    ok(s.undo());
+    // Physics components travel with duplicates and scene files.
+    const auto path = test_directory() / "physics.scene";
+    const auto saved = s.editor_scene().snapshot();
+    ok(s.save(path)); ok(s.new_scene()); ok(s.frame(1));
+    check(s.physics_bridge().diagnostics().authored_entities == 0, "New Scene drops the bodies");
+    ok(s.load(path)); ok(s.frame(1));
+    check(s.editor_scene().snapshot().entities == saved.entities && s.physics_bridge().diagnostics().active_bodies == 2, "physics saved and loaded");
+    std::filesystem::remove(path);
+    ok(s.duplicate(id)); ok(s.frame(1));
+    check(s.scene().inspect(s.selection())->components == crate && s.physics_bridge().diagnostics().active_bodies == 3, "duplicates keep physics");
+}
+// The Milestone 3 acceptance workflow, without a window: new scene, add a cube, move/rotate/scale it with
+// world-space (gizmo) edits, edit its local transform (Inspector), save, reopen in a new session, load,
+// compare, play, stop, compare.
+void acceptance_workflow() {
+    const auto path = test_directory() / "acceptance.scene";
+    Transform expected;
+    {
+        EditorSession s; ok(s.create("Starter")); s.mark_clean();
+        ok(s.new_scene());
+        ok(s.create("Cube")); const auto id = s.selection();
+        auto world = *s.scene().world_transform(id);
+        world.matrix[12] = 2; ok(s.set_world(id, world));                      // move
+        const double c = std::cos(0.5), sn = std::sin(0.5);                     // rotate 0.5 rad about Y
+        world = *s.scene().world_transform(id);
+        world.matrix[0] = c; world.matrix[2] = -sn; world.matrix[8] = sn; world.matrix[10] = c;
+        ok(s.set_world(id, world));
+        world = *s.scene().world_transform(id);                                 // scale Y by 2
+        for (int r = 0; r < 3; ++r) world.matrix[4 + r] *= 2;
+        ok(s.set_world(id, world));
+        auto t = s.scene().inspect(id)->transform;
+        // q and -q are the same rotation, so compare magnitudes.
+        check(near(t.position.x, 2) && near(t.scale.y, 2) && near(std::abs(t.rotation.y), std::sin(0.25)) &&
+              near(std::abs(t.rotation.w), std::cos(0.25)), "gizmo-style edits");
+        t.position.z = -1.25; ok(s.execute(commands::SetTransform{id, t}));     // Inspector edit
+        expected = s.scene().inspect(id)->transform;
+        check(s.dirty(), "edited scene is unsaved");
+        ok(s.save(path)); check(!s.dirty(), "saved");
+    }
+    EditorSession s;
+    ok(s.load(path));
+    check(s.scene().size() == 1, "one entity after reopen");
+    const auto record = s.scene().snapshot().entities.front();
+    check(record.name == "Cube" && record.transform == expected, "cube keeps its exact transform after reopen");
+    const auto before = s.editor_scene().snapshot();
+    ok(s.play());
+    Transform runtime; runtime.position = {9, 9, 9}; ok(s.execute(commands::SetTransform{record.id, runtime}));
+    s.update(EditorSession::fixed_step * 2);
+    ok(s.stop());
+    check(s.editor_scene().snapshot() == before && s.scene().inspect(record.id)->transform == expected && !s.dirty(),
+          "editor scene unchanged by Play/Stop");
+    std::filesystem::remove(path);
+    std::filesystem::remove(test_directory());
+}
+// NDC of a world point in a frame, for aiming pick rays at known spots.
+std::pair<double, double> ndc(const renderer::FrameSnapshot &f, glm::dvec3 p) {
+    const auto clip = glm::make_mat4(f.camera.projection.matrix.data()) * glm::make_mat4(f.camera.view.matrix.data()) * glm::dvec4(p, 1);
+    return {clip.x / clip.w, clip.y / clip.w};
+}
+void components_and_rendering() {
+    EditorSession s;
+    ok(s.create("Ball", 0, {MeshComponent{BuiltinMesh::Sphere, {0.5, 1, 0}, 0.3, 0.7}, {}, {}})); const auto ball = s.selection();
+    ok(s.create("Box")); const auto box = s.selection();
+    check(s.scene().inspect(box)->components.mesh == MeshComponent{}, "default create is a cube");
+    ok(s.create("Lamp", 0, {{}, {}, LightComponent{LightType::Point, {1, 0.5, 0}, 2000, 6}})); const auto lamp = s.selection();
+    ok(s.create("Empty", 0, {}));
+    auto f = s.frame(1); ok(f);
+    const auto &objects = f.value()->objects;
+    check(objects.size() == 2 && objects[0].entity == ball && objects[1].entity == box, "only mesh components are drawn");
+    check(objects[0].mesh == renderer::builtin_sphere && objects[1].mesh == renderer::builtin_cube && objects[0].material == renderer::builtin_lit,
+          "built-in mesh handles");
+    check(near(objects[0].surface.linear_color.x, 0.21404114) && objects[0].surface.linear_color.y == 1 && objects[0].surface.linear_color.z == 0 &&
+          objects[0].surface.roughness == 0.3 && objects[0].surface.metallic == 0.7, "sRGB color converted to linear, surface carried");
+    check(f.value()->lights.size() == 1 && f.value()->lights[0].entity == lamp && f.value()->lights[0].kind == renderer::LightKind::Point &&
+          near(f.value()->lights[0].linear_color.y, 0.21404114) && f.value()->lights[0].intensity == 2000 && f.value()->lights[0].range == 6,
+          "light component becomes a scene light");
+    // Picking follows the real shape: a ray through a cube-only corner misses the sphere.
+    ok(s.execute(commands::DeleteEntity{box}));
+    s.camera.yaw = 0; s.camera.pitch = 0; s.camera.target = {0, 0.5, 0}; s.camera.distance = 8;
+    f = s.frame(1); ok(f);
+    auto [cx, cy] = ndc(*f.value(), {0, 0.5, 0});
+    check(s.pick(*f.value(), cx, cy) == ball, "sphere center hit");
+    auto [kx, ky] = ndc(*f.value(), {0.45, 0.95, 0.45});
+    check(s.pick(*f.value(), kx, ky) == 0, "cube corner is outside the sphere");
+    ok(s.execute(commands::SetMesh{ball, MeshComponent{}}));
+    f = s.frame(1); ok(f);
+    check(s.pick(*f.value(), kx, ky) == ball, "the same ray hits it as a cube");
+    ok(s.undo()); check(s.scene().inspect(ball)->components.mesh->mesh == BuiltinMesh::Sphere, "mesh change undoable");
+    ok(s.create("Floor", 0, {MeshComponent{BuiltinMesh::Plane}, {}, {}})); const auto floor = s.selection();
+    Transform wide; wide.position = {0, 0, 3}; wide.scale = {10, 1, 10}; ok(s.execute(commands::SetTransform{floor, wide}));
+    s.camera.pitch = 0.6; s.camera.target = {0, 0, 3};
+    f = s.frame(1); ok(f);
+    check(s.pick(*f.value(), 0, 0) == floor, "plane hit from above");
+    s.camera.pitch = 0;
+    f = s.frame(1); ok(f);
+    check(s.pick(*f.value(), 0, 0.5) == 0, "ray above the horizon misses the plane");
+    // Play mode looks through the first primary camera; edit mode never does.
+    Transform eye; eye.position = {0, 1.5, 6};
+    ok(s.create("Side", 0, {{}, CameraComponent{40, 0.1, 100, false}, {}}));
+    ok(s.create("Main", 0, {{}, CameraComponent{50, 0.2, 300, true}, {}})); const auto main_camera = s.selection();
+    ok(s.execute(commands::SetTransform{main_camera, eye}));
+    f = s.frame(1.5); ok(f); check(s.view_camera() == 0 && f.value()->camera.lens.entity == 0, "edit mode uses the editor camera");
+    ok(s.play());
+    f = s.frame(1.5); ok(f);
+    check(s.view_camera() == main_camera && f.value()->camera.lens.entity == main_camera && near(f.value()->camera.world.matrix[14], 6) &&
+          near(f.value()->camera.lens.vertical_fov_radians, glm::radians(50.0)) && f.value()->camera.lens.far_plane == 300,
+          "play mode views through the primary camera");
+    eye.scale = {2, 2, 2}; ok(s.execute(commands::SetTransform{main_camera, eye}));
+    f = s.frame(1.5); ok(f);
+    check(s.view_camera() == 0 && !s.view_camera_issue().empty() && f.value()->camera.lens.entity == 0, "scaled camera falls back with a reason");
+    // Component edits in Play mode stay in the runtime copy.
+    ok(s.execute(commands::SetLight{lamp, std::nullopt}));
+    check(!s.scene().inspect(lamp)->components.light, "runtime light removed");
+    ok(s.stop());
+    check(s.scene().inspect(lamp)->components.light && s.scene().inspect(main_camera)->transform.scale.x == 1, "editor components untouched by Play");
+    // Components round-trip through a scene file exactly.
+    const auto path = test_directory() / "components.scene";
+    const auto before = s.editor_scene().snapshot();
+    ok(s.save(path)); ok(s.new_scene()); ok(s.load(path));
+    check(s.editor_scene().snapshot().entities == before.entities, "components saved and loaded");
+    std::filesystem::remove(path);
+}
 void external_camera_validation() {
     Scene scene;
     renderer::PerspectiveCamera lens;
@@ -106,9 +367,269 @@ void external_camera_validation() {
     std::thread worker([&] { auto r = renderer::extract_frame(scene,{1,0,1},lens,camera.world(),{},{}); rejected = !r && r.error().code == ErrorCode::WrongThread; }); worker.join();
     check(rejected,"external extraction enforces owner thread");
 }
+bool same_world(const WorldTransform &a, const WorldTransform &b) {
+    for (int i = 0; i < 16; ++i) if (!near(a.matrix[i], b.matrix[i])) return false;
+    return true;
+}
+void hierarchy_editing() {
+    EditorSession s;
+    ok(s.create("A")); const auto a = s.selection();
+    Transform ta; ta.position = {2, 0, 0}; ta.rotation = {0, std::sin(0.25), 0, std::cos(0.25)}; ta.scale = {2, 2, 2};
+    ok(s.execute(commands::SetTransform{a, ta}));
+    ok(s.create("B")); const auto b = s.selection();
+    Transform tb; tb.position = {5, 1, 0}; ok(s.execute(commands::SetTransform{b, tb}));
+    const auto world_b = *s.scene().world_transform(b);
+    const auto history = s.commands().undo_size();
+    // Reparenting keeps the world transform and is one undo step.
+    ok(s.reparent(b, a));
+    check(s.scene().inspect(b)->parent == a && same_world(*s.scene().world_transform(b), world_b) && s.commands().undo_size() == history + 1,
+          "reparent keeps world transform");
+    check(!(s.scene().inspect(b)->transform == tb), "local transform recomputed under the parent");
+    ok(s.reparent(b, 0));
+    check(!s.scene().inspect(b)->parent && same_world(*s.scene().world_transform(b), world_b), "move to root keeps world transform");
+    ok(s.undo()); check(s.scene().inspect(b)->parent == a, "undo move to root");
+    ok(s.undo()); check(!s.scene().inspect(b)->parent && s.scene().inspect(b)->transform == tb, "undo reparent restores the original record");
+    // Cycles and self-parenting are refused without touching the scene.
+    ok(s.reparent(b, a));
+    auto revision = s.commands().revision();
+    auto cycle = s.reparent(a, b);
+    check(!cycle && cycle.error().code == ErrorCode::Cycle && !s.scene().inspect(a)->parent, "parenting under a descendant refused");
+    check(!s.reparent(a, a) && !s.reparent(a, 999) && !s.reparent(999, a), "self, missing parent and missing entity refused");
+    check(s.commands().revision() == revision, "refused reparents are atomic");
+    // A world pose that cannot be expressed under a non-uniformly scaled parent is refused.
+    ok(s.create("Squash")); const auto squash = s.selection();
+    Transform tall; tall.scale = {1, 3, 1}; ok(s.execute(commands::SetTransform{squash, tall}));
+    ok(s.create("Tilted")); const auto tilted = s.selection();
+    Transform tilt; tilt.rotation = {0, 0, std::sin(0.3926990817), std::cos(0.3926990817)}; ok(s.execute(commands::SetTransform{tilted, tilt}));
+    revision = s.commands().revision();
+    check(!s.reparent(tilted, squash) && s.commands().revision() == revision && !s.scene().inspect(tilted)->parent, "shear refused atomically");
+    // Duplication copies the subtree as one undo step and selects the copy.
+    ok(s.create("Leaf", b)); const auto leaf = s.selection();
+    ok(s.execute(commands::SetMesh{leaf, MeshComponent{BuiltinMesh::Sphere, {0, 1, 0}, 0.5, 0}}));
+    const auto size = s.scene().size(); const auto before_copy = s.commands().undo_size();
+    ok(s.duplicate(a));
+    const auto copy = s.selection();
+    check(copy != a && s.scene().inspect(copy)->name == "A (copy)" && !s.scene().inspect(copy)->parent && s.scene().size() == size + 3 &&
+          s.commands().undo_size() == before_copy + 1, "subtree duplicated and selected");
+    const auto copies = s.scene().snapshot().entities;
+    check(std::count_if(copies.begin(), copies.end(), [](const EntityRecord &e) { return e.components.mesh && e.components.mesh->mesh == BuiltinMesh::Sphere; }) == 2,
+          "components copied with the subtree");
+    ok(s.undo()); check(s.scene().size() == size && !s.scene().inspect(copy), "one undo removes the copies");
+    std::string wide(247, 'x'); for (int i = 0; i < 4; ++i) wide += "\xC3\xA9"; // 255 bytes; the 249-byte cut lands in the two-byte tail
+    ok(s.execute(commands::RenameEntity{leaf, wide}));
+    ok(s.duplicate(leaf));
+    const auto trimmed = s.scene().inspect(s.selection())->name;
+    check(trimmed.size() <= 256 && trimmed.ends_with(" (copy)") && trimmed.substr(0, trimmed.size() - 7).find_first_not_of('x') == std::string::npos,
+          "long names trimmed without splitting a UTF-8 sequence");
+    // In Play mode duplicates live only in the runtime copy.
+    const auto editor_before = s.editor_scene().snapshot();
+    ok(s.play()); ok(s.duplicate(b));
+    check(s.scene().size() > editor_before.entities.size(), "runtime duplicate");
+    ok(s.stop()); check(s.editor_scene().snapshot() == editor_before, "editor scene untouched");
+}
+}
+// A one-triangle binary glTF: 36 bytes of positions and 3 u16 indices, translated up by one meter.
+std::string triangle_glb() {
+    std::string json = R"({"asset":{"version":"2.0"},"scene":0,"scenes":[{"nodes":[0]}],"nodes":[{"mesh":0,"translation":[0,1,0]}],)"
+        R"("meshes":[{"primitives":[{"attributes":{"POSITION":0},"indices":1,"material":0}]}],)"
+        R"("materials":[{"pbrMetallicRoughness":{"baseColorFactor":[0,1,0,1],"roughnessFactor":0.25,"metallicFactor":0}}],)"
+        R"("animations":[{"channels":[],"samplers":[]}],)"
+        R"("buffers":[{"byteLength":44}],"bufferViews":[{"buffer":0,"byteOffset":0,"byteLength":36},{"buffer":0,"byteOffset":36,"byteLength":6}],)"
+        R"("accessors":[{"bufferView":0,"componentType":5126,"count":3,"type":"VEC3","min":[0,0,0],"max":[2,2,0]},)"
+        R"({"bufferView":1,"componentType":5123,"count":3,"type":"SCALAR"}]})";
+    while (json.size() % 4) json += ' ';
+    const float positions[9]{0,0,0, 2,0,0, 0,2,0};
+    const std::uint16_t indices[4]{0, 1, 2, 0};
+    const auto u32 = [](std::uint32_t v) { return std::string(reinterpret_cast<const char *>(&v), 4); };
+    std::string bin(reinterpret_cast<const char *>(positions), sizeof positions);
+    bin.append(reinterpret_cast<const char *>(indices), sizeof indices);
+    return "glTF" + u32(2) + u32(std::uint32_t(12 + 8 + json.size() + 8 + bin.size())) + u32(std::uint32_t(json.size())) + "JSON" + json +
+           u32(std::uint32_t(bin.size())) + std::string("BIN\0", 4) + bin;
+}
+void write_file(const std::filesystem::path &path, const std::string &bytes) {
+    std::filesystem::create_directories(path.parent_path());
+    std::ofstream file(path, std::ios::binary); file << bytes;
+    check(static_cast<bool>(file), "test file written");
+}
+void asset_workflow() {
+    namespace fs = std::filesystem;
+    const auto base = fs::current_path() / "editor-asset-test-files";
+    fs::remove_all(base);
+    const auto project = base / "project", source = base / "source";
+    fs::create_directories(project);
+    const std::string red_pixel = "P6\n1 1\n255\n\xff\x01\x01";
+    write_file(source / "tri.obj", "v -1 0 0\nv 1 0 0\nv 0 3 0\nf 1 2 3\n");
+    write_file(source / "red.ppm", red_pixel);
+    write_file(source / "notes.txt", "not an asset");
+    write_file(source / "bad.obj", "v 0 0 0\nf 1 2 3\n");
+
+    EditorSession s;
+    check(!s.open_project(base / "absent"), "missing project folder rejected");
+    check(!s.import_asset(source / "tri.obj"), "import without a project rejected");
+    ok(s.open_project(project));
+    check(s.assets().empty() && !fs::exists(s.asset_folder()), "opening a project creates nothing");
+
+    // Unsupported and broken files are reported and leave nothing in the catalogue.
+    const auto unsupported = s.import_asset(source / "notes.txt");
+    check(!unsupported && unsupported.error().message.find(".txt") != std::string::npos, "unsupported file type names itself");
+    check(!s.import_asset(source / "bad.obj") && s.assets().empty() && s.asset_issues().empty(), "broken file leaves no asset");
+
+    const auto obj = s.import_asset(source / "tri.obj"); ok(obj);
+    const auto ppm = s.import_asset(source / "red.ppm"); ok(ppm);
+    check(obj.value().type == assets::AssetType::Mesh && ppm.value().type == assets::AssetType::Texture, "asset types");
+    check(s.assets().size() == 2 && fs::exists(s.asset_folder() / "tri.obj") && fs::exists(s.asset_folder() / "red.ppm.meta"), "assets in the folder");
+
+    // Place: named after the file, resting on the floor; one undo step.
+    const auto revision = s.commands().revision();
+    ok(s.place_asset(obj.value().id));
+    const auto placed = s.selection();
+    const auto record = *s.scene().inspect(placed);
+    check(record.name == "tri" && near(record.transform.position.y, 0) && s.commands().revision() == revision + 1, "model placed");
+    check(!s.place_asset(ppm.value().id), "a texture cannot be placed");
+    check(record.components.mesh->mesh_asset == AssetRef{obj.value().id.value, "tri.obj"}, "reference has id and path");
+
+    // Frame: the model has a registry handle that finds its data.
+    auto f = s.frame(1); ok(f);
+    const auto model_handle = f.value()->objects.at(0).mesh;
+    check(model_handle.index >= renderer::ResourceRegistry::first_index && s.asset_problems().empty(), "model handle in the frame");
+    check(s.resources().find(model_handle)->indices.size() == 3, "handle finds the mesh");
+    check(!s.resources().find(renderer::builtin_cube), "built-in handles are not assets");
+
+    // Assign a texture and a model to an existing entity; both are undoable and survive save and load.
+    ok(s.create("Box")); const auto box = s.selection();
+    ok(s.execute(commands::SetMesh{box, MeshComponent{BuiltinMesh::Cube, {1, 0, 0}, 0.5, 0.25}}));
+    ok(s.assign_asset(box, ppm.value().id));
+    auto mesh = *s.scene().inspect(box)->components.mesh;
+    check(mesh.texture.id == ppm.value().id.value && mesh.mesh_asset.empty() && mesh.color == Vec3{1, 1, 1} && mesh.roughness == 0.5, "texture assigned");
+    f = s.frame(1); ok(f);
+    check(f.value()->objects.at(1).surface.texture.index >= renderer::ResourceRegistry::first_index && f.value()->objects.at(1).mesh == renderer::builtin_cube, "textured built-in");
+    ok(s.undo());
+    check(s.scene().inspect(box)->components.mesh->texture.empty() && s.scene().inspect(box)->components.mesh->color == Vec3{1, 0, 0}, "assign undone");
+    ok(s.redo());
+    check(!s.assign_asset(box, assets::AssetId{12345}) && !s.assign_asset(999999, ppm.value().id), "bad assignments rejected");
+    ok(s.create("Empty", 0, {})); const auto empty = s.selection();
+    ok(s.assign_asset(empty, obj.value().id));
+    check(s.scene().inspect(empty)->components.mesh.has_value(), "assigning adds a mesh renderer");
+
+    // The placed triangle's box spans x -1..1, y 0..3, z flat: a fitted collider matches it, with some thickness.
+    const auto fitted = s.model_collider(record.components.mesh->mesh_asset);
+    check(fitted && fitted->shape == ColliderShape::Box && near(fitted->center.y, 1.5) && near(fitted->half_extents.x, 1) &&
+          near(fitted->half_extents.y, 1.5) && near(fitted->half_extents.z, 0.001), "collider fitted to the model");
+    check(!s.model_collider({}) && !s.model_collider({1, "absent.glb"}), "no collider for an unresolved model");
+    ok(s.execute(commands::SetColliders{placed, {*fitted}}));
+    s.sync_physics();
+    check(s.physics_bridge().diagnostics().issues.empty(), "the fitted collider is accepted by physics");
+    ok(s.undo());
+
+    // Picking uses the model's bounds, focus its center.
+    s.camera.target = {0, 1.5, 0}; s.camera.yaw = 0; s.camera.pitch = 0; s.camera.distance = 8;
+    ok(s.execute(commands::DeleteEntity{box})); ok(s.execute(commands::DeleteEntity{empty}));
+    f = s.frame(1); ok(f);
+    check(s.pick(*f.value(), 0, 0) == placed, "model picked inside its bounds");
+    s.select(placed); s.focus();
+    check(near(s.camera.target.y, 1.5) && s.camera.distance > 3, "focus frames the model's bounds");
+    ok(s.undo()); ok(s.undo());
+
+    const auto scene_file = base / "assets.scene";
+    const auto saved = s.scene().snapshot().entities;
+    ok(s.save(scene_file));
+    {
+        std::ifstream in(scene_file); const std::string text{std::istreambuf_iterator<char>(in), {}};
+        check(text.find("\"tri.obj\"") != std::string::npos && text.find("\"red.ppm\"") != std::string::npos, "references are in the scene file");
+    }
+
+    // A new session: same project, references resolve; ids came from the sidecars.
+    {
+        EditorSession other;
+        ok(other.open_project(project));
+        ok(other.load(scene_file));
+        check(other.scene().snapshot().entities == saved && !other.dirty(), "references round trip");
+        auto reopened = other.frame(1); ok(reopened);
+        check(other.asset_problems().empty() && other.resources().find(reopened.value()->objects.at(0).mesh), "references resolve after reopen");
+
+        // Play mode copies them and renders the same assets; Stop leaves them.
+        ok(other.play());
+        auto playing = other.frame(1); ok(playing);
+        check(playing.value()->objects.at(0).mesh == reopened.value()->objects.at(0).mesh, "Play mode draws the same asset");
+        ok(other.stop());
+        check(other.scene().snapshot().entities == saved, "Play left the references alone");
+    }
+
+    // The path is the fallback when the id is gone: a recreated .meta gets a new id.
+    {
+        fs::remove(s.asset_folder() / "tri.obj.meta");
+        EditorSession other;
+        ok(other.open_project(project)); ok(other.load(scene_file));
+        auto frame = other.frame(1); ok(frame);
+        check(other.asset_problems().empty() && frame.value()->objects.at(0).mesh.index >= renderer::ResourceRegistry::first_index, "reference found by path");
+    }
+
+    // Missing asset: a magenta cube, a clear problem, and the reference kept for when the file returns.
+    fs::rename(s.asset_folder() / "red.ppm", base / "red.ppm.away");
+    fs::rename(s.asset_folder() / "tri.obj", base / "tri.obj.away");
+    {
+        EditorSession other;
+        ok(other.open_project(project)); ok(other.load(scene_file));
+        auto frame = other.frame(1); ok(frame);
+        const auto &objects = frame.value()->objects;
+        check(objects.at(0).mesh == renderer::builtin_cube && objects.at(0).surface.linear_color == Vec3{1, 0, 1}, "missing model is a magenta cube");
+        check(objects.at(1).surface.linear_color == Vec3{1, 0, 1} && !objects.at(1).surface.texture.index, "missing texture is magenta");
+        check(other.asset_problems().size() == 2 && other.asset_problems()[0].find("tri.obj") != std::string::npos, "problems listed");
+        check(other.scene().snapshot().entities == saved && !other.dirty(), "missing assets leave the references intact");
+        ok(other.save(base / "resaved.scene"));
+        auto text = std::ifstream(base / "resaved.scene"); const std::string body{std::istreambuf_iterator<char>(text), {}};
+        check(body.find("\"tri.obj\"") != std::string::npos, "saving keeps a missing reference");
+
+        // The file returns: a rescan picks it up.
+        fs::rename(base / "tri.obj.away", s.asset_folder() / "tri.obj");
+        fs::rename(base / "red.ppm.away", s.asset_folder() / "red.ppm");
+        ok(other.rescan_assets());
+        frame = other.frame(1); ok(frame);
+        check(other.asset_problems().empty() && frame.value()->objects.at(0).mesh.index >= renderer::ResourceRegistry::first_index, "rescan restores the model");
+    }
+
+    // No asset folder at all: the same placeholder, never a failure.
+    {
+        EditorSession other;
+        ok(other.load(scene_file));
+        auto frame = other.frame(1); ok(frame);
+        check(other.asset_problems().size() == 2 && frame.value()->objects.at(0).mesh == renderer::builtin_cube, "no project gives placeholders");
+    }
+
+    // A file changed on disk: Reload bumps the generation, the old handle goes stale and the new data is drawn.
+    ok(s.rescan_assets());
+    f = s.frame(1); ok(f);
+    const auto before_reload = f.value()->objects.at(0).mesh;
+    write_file(s.asset_folder() / "tri.obj", "v -1 0 0\nv 1 0 0\nv 0 3 0\nv 1 3 0\nf 1 2 3\nf 2 4 3\n");
+    const auto meshes = s.assets();
+    const auto tri = std::find_if(meshes.begin(), meshes.end(), [](const assets::AssetMetadata &a) { return a.path == "tri.obj"; });
+    ok(s.reload_asset(tri->id));
+    f = s.frame(1); ok(f);
+    const auto after_reload = f.value()->objects.at(0).mesh;
+    check(after_reload.index == before_reload.index && after_reload.generation == before_reload.generation + 1, "reload bumps the generation");
+    check(!s.resources().find(before_reload) && s.resources().find(after_reload)->indices.size() == 6, "stale handle finds nothing");
+
+    // GLB through the whole path, where the build has the parser.
+    if (assets::gltf_import_available()) {
+        write_file(source / "tri.glb", triangle_glb());
+        write_file(source / "fake.glb", "not a model");
+        const auto bad = s.import_asset(source / "fake.glb");
+        check(!bad && bad.error().message.find("Invalid GLB") != std::string::npos, "invalid GLB reported");
+        const auto glb = s.import_asset(source / "tri.glb"); ok(glb);
+        check(glb.value().warnings.size() == 1 && glb.value().warnings[0].find("animations") != std::string::npos, "import warnings returned");
+        ok(s.place_asset(glb.value().id));
+        const auto entity = s.selection();
+        check(near(s.scene().inspect(entity)->transform.position.y, -1), "bounds include the node transform");
+        const auto model = s.model(s.scene().inspect(entity)->components.mesh->mesh_asset);
+        check(model && model->submeshes.size() == 1 && model->submeshes[0].material.roughness == 0.25f, "model material kept");
+        f = s.frame(1); ok(f);
+        check(s.asset_problems().empty(), "GLB resolves");
+    }
+    fs::remove_all(base);
 }
 int main() {
-    try { editing(); persistence(); camera_and_picking(); world_edits(); external_camera_validation();
-        std::cout << "5 editor acceptance groups passed\n"; return 0;
+    try { editing(); persistence(); camera_and_picking(); world_edits(); documents(); play_mode(); components_and_rendering(); hierarchy_editing(); physics_play();
+        acceptance_workflow(); external_camera_validation(); asset_workflow();
+        std::cout << "12 editor acceptance groups passed\n"; return 0;
     } catch (const std::exception &e) { std::cerr << e.what() << '\n'; return 1; }
 }

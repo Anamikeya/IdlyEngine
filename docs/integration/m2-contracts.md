@@ -1,5 +1,15 @@
 # Milestone 2 integration contracts (Claude systems ↔ Codex editor/renderer)
 
+> **Status update (Milestone 3, slice S5).** Resolved in `agent/claude-milestone-3`:
+> **C-1a**: each play session has its own scene and history-free bus, so two buses on one scene are no longer
+> needed in the editor. **C-2a**: physics authoring moved into the scene (`RigidBodyComponent`,
+> `ColliderComponent`, commands `SetRigidBody`/`SetColliders`, scene format v4); the bridge's authoring setters and
+> "detached" bookkeeping are gone. **C-4a**: colliders are drawn as an ImGui viewport overlay from `debug_geometry()`.
+> **C-5a**: `renderer::ResourceRegistry` maps `(AssetId, revision)` to generation-checked handles and
+> `DesktopRenderer` uploads from it on first use. **C-5b**: the conventions below hold; an imported image's first row
+> shows at the far end of a plane seen from above, asserted by a GPU readback in the smoke run. The lit material
+> flips v for Filament's sampling. Sections below are updated where the API changed.
+
 Status: **proposed by Claude, awaiting Codex confirmation.** Written 2026-10-28 on
 `agent/claude-systems-m2`, branched from `main` at `d876e42` (the M1 integration).
 Everything below is implemented against committed `main` headers only. Nothing here
@@ -72,19 +82,14 @@ Hierarchy rules:
 
 ## C-2 Physics authoring data and entity lifetime
 
-- `RigidBody` and `Collider` (= `ColliderDesc`) are **value types stored inside
-  `ScenePhysics`, keyed by stable `EntityId`**. They are not Flecs components, because:
-  - a Flecs entity is destroyed on `DeleteEntity`, and undo would recreate it *without*
-    runtime components, so physics authoring would be silently lost;
-  - Codex's contract forbids mutating managed components directly, and Flecs observers must
-    not cause external effects during a commit.
-- Entity deleted (or absent after `ReplaceScene`): the body is destroyed on the next sync.
-  The authoring data is kept as *detached*, so undoing the delete restores physics exactly.
-  `purge_detached(scene)` drops it; the host calls it after loading a different scene.
-- Physics authoring is not yet serialized in `SceneSnapshot` and is not undoable.
-  **Ask for Codex (C-2a):** either extend the scene format and command registry with
-  `physics.body.set` / `physics.collider.set`, or agree that Claude adds a sidecar
-  serializer keyed by `EntityId`.
+- `RigidBodyComponent` and `ColliderComponent` are part of each `EntityRecord`, so commands,
+  undo/redo, play-mode copies and scene files carry them like the transform. `ScenePhysics::sync`
+  converts them to `RigidBody` and `Collider` (`to_rigid_body`, `to_collider`) and builds bodies.
+  An entity with colliders but no body is a static collider.
+- Entity deleted, components removed, or entity absent after `ReplaceScene`: the body is destroyed
+  on the next sync. Undo restores the record, and the next sync rebuilds the body.
+- The dynamic-hierarchy rule is checked on every sync, because a reparent that keeps the world
+  transform changes the verdict without changing the entity's world matrix.
 - Body `user_key` is the `EntityId`. Collision events report `EntityId`s, never Box3D handles.
 
 ## C-3 Simulation stepping
@@ -110,8 +115,8 @@ All calls happen on the scene owner thread. None of them takes ImGui types.
 |---|---|
 | Play / pause | `set_simulation_enabled(bool)`, `simulation_enabled()` |
 | Restart from authored state | `reset_simulation(scene)` |
-| Add/replace/remove a body | `set_rigid_body(id, RigidBody)`, `remove_rigid_body(id)` |
-| Edit colliders | `add_collider`, `set_collider(id, index, Collider)`, `remove_collider`, `colliders(id)` |
+| Add/replace/remove a body | `commands::SetRigidBody{id, body}`; an empty optional removes it |
+| Edit colliders | `commands::SetColliders{id, list}` replaces the whole list; `colliders(id)` reads what was last synced |
 | Inspector read-out | `body_state(id)`: pose, velocities, mass, awake, type |
 | Diagnostics panel | `diagnostics()`: counts, tick counters, teleports/publishes last tick, `issues` |
 | Collision log | `events()`: valid until the next `fixed_update`/`step` |
@@ -139,17 +144,18 @@ this data.
 - CPU outputs are `std::shared_ptr<const MeshData>` and `std::shared_ptr<const TextureData>`.
   Each load result carries an `AssetId` and a `revision`, and the revision increments on
   reload.
-- **Renderer boundary (ask C-5a):** Codex's renderer resource registry maps
-  `(AssetId, revision)` to `MeshHandle`/`MaterialHandle`. It uploads from the CPU data and
-  bumps the handle generation when the revision changes. The registry holds the
-  `shared_ptr` for as long as it needs the CPU data. `AssetDatabase::unload_unused()` frees
-  only entries nobody else references. Assets create no GPU objects and define no material
-  model. A texture is RGBA8 rows with a top-left origin, plus an `srgb` flag from metadata.
+- **Renderer boundary (C-5a, closed):** `renderer::ResourceRegistry` maps
+  `(AssetId, revision)` to `MeshHandle`/`TextureHandle` and bumps the handle generation when
+  the revision changes; `DesktopRenderer` uploads from the CPU data when a frame first draws a
+  handle. The registry holds the `shared_ptr` for the session.
+  `AssetDatabase::unload_unused()` frees only entries nobody else references. Assets create no
+  GPU objects. A mesh may carry `SubMesh` parts with a metallic-roughness `MeshMaterial` and
+  embedded images; there is no other material model. A texture is RGBA8 rows with a top-left
+  origin, plus an `srgb` flag from metadata.
 - Mesh layout: an interleaved `MeshVertex {position[3], normal[3], uv[2]}` array, 32-bit
   indices, triangle lists, counter-clockwise front faces, right-handed coordinates, meters,
   and an axis-aligned bounding box. OBJ `vt` is converted to a top-left UV origin
-  (`v' = 1 - v`) to match the texture rows. **Codex to confirm** that this matches the
-  Filament adapter's expectations (C-5b).
+  (`v' = 1 - v`) to match the texture rows, as glTF already is (C-5b, closed).
 
 ## C-6 Build integration for the editor
 

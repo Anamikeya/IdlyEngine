@@ -35,6 +35,9 @@ bool rigid(const glm::dmat4 &m) {
 bool nonnegative(double value) {
     return std::isfinite(value) && value >= 0;
 }
+bool unit(double value) {
+    return nonnegative(value) && value <= 1;
+}
 } // namespace
 Result<Frame> extract_frame(const Scene &scene, FrameStamp stamp, const PerspectiveCamera &camera,
                             std::span<const MeshBinding> meshes,
@@ -77,13 +80,19 @@ Result<Frame> extract_frame(const Scene &scene, FrameStamp stamp, const Perspect
         if (!seen.insert(binding.entity).second || !binding.mesh.index || !binding.mesh.generation ||
             !binding.material.index || !binding.material.generation)
             return fail(ErrorCode::InvalidArgument, "Duplicate mesh entity or invalid asset handle");
+        const auto &surface = binding.surface;
+        if (!unit(surface.linear_color.x) || !unit(surface.linear_color.y) ||
+            !unit(surface.linear_color.z) || !unit(surface.roughness) || !unit(surface.metallic))
+            return fail(ErrorCode::InvalidArgument, "Surface parameters must be within [0, 1]");
+        if (!surface.texture.index != !surface.texture.generation)
+            return fail(ErrorCode::InvalidArgument, "Invalid texture handle");
         const auto transform = scene.world_transform(binding.entity);
         if (!transform)
             return fail(ErrorCode::NotFound, "Mesh entity does not exist");
         if (!finite(*transform))
             return fail(ErrorCode::InvalidArgument, "Non-finite mesh world transform");
         if (binding.visible)
-            frame.objects.push_back({binding.entity, binding.mesh, binding.material, *transform});
+            frame.objects.push_back({binding.entity, binding.mesh, binding.material, *transform, binding.surface});
     }
     seen.clear();
     for (const auto &binding : lights) {

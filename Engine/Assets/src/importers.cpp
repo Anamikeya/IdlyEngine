@@ -699,10 +699,10 @@ AssetType asset_type_for(std::string_view path) noexcept
 		return AssetType::Unknown;
 	}
 	const std::string_view ext = path.substr(dot + 1);
-	if (iequals(ext, "obj")) {
+	if (iequals(ext, "obj") || iequals(ext, "glb")) {
 		return AssetType::Mesh;
 	}
-	if (iequals(ext, "tga") || iequals(ext, "ppm")) {
+	if (iequals(ext, "tga") || iequals(ext, "ppm") || iequals(ext, "png") || iequals(ext, "jpg") || iequals(ext, "jpeg")) {
 		return AssetType::Texture;
 	}
 	return AssetType::Unknown;

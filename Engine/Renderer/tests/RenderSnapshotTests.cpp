@@ -156,6 +156,16 @@ void invalid_meshes() {
     error(extract_frame(f.scene, {}, f.camera, {}, {}), ErrorCode::InvalidArgument);
     std::vector<MeshBinding> oversized(Scene::max_entities + 1);
     error(f.extract(oversized), ErrorCode::InvalidArgument);
+    // Surface parameters are carried per object and must stay within [0, 1].
+    auto surfaced = mesh(id); surfaced.surface = {{0.25, 0.5, 1}, 0.1, 0.9};
+    auto carried = f.extract({&surfaced, 1});
+    ok(carried);
+    check(carried.value()->objects.at(0).surface == surfaced.surface, "Surface not carried into the frame");
+    for (auto bad : {Surface{{1.5, 0, 0}, 0.5, 0}, Surface{{0, -0.1, 0}, 0.5, 0}, Surface{{0, 0, 0}, 2, 0},
+                     Surface{{0, 0, 0}, 0.5, std::numeric_limits<double>::quiet_NaN()}}) {
+        invalid = mesh(id); invalid.surface = bad;
+        error(f.extract({&invalid, 1}), ErrorCode::InvalidArgument);
+    }
 }
 void invalid_cameras() {
     Fixture f;
@@ -205,6 +215,20 @@ void invalid_lights() {
     LightBinding duplicates[] = {original, original};
     error(f.extract({}, duplicates), ErrorCode::InvalidArgument);
 }
+void invalid_surface_texture() {
+    Fixture f;
+    const auto id = f.create();
+    for (const TextureHandle bad : {TextureHandle{0, 1}, TextureHandle{1, 0}}) {
+        MeshBinding binding{id, builtin_cube, builtin_lit};
+        binding.surface.texture = bad;
+        error(extract_frame(f.scene, {1, f.bus.revision(), 1}, f.camera, std::span(&binding, 1), {}), ErrorCode::InvalidArgument);
+    }
+    MeshBinding textured{id, builtin_cube, builtin_lit};
+    textured.surface.texture = {16, 1};
+    auto frame = extract_frame(f.scene, {1, f.bus.revision(), 1}, f.camera, std::span(&textured, 1), {});
+    ok(frame);
+    check(frame.value()->objects.at(0).surface.texture == TextureHandle{16, 1}, "Texture handle carried into the frame");
+}
 void thread_boundary() {
     Fixture f;
     bool rejected = false;
@@ -224,6 +248,7 @@ int main() {
         {"snapshot lifetime and undo", snapshot_lifetime},
         {"light extraction", light_extraction},
         {"invalid meshes", invalid_meshes},
+        {"invalid surface texture", invalid_surface_texture},
         {"invalid cameras", invalid_cameras},
         {"invalid lights", invalid_lights},
         {"owner thread boundary", thread_boundary},

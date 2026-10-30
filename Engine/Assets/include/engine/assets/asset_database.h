@@ -75,6 +75,11 @@ public:
 	Result<MeshAsset> load_mesh(AssetId id);
 	Result<TextureAsset> load_texture(AssetId id);
 
+	// Copies an outside file into the root under a free name, writes a .meta with a new random id, rescans and
+	// loads it once. Nothing stays behind on failure. A file already under the root is just loaded.
+	// InvalidArgument for unsupported file types, with the supported ones in the message.
+	Result<AssetId> import_file(const std::filesystem::path& source);
+
 	// Imports every catalogued asset without caching it; returns the failures.
 	std::vector<AssetIssue> validate_all();
 

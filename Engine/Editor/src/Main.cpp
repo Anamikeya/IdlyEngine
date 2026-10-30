@@ -13,11 +13,19 @@
 #include <glm/gtc/type_ptr.hpp>
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <chrono>
 #include <cstdio>
 #include <iostream>
+#include <optional>
+#include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <map>
+#include <set>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -25,6 +33,8 @@ using namespace engine;
 struct Host {
     GLFWwindow *window = nullptr;
     bool glfw = false, imgui = false, backend = false;
+    ImGuiStyle base_style; // Unscaled.
+    float font_scale = 1, ui_scale = 0;
     ~Host() {
         if (backend) ImGui_ImplGlfw_Shutdown();
         if (imgui) ImGui::DestroyContext();
@@ -36,8 +46,18 @@ struct Host {
         if (!glfwInit()) throw std::runtime_error("GLFW initialization failed");
         glfw = true;
         glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-        window = glfwCreateWindow(1440, 900, "GameEngine | Milestone 2 Editor", nullptr, nullptr);
+        glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
+        // 1440x900 at the monitor's scale, kept within its work area.
+        GLFWmonitor *monitor = glfwGetPrimaryMonitor();
+        float scale = 1, unused = 1;
+        int area_x = 0, area_y = 0, area_width = 1440, area_height = 900;
+        if (monitor) { glfwGetMonitorContentScale(monitor, &scale, &unused); glfwGetMonitorWorkarea(monitor, &area_x, &area_y, &area_width, &area_height); }
+        const float fit = std::min({std::max(scale, 1.f), 0.9f * float(area_width) / 1440, 0.9f * float(area_height) / 900});
+        const int window_width = std::max(int(1440 * fit), 640), window_height = std::max(int(900 * fit), 400);
+        window = glfwCreateWindow(window_width, window_height, "GameEngine Editor", nullptr, nullptr);
         if (!window) throw std::runtime_error("Window creation failed");
+        if (monitor) glfwSetWindowPos(window, area_x + std::max(area_width - window_width, 0) / 2, area_y + std::max(area_height - window_height, 0) / 2);
+        glfwShowWindow(window);
         IMGUI_CHECKVERSION(); ImGui::CreateContext(); imgui = true;
         ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_DockingEnable | ImGuiConfigFlags_NavEnableKeyboard;
         ImGui::StyleColorsDark();
@@ -46,30 +66,152 @@ struct Host {
         style.Colors[ImGuiCol_WindowBg] = {0.075f,0.085f,0.105f,1};
         style.Colors[ImGuiCol_Header] = {0.16f,0.27f,0.39f,1};
         style.Colors[ImGuiCol_Button] = {0.13f,0.23f,0.34f,1};
+        base_style = style;
+        // The renderer uploads the font atlas once, so the font is built for the scale the editor opens at;
+        // follow_monitor() scales it on another monitor.
+        font_scale = std::max(scale, 1.f);
+        ImFontConfig font;
+        font.SizePixels = 13 * font_scale;
+        if (font_scale > 1) ImGui::GetIO().Fonts->AddFontDefaultVector(&font); else ImGui::GetIO().Fonts->AddFontDefaultBitmap(&font);
+        follow_monitor();
         backend = ImGui_ImplGlfw_InitForOther(window, true);
         if (!backend) throw std::runtime_error("ImGui GLFW initialization failed");
     }
+    // Between frames: sizes and text follow the content scale of the monitor the window is on.
+    void follow_monitor() {
+        float scale = 0, unused = 0;
+        glfwGetWindowContentScale(window, &scale, &unused);
+        if (scale <= 0 || scale == ui_scale) return;
+        ui_scale = scale;
+        auto &style = ImGui::GetStyle();
+        style = base_style;
+        style.ScaleAllSizes(scale);
+        style.FontScaleDpi = scale / font_scale;
+    }
 };
+// UTF-8 text from ImGui or GLFW to a path.
+std::filesystem::path utf8_path(std::string_view text) { return std::u8string(reinterpret_cast<const char8_t *>(text.data()), text.size()); }
+// Files dropped on the window, imported on the next frame.
+std::vector<std::filesystem::path> dropped_files;
+// Actions that discard the editor scene ask first when it has unsaved changes.
+enum class Pending { None, NewScene, Load, Quit };
+// A length in pixels at 100% scale, in pixels at the current scale.
+float px(float length) { return length * ImGui::GetFontSize() / 13; }
+// Euler angles from a quaternion carry rounding noise, which would read as -0.000.
+float tidy_degrees(double degrees) { return std::abs(degrees) < 0.0005 ? 0.f : float(degrees); }
 struct EditorUI {
     editor::EditorSession &session;
     renderer::DesktopRenderer &renderer;
     std::array<char, 1024> scene_path{};
     std::vector<std::string> messages{"Filament OpenGL initialized. All scene edits use typed commands."};
+    Pending pending = Pending::None;
+    bool confirm_requested = false, quit = false;
     EntityId draft_id = 0;
-    uint64_t draft_revision = ~uint64_t(0);
+    uint64_t draft_scene = 0, draft_revision = ~uint64_t(0);
     std::array<char, 257> name{};
     float position[3]{}, rotation[3]{}, scale[3]{1,1,1};
+    Components components; // Draft of the selected entity's components, refreshed with the transform draft.
     int operation = 0, coordinates = 0;
     bool gizmo_active = false;
+    bool show_colliders = true;
+    std::set<std::string> reported_issues; // Physics issues already in the Console; re-reported if they return.
+    std::string reported_physics_error;
+    std::set<std::string> reported_asset_problems; // The same for asset references and the asset folder.
+    std::array<char, 1024> import_path{};
+    assets::AssetId selected_asset;
     EntityId gizmo_id = 0;
     float gizmo_matrix[16]{};
     renderer::Frame frame;
+    ImVec2 viewport_center{}, viewport_size{}; // Window coordinates; used by the GPU smoke readback checks.
     explicit EditorUI(editor::EditorSession &s, renderer::DesktopRenderer &r) : session(s), renderer(r) {
         std::snprintf(scene_path.data(), scene_path.size(), "%s", "Untitled.scene");
     }
-    void log(std::string text) { if (messages.size() == 128) messages.erase(messages.begin()); messages.push_back(std::move(text)); }
+    bool scroll_console = false;
+    void log(std::string text) { if (messages.size() == 128) messages.erase(messages.begin()); messages.push_back(std::move(text)); scroll_console = true; }
     template<class T> bool report(const Result<T> &r, const char *success) {
         if (r) { log(success); return true; } log("Error: " + r.error().message); return false;
+    }
+    bool playing() const { return session.play_state() != editor::PlayState::Editing; }
+    // Creates and selects an entity in one command, so it is one undo step.
+    void spawn(const char *label, Components c, Transform t = {{0,0.5,0}, {}, {1,1,1}}, EntityId parent = 0) {
+        auto r = session.execute(commands::CreateEntity{label, t, parent, 0, std::move(c)});
+        if (report(r, (std::string("Created ") + label).c_str())) session.select(r.value().created.front());
+    }
+    static Transform aimed(Vec3 position, double pitch_degrees, double yaw_degrees) {
+        const glm::dquat q(glm::radians(glm::dvec3(pitch_degrees, yaw_degrees, 0)));
+        return {position, {q.x, q.y, q.z, q.w}, {1,1,1}};
+    }
+    // A collider matching a built-in mesh. The plane's is a thin box whose top face is the plane itself.
+    static ColliderComponent fitted_collider(BuiltinMesh mesh) {
+        ColliderComponent k;
+        if (mesh == BuiltinMesh::Sphere) k.shape = ColliderShape::Sphere;
+        if (mesh == BuiltinMesh::Plane) { k.half_extents = {0.5, 0.05, 0.5}; k.center = {0, -0.05, 0}; }
+        return k;
+    }
+    // A box around a model, in its local space. Falls back to the built-in shape without one.
+    ColliderComponent fitted_collider(const std::optional<MeshComponent> &mesh) {
+        if (!mesh) return fitted_collider(BuiltinMesh::Cube);
+        if (const auto fitted = session.model_collider(mesh->mesh_asset)) return *fitted;
+        return fitted_collider(mesh->mesh_asset.empty() ? mesh->mesh : BuiltinMesh::Cube);
+    }
+    static Components physical(BuiltinMesh mesh) {
+        Components c{MeshComponent{mesh}, {}, {}};
+        c.body = RigidBodyComponent{};
+        c.colliders = {fitted_collider(mesh)};
+        return c;
+    }
+    void create_menu() {
+        if (!ImGui::BeginPopup("Create")) return;
+        if (ImGui::MenuItem("Cube")) spawn("Cube", {MeshComponent{BuiltinMesh::Cube}, {}, {}});
+        if (ImGui::MenuItem("Sphere")) spawn("Sphere", {MeshComponent{BuiltinMesh::Sphere}, {}, {}});
+        if (ImGui::MenuItem("Plane")) spawn("Plane", {MeshComponent{BuiltinMesh::Plane}, {}, {}}, {{0,0,0}, {}, {10,1,10}});
+        if (ImGui::MenuItem("Empty")) spawn("Empty", {});
+        ImGui::Separator();
+        if (ImGui::MenuItem("Directional Light")) spawn("Directional Light", {{}, {}, LightComponent{}}, aimed({0,4,0}, -50, 30));
+        // The editor camera uses daylight exposure (sunny 16), so a point light needs ~10^6 lm to read as bright
+        // a few meters away; the Inspector shows the physical value.
+        if (ImGui::MenuItem("Point Light")) spawn("Point Light", {{}, {}, LightComponent{LightType::Point, {1,1,1}, 1500000, 10}}, {{0,2,0}, {}, {1,1,1}});
+        if (ImGui::MenuItem("Camera")) spawn("Camera", {{}, CameraComponent{}, {}}, aimed({0,1.5,6}, -8, 0));
+        ImGui::Separator();
+        if (ImGui::MenuItem("Falling Cube")) spawn("Falling Cube", physical(BuiltinMesh::Cube), {{0,3,0}, {}, {1,1,1}});
+        if (ImGui::MenuItem("Falling Sphere")) spawn("Falling Sphere", physical(BuiltinMesh::Sphere), {{0,3,0}, {}, {1,1,1}});
+        if (ImGui::MenuItem("Floor")) {
+            Components floor{MeshComponent{BuiltinMesh::Plane}, {}, {}};
+            floor.colliders = {fitted_collider(BuiltinMesh::Plane)};
+            spawn("Floor", std::move(floor), {{0,0,0}, {}, {10,1,10}});
+        }
+        ImGui::EndPopup();
+    }
+    std::string title() const {
+        std::string t = "GameEngine Editor - " + std::filesystem::path(scene_path.data()).filename().string();
+        if (session.dirty()) t += '*';
+        if (session.play_state() == editor::PlayState::Playing) t += " [Playing]";
+        if (session.play_state() == editor::PlayState::Paused) t += " [Paused]";
+        return t;
+    }
+    void perform(Pending action) {
+        if (action == Pending::NewScene && report(session.new_scene(), "New scene"))
+            std::snprintf(scene_path.data(), scene_path.size(), "%s", "Untitled.scene");
+        if (action == Pending::Load) report(session.load(scene_path.data()), "Scene loaded (undoable)");
+        if (action == Pending::Quit) quit = true;
+    }
+    void request(Pending action) {
+        if (action == Pending::Quit && playing()) report(session.stop(), "Stopped Play mode; runtime copy discarded");
+        if (action != Pending::Quit && playing()) { log("Error: Stop Play mode first"); return; }
+        if (!session.dirty()) { perform(action); return; }
+        pending = action; confirm_requested = true;
+    }
+    void confirm() {
+        if (confirm_requested) { ImGui::OpenPopup("Unsaved changes"); confirm_requested = false; }
+        if (!ImGui::BeginPopupModal("Unsaved changes", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) return;
+        const char *verb = pending == Pending::Quit ? "closing" : pending == Pending::Load ? "loading" : "starting a new scene";
+        ImGui::Text("The scene has unsaved changes. Save them to '%s' before %s?", scene_path.data(), verb);
+        Pending run = Pending::None;
+        if (ImGui::Button("Save")) { if (report(session.save(scene_path.data()), "Scene saved")) run = pending; pending = Pending::None; ImGui::CloseCurrentPopup(); }
+        ImGui::SameLine(); if (ImGui::Button("Discard changes")) { run = pending; pending = Pending::None; ImGui::CloseCurrentPopup(); }
+        ImGui::SameLine(); if (ImGui::Button("Cancel")) { pending = Pending::None; ImGui::CloseCurrentPopup(); }
+        ImGui::EndPopup();
+        if (run != Pending::None) perform(run);
     }
     void docking() {
         const ImGuiID dock = ImGui::DockSpaceOverViewport(0, ImGui::GetMainViewport());
@@ -94,53 +236,144 @@ struct EditorUI {
     }
     void toolbar() {
         ImGui::Begin("Toolbar");
-        if (ImGui::Button("+ Cube")) report(session.create(), "Created cube");
+        const auto state = session.play_state();
+        ImGui::BeginDisabled(playing());
+        if (ImGui::Button("New")) request(Pending::NewScene);
+        ImGui::EndDisabled();
+        ImGui::SameLine(); if (ImGui::Button("+ Cube")) report(session.create(), "Created cube");
+        ImGui::SameLine(); if (ImGui::Button("Create...")) ImGui::OpenPopup("Create");
+        create_menu();
         ImGui::SameLine(); ImGui::BeginDisabled(!session.selection());
-        if (ImGui::Button("Delete")) report(session.execute(commands::DeleteEntity{session.selection()}), "Deleted entity subtree");
+        if (ImGui::Button("Duplicate")) duplicate_selection();
+        ImGui::SameLine(); if (ImGui::Button("Delete")) delete_selection();
         ImGui::SameLine(); if (ImGui::Button("Focus [F]")) session.focus();
         ImGui::EndDisabled();
-        ImGui::SameLine(); ImGui::BeginDisabled(!session.commands().undo_size());
+        ImGui::SameLine(); ImGui::BeginDisabled(playing() || !session.commands().undo_size());
         if (ImGui::Button("Undo")) report(session.undo(), "Undo"); ImGui::EndDisabled();
-        ImGui::SameLine(); ImGui::BeginDisabled(!session.commands().redo_size());
+        ImGui::SameLine(); ImGui::BeginDisabled(playing() || !session.commands().redo_size());
         if (ImGui::Button("Redo")) report(session.redo(), "Redo"); ImGui::EndDisabled();
-        ImGui::SameLine(); if (ImGui::Button("Save")) report(session.save(scene_path.data()), "Scene saved");
-        ImGui::SameLine(); if (ImGui::Button("Load")) report(session.load(scene_path.data()), "Scene loaded (undoable)");
-        ImGui::SameLine(); ImGui::TextDisabled("Revision %llu", static_cast<unsigned long long>(session.commands().revision()));
-        ImGui::SetNextItemWidth(490); ImGui::InputText("Scene file", scene_path.data(), scene_path.size());
-        ImGui::SameLine(); ImGui::SetNextItemWidth(110); ImGui::Combo("##operation", &operation, "Move\0Rotate\0Scale\0");
-        ImGui::SameLine(); ImGui::SetNextItemWidth(100); ImGui::Combo("##coordinates", &coordinates, "Local\0World\0");
+        ImGui::SameLine(); ImGui::BeginDisabled(playing());
+        if (ImGui::Button("Save")) report(session.save(scene_path.data()), "Scene saved");
+        ImGui::SameLine(); if (ImGui::Button("Load")) request(Pending::Load);
+        ImGui::EndDisabled();
+        ImGui::SameLine(); ImGui::TextDisabled("|"); ImGui::SameLine();
+        if (state == editor::PlayState::Playing) { if (ImGui::Button("Pause")) report(session.pause(), "Paused"); }
+        else if (ImGui::Button(state == editor::PlayState::Paused ? "Resume" : "Play"))
+            report(session.play(), state == editor::PlayState::Paused ? "Resumed" : "Play mode: running a copy of the scene; changes are discarded on Stop");
+        ImGui::SameLine(); ImGui::BeginDisabled(state != editor::PlayState::Paused);
+        if (ImGui::Button("Step")) report(session.step(), "Stepped one tick"); ImGui::EndDisabled();
+        ImGui::SameLine(); ImGui::BeginDisabled(state == editor::PlayState::Editing);
+        if (ImGui::Button("Stop")) report(session.stop(), "Stopped; runtime copy discarded, editor scene shown"); ImGui::EndDisabled();
+        ImGui::SameLine();
+        if (playing()) ImGui::TextColored({0.45f, 0.85f, 0.45f, 1}, "%s  tick %llu", state == editor::PlayState::Paused ? "PAUSED" : "PLAYING",
+                                          static_cast<unsigned long long>(session.runtime_ticks()));
+        else ImGui::TextDisabled("Revision %llu%s", static_cast<unsigned long long>(session.commands().revision()), session.dirty() ? "  (unsaved)" : "");
+        ImGui::SetNextItemWidth(px(490)); ImGui::InputText("Scene file", scene_path.data(), scene_path.size());
+        ImGui::SameLine(); ImGui::SetNextItemWidth(px(110)); ImGui::Combo("##operation", &operation, "Move\0Rotate\0Scale\0");
+        ImGui::SameLine(); ImGui::SetNextItemWidth(px(100)); ImGui::Combo("##coordinates", &coordinates, "Local\0World\0");
+        ImGui::SameLine(); ImGui::Checkbox("Colliders", &show_colliders);
         ImGui::End();
+    }
+    // ---- Scene Hierarchy: a tree in stable-ID order. Drag a row onto another to parent it there, or onto the
+    // empty area below the tree to move it to the root; both keep the world transform. Right-click for actions.
+    static constexpr const char *entity_payload = "ENGINE_ENTITY";
+    std::map<EntityId, EntityRecord> records;
+    std::map<EntityId, std::vector<EntityId>> children;
+    EntityId revealed = 0; // Selection whose ancestors were last opened, so viewport picks show up in the tree.
+    void drop_onto(EntityId parent) {
+        if (!ImGui::BeginDragDropTarget()) return;
+        if (const auto *payload = ImGui::AcceptDragDropPayload(entity_payload)) {
+            EntityId dragged = 0; std::memcpy(&dragged, payload->Data, sizeof dragged);
+            if (dragged != parent) report(session.reparent(dragged, parent), parent ? "Reparented (world transform kept)" : "Moved to root (world transform kept)");
+        }
+        ImGui::EndDragDropTarget();
+    }
+    void duplicate_selection() { if (session.selection()) report(session.duplicate(session.selection()), "Duplicated entity subtree"); }
+    void delete_selection() { if (session.selection()) report(session.execute(commands::DeleteEntity{session.selection()}), "Deleted entity subtree"); }
+    void tree_node(EntityId id, const std::set<EntityId> &open_path) {
+        const auto &e = records.at(id);
+        const auto kids = children.find(id);
+        const bool leaf = kids == children.end();
+        ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_SpanAvailWidth | ImGuiTreeNodeFlags_DefaultOpen;
+        if (leaf) flags |= ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen;
+        if (session.selection() == id) flags |= ImGuiTreeNodeFlags_Selected;
+        if (open_path.contains(id)) ImGui::SetNextItemOpen(true);
+        const bool open = ImGui::TreeNodeEx(reinterpret_cast<void *>(static_cast<uintptr_t>(id)), flags, "%s", e.name.c_str());
+        if (ImGui::IsItemClicked(ImGuiMouseButton_Left) && !ImGui::IsItemToggledOpen()) session.select(id);
+        if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) { session.select(id); session.focus(); }
+        if (ImGui::BeginDragDropSource()) {
+            ImGui::SetDragDropPayload(entity_payload, &id, sizeof id);
+            ImGui::Text("Move '%s'", e.name.c_str());
+            ImGui::EndDragDropSource();
+        }
+        drop_onto(id);
+        if (ImGui::BeginPopupContextItem()) {
+            session.select(id);
+            if (ImGui::BeginMenu("Create child")) {
+                const Transform above{{0,1,0}, {}, {1,1,1}};
+                if (ImGui::MenuItem("Empty")) spawn("Empty", {}, above, id);
+                if (ImGui::MenuItem("Cube")) spawn("Cube", {MeshComponent{BuiltinMesh::Cube}, {}, {}}, above, id);
+                if (ImGui::MenuItem("Sphere")) spawn("Sphere", {MeshComponent{BuiltinMesh::Sphere}, {}, {}}, above, id);
+                if (ImGui::MenuItem("Point Light")) spawn("Point Light", {{}, {}, LightComponent{LightType::Point, {1,1,1}, 1500000, 10}}, above, id);
+                ImGui::EndMenu();
+            }
+            if (ImGui::MenuItem("Duplicate", "Ctrl+D")) duplicate_selection();
+            if (ImGui::MenuItem("Move to root", nullptr, false, e.parent != 0)) report(session.reparent(id, 0), "Moved to root (world transform kept)");
+            if (ImGui::MenuItem("Focus", "F")) session.focus();
+            ImGui::Separator();
+            if (ImGui::MenuItem("Delete", "Del")) delete_selection();
+            ImGui::EndPopup();
+        }
+        const auto &c = e.components;
+        if (c.light || c.camera || c.body || !c.colliders.empty()) {
+            ImGui::SameLine();
+            ImGui::TextDisabled("%s%s%s", c.light ? (c.light->type == LightType::Point ? " point light" : " directional light") : "",
+                                c.camera ? (c.camera->primary ? " camera (primary)" : " camera") : "",
+                                c.body ? (c.body->kind == BodyKind::Dynamic ? " dynamic" : c.body->kind == BodyKind::Kinematic ? " kinematic" : " static")
+                                       : !c.colliders.empty() ? " collider" : "");
+        }
+        if (open && !leaf) {
+            for (const auto child : kids->second) tree_node(child, open_path);
+            ImGui::TreePop();
+        }
     }
     void hierarchy() {
         ImGui::Begin("Scene Hierarchy");
-        const auto snapshot = session.scene().snapshot();
-        ImGui::TextDisabled("%zu entities", snapshot.entities.size());
-        for (const auto &entity : snapshot.entities) {
-            unsigned depth = 0; EntityId parent = entity.parent;
-            while (parent && depth < 32) { auto p = session.scene().inspect(parent); if (!p) break; parent = p->parent; ++depth; }
-            ImGui::PushID(reinterpret_cast<void *>(static_cast<uintptr_t>(entity.id)));
-            // Indent(0) would apply the default IndentSpacing, so roots must skip it entirely.
-            if (depth) ImGui::Indent(float(depth) * 12);
-            if (ImGui::Selectable(entity.name.c_str(), session.selection() == entity.id)) session.select(entity.id);
-            if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(0)) session.focus();
-            if (depth) ImGui::Unindent(float(depth) * 12);
-            ImGui::PopID();
+        records.clear(); children.clear();
+        for (auto &e : session.scene().snapshot().entities) { children[e.parent].push_back(e.id); records.emplace(e.id, std::move(e)); }
+        children.erase(EntityId{0});
+        ImGui::TextDisabled("%zu entities  (drag to reparent, right-click for actions)", records.size());
+        std::set<EntityId> open_path;
+        if (session.selection() != revealed) {
+            revealed = session.selection();
+            if (records.contains(revealed))
+                for (EntityId p = records.at(revealed).parent; p && records.contains(p); p = records.at(p).parent) open_path.insert(p);
         }
+        for (const auto &[id, e] : records) if (!e.parent) tree_node(id, open_path);
+        // The rest of the panel is a drop zone for moving entities back to the root.
+        const auto room = ImGui::GetContentRegionAvail();
+        ImGui::InvisibleButton("##hierarchy-root", {std::max(room.x, 1.f), std::max(room.y, px(24))});
+        drop_onto(0);
+        if (ImGui::IsItemClicked(ImGuiMouseButton_Left)) session.select(0);
         ImGui::End();
     }
     void inspector() {
         ImGui::Begin("Inspector");
         const auto record = session.scene().inspect(session.selection());
-        if (!record) { ImGui::TextWrapped("Select an entity in the hierarchy or click a cube in the viewport."); ImGui::End(); return; }
-        if (draft_id != record->id || draft_revision != session.commands().revision()) {
-            draft_id = record->id; draft_revision = session.commands().revision();
+        if (!record) { ImGui::TextWrapped("Select an entity in the hierarchy, or click an object or a light/camera marker in the viewport."); ImGui::End(); return; }
+        // Physics changes the revision every tick in Play mode; a field being edited keeps its value until released.
+        if (draft_id != record->id || draft_scene != session.scene_identity() ||
+            (draft_revision != session.scene_revision() && !ImGui::IsAnyItemActive())) {
+            draft_id = record->id; draft_scene = session.scene_identity(); draft_revision = session.scene_revision();
             std::snprintf(name.data(), name.size(), "%s", record->name.c_str());
             const auto &t = record->transform;
             position[0] = float(t.position.x); position[1] = float(t.position.y); position[2] = float(t.position.z);
             const auto euler = glm::degrees(glm::eulerAngles(glm::dquat(t.rotation.w, t.rotation.x, t.rotation.y, t.rotation.z)));
-            for (int i = 0; i < 3; ++i) rotation[i] = float(euler[i]);
+            for (int i = 0; i < 3; ++i) rotation[i] = tidy_degrees(euler[i]);
             scale[0] = float(t.scale.x); scale[1] = float(t.scale.y); scale[2] = float(t.scale.z);
+            components = record->components;
         }
+        if (playing()) ImGui::TextColored({0.45f, 0.85f, 0.45f, 1}, "Play mode: edits affect the runtime copy only");
         ImGui::TextDisabled("Stable ID: %llu", static_cast<unsigned long long>(record->id));
         if (ImGui::InputText("Name", name.data(), name.size(), ImGuiInputTextFlags_EnterReturnsTrue))
             report(session.execute(commands::RenameEntity{record->id, name.data()}), "Renamed entity");
@@ -159,10 +392,14 @@ struct EditorUI {
         ImGui::TextDisabled("Rotation: XYZ Euler degrees");
         ImGui::TextWrapped("Each drag commits on release as one undo step.");
         if (ImGui::BeginCombo("Parent", record->parent ? session.scene().inspect(record->parent)->name.c_str() : "(root)")) {
-            if (ImGui::Selectable("(root)", !record->parent)) report(session.execute(commands::SetParent{record->id,0}), "Reparented (local transform preserved)");
-            for (const auto &e : session.scene().snapshot().entities) if (e.id != record->id) {
+            if (ImGui::Selectable("(root)", !record->parent)) report(session.reparent(record->id, 0), "Moved to root (world transform kept)");
+            for (const auto &e : session.scene().snapshot().entities) {
+                // The entity itself and its descendants would form a cycle.
+                bool own = false;
+                for (EntityId p = e.id; p && !own; p = session.scene().inspect(p)->parent) own = p == record->id;
                 ImGui::PushID(reinterpret_cast<void *>(static_cast<uintptr_t>(e.id)));
-                if (ImGui::Selectable(e.name.c_str(), record->parent == e.id)) report(session.execute(commands::SetParent{record->id,e.id}), "Reparented (local transform preserved)");
+                if (ImGui::Selectable(e.name.c_str(), record->parent == e.id, own ? ImGuiSelectableFlags_Disabled : 0))
+                    report(session.reparent(record->id, e.id), "Reparented (world transform kept)");
                 ImGui::PopID();
             }
             ImGui::EndCombo();
@@ -170,9 +407,204 @@ struct EditorUI {
         ImGui::SeparatorText("World position");
         const auto w = session.scene().world_transform(record->id);
         ImGui::Text("%.3f, %.3f, %.3f", w->matrix[12], w->matrix[13], w->matrix[14]);
-        ImGui::SeparatorText("Render binding");
-        ImGui::TextWrapped("Built-in unit cube / blue material. M2 renders each managed entity as a cube.");
+        component_sections(*record);
         ImGui::End();
+    }
+    // Commit helpers: drags commit on release (one undo step); combos, checkboxes and picker changes at once.
+    static bool committed(bool changed) { return ImGui::IsItemDeactivatedAfterEdit() || (changed && !ImGui::IsItemActive()); }
+    static bool color_edit(const char *label, Vec3 &c) {
+        float v[3]{float(c.x), float(c.y), float(c.z)};
+        const bool changed = ImGui::ColorEdit3(label, v, ImGuiColorEditFlags_Float);
+        if (changed) c = {std::clamp(double(v[0]), 0.0, 1.0), std::clamp(double(v[1]), 0.0, 1.0), std::clamp(double(v[2]), 0.0, 1.0)};
+        return committed(changed);
+    }
+    static bool drag(const char *label, double &value, float speed, double low, double high, const char *format = "%.3f") {
+        float v = float(value);
+        const bool changed = ImGui::DragFloat(label, &v, speed, float(low), float(high), format, ImGuiSliderFlags_AlwaysClamp);
+        if (changed) value = v;
+        return committed(changed);
+    }
+    // No clamp when low == high.
+    static bool drag3(const char *label, Vec3 &value, float speed, float low = 0, float high = 0) {
+        float v[3]{float(value.x), float(value.y), float(value.z)};
+        const bool changed = ImGui::DragFloat3(label, v, speed, low, high, "%.3f", low < high ? ImGuiSliderFlags_AlwaysClamp : ImGuiSliderFlags_None);
+        if (changed) value = {v[0], v[1], v[2]};
+        return committed(changed);
+    }
+    // Runs a component command and re-reads the drafts, so a rejected edit does not linger in the Inspector.
+    void apply(commands::Command command, const char *success) { report(session.execute(std::move(command)), success); draft_revision = ~uint64_t(0); }
+    // Lists the project's assets of one type. True when the reference changed.
+    bool asset_combo(const char *label, AssetRef &ref, assets::AssetType type, const char *none) {
+        bool changed = false;
+        if (ImGui::BeginCombo(label, ref.empty() ? none : ref.path.c_str())) {
+            if (ImGui::Selectable(none, ref.empty())) { ref = {}; changed = true; }
+            for (const auto &meta : session.assets()) {
+                if (meta.type != type) continue;
+                if (ImGui::Selectable(meta.path.c_str(), ref.id == meta.id.value)) {
+                    ref = {meta.id.value, meta.path}; changed = true;
+                    components.mesh->color = {1, 1, 1};
+                }
+            }
+            ImGui::EndCombo();
+        }
+        return changed;
+    }
+    bool remove_button(const char *id) {
+        ImGui::PushID(id); const bool clicked = ImGui::SmallButton("Remove"); ImGui::PopID(); return clicked;
+    }
+    void component_sections(const EntityRecord &record) {
+        auto &c = components;
+        if (c.mesh) {
+            ImGui::SeparatorText("Mesh Renderer");
+            auto &m = *c.mesh; bool commit = false;
+            commit |= asset_combo("Model", m.mesh_asset, assets::AssetType::Mesh, "(built-in mesh)");
+            if (m.mesh_asset.empty()) {
+                int shape = int(m.mesh) - 1;
+                if (ImGui::Combo("Mesh", &shape, "Cube\0Sphere\0Plane\0")) { m.mesh = BuiltinMesh(shape + 1); commit = true; }
+            }
+            commit |= asset_combo("Texture", m.texture, assets::AssetType::Texture, m.mesh_asset.empty() ? "(none)" : "(from the model)");
+            commit |= color_edit("Color", m.color);
+            const auto model = session.model(m.mesh_asset);
+            if (model && !model->submeshes.empty()) ImGui::TextDisabled("Roughness and metallic come from the model.");
+            else {
+                commit |= drag("Roughness", m.roughness, 0.01f, 0, 1);
+                commit |= drag("Metallic", m.metallic, 0.01f, 0, 1);
+            }
+            if (commit) apply(commands::SetMesh{record.id, m}, "Mesh renderer changed");
+            if (remove_button("mesh")) apply(commands::SetMesh{record.id, std::nullopt}, "Mesh renderer removed");
+        }
+        if (c.camera) {
+            ImGui::SeparatorText("Camera");
+            auto &cam = *c.camera; bool commit = false;
+            commit |= drag("Field of view", cam.vertical_fov_degrees, 0.2f, 1, 179, "%.1f deg");
+            commit |= drag("Near", cam.near_plane, 0.01f, 0.001, cam.far_plane * 0.999);
+            commit |= drag("Far", cam.far_plane, 1.0f, cam.near_plane * 1.001, 1e6, "%.1f");
+            commit |= ImGui::Checkbox("Primary (Play mode view)", &cam.primary);
+            if (commit) apply(commands::SetCamera{record.id, cam}, "Camera changed");
+            ImGui::TextDisabled("Looks along local -Z; must not be scaled.");
+            if (remove_button("camera")) apply(commands::SetCamera{record.id, std::nullopt}, "Camera removed");
+        }
+        if (c.light) {
+            ImGui::SeparatorText("Light");
+            auto &l = *c.light; bool commit = false;
+            int type = int(l.type) - 1;
+            if (ImGui::Combo("Type", &type, "Directional\0Point\0")) { l.type = LightType(type + 1); commit = true; }
+            commit |= color_edit("Light color", l.color);
+            commit |= drag(l.type == LightType::Point ? "Intensity (lm)" : "Intensity (lux)", l.intensity, 500.0f, 0, 1e7, "%.0f");
+            if (l.type == LightType::Point) commit |= drag("Range (m)", l.range, 0.05f, 0.01, 1000);
+            else ImGui::TextDisabled("Shines along local -Z.");
+            if (commit) apply(commands::SetLight{record.id, l}, "Light changed");
+            if (remove_button("light")) apply(commands::SetLight{record.id, std::nullopt}, "Light removed");
+        }
+        physics_sections(record);
+        ImGui::Spacing();
+        if (ImGui::Button("Add Component")) ImGui::OpenPopup("Add Component");
+        if (ImGui::BeginPopup("Add Component")) {
+            if (ImGui::MenuItem("Mesh Renderer", nullptr, false, !c.mesh)) apply(commands::SetMesh{record.id, MeshComponent{}}, "Mesh renderer added");
+            if (ImGui::MenuItem("Camera", nullptr, false, !c.camera)) apply(commands::SetCamera{record.id, CameraComponent{}}, "Camera added");
+            if (ImGui::MenuItem("Light", nullptr, false, !c.light)) apply(commands::SetLight{record.id, LightComponent{}}, "Light added");
+            if (ImGui::MenuItem("Rigid Body", nullptr, false, !c.body)) apply(commands::SetRigidBody{record.id, RigidBodyComponent{}}, "Rigid body added");
+            if (ImGui::MenuItem("Collider (fitted to mesh)", nullptr, false, c.colliders.size() < max_colliders_per_entity)) {
+                auto list = c.colliders;
+                list.push_back(fitted_collider(c.mesh));
+                apply(commands::SetColliders{record.id, std::move(list)}, "Collider added");
+            }
+            ImGui::EndPopup();
+        }
+    }
+    void physics_sections(const EntityRecord &record) {
+        auto &c = components;
+        if (c.body) {
+            ImGui::SeparatorText("Rigid Body");
+            auto &b = *c.body; bool commit = false;
+            int kind = int(b.kind) - 1;
+            if (ImGui::Combo("Body type", &kind, "Static\0Kinematic\0Dynamic\0")) { b.kind = BodyKind(kind + 1); commit = true; }
+            commit |= drag3("Initial velocity", b.linear_velocity, 0.05f);
+            commit |= drag3("Initial spin", b.angular_velocity, 0.05f);
+            commit |= drag("Linear damping", b.linear_damping, 0.01f, 0, 100);
+            commit |= drag("Angular damping", b.angular_damping, 0.01f, 0, 100);
+            commit |= drag("Gravity scale", b.gravity_scale, 0.01f, -100, 100);
+            commit |= ImGui::Checkbox("Can sleep", &b.enable_sleep);
+            commit |= ImGui::Checkbox("Continuous collision", &b.is_bullet);
+            if (commit) apply(commands::SetRigidBody{record.id, b}, "Rigid body changed");
+            if (c.colliders.empty()) ImGui::TextColored({0.95f, 0.75f, 0.3f, 1}, "No colliders: this body will not collide.");
+            if (playing())
+                if (const auto state = session.physics_bridge().body_state(record.id)) {
+                    const auto &v = state->linear_velocity;
+                    ImGui::TextDisabled("Speed %.2f m/s, mass %.1f kg, %s", std::sqrt(v.x * v.x + v.y * v.y + v.z * v.z), state->mass, state->awake ? "awake" : "asleep");
+                }
+            if (remove_button("body")) apply(commands::SetRigidBody{record.id, std::nullopt}, "Rigid body removed");
+        }
+        for (std::size_t i = 0; i < c.colliders.size(); ++i) {
+            ImGui::PushID(int(i));
+            ImGui::SeparatorText(("Collider " + std::to_string(i + 1) + (c.body ? "" : " (static)")).c_str());
+            auto &k = c.colliders[i]; bool commit = false;
+            int shape = int(k.shape) - 1;
+            if (ImGui::Combo("Shape", &shape, "Sphere\0Box\0Capsule\0")) { k.shape = ColliderShape(shape + 1); commit = true; }
+            commit |= drag3("Center", k.center, 0.01f);
+            if (k.shape == ColliderShape::Box) commit |= drag3("Half extents", k.half_extents, 0.01f, 0.001f, 10000);
+            else commit |= drag("Radius", k.radius, 0.01f, 0.001, 10000);
+            if (k.shape == ColliderShape::Capsule) commit |= drag("Half height", k.half_height, 0.01f, 0, 10000);
+            if (k.shape != ColliderShape::Sphere) {
+                const auto euler = glm::degrees(glm::eulerAngles(glm::dquat(k.rotation.w, k.rotation.x, k.rotation.y, k.rotation.z)));
+                float r[3]{tidy_degrees(euler.x), tidy_degrees(euler.y), tidy_degrees(euler.z)};
+                if (ImGui::DragFloat3("Local rotation", r, 0.5f)) {
+                    const glm::dquat q(glm::radians(glm::dvec3(r[0], r[1], r[2])));
+                    k.rotation = {q.x, q.y, q.z, q.w};
+                }
+                commit |= ImGui::IsItemDeactivatedAfterEdit();
+            }
+            commit |= drag("Density", k.density, 10.0f, 0, 100000, "%.0f kg/m3");
+            commit |= drag("Friction", k.friction, 0.01f, 0, 10);
+            commit |= drag("Restitution", k.restitution, 0.01f, 0, 1);
+            commit |= ImGui::Checkbox("Sensor", &k.sensor);
+            ImGui::SameLine(); commit |= ImGui::Checkbox("Report events", &k.events);
+            if (commit) apply(commands::SetColliders{record.id, c.colliders}, "Collider changed");
+            const bool removed = remove_button("collider");
+            ImGui::PopID();
+            if (removed) {
+                auto list = c.colliders;
+                list.erase(list.begin() + std::ptrdiff_t(i));
+                apply(commands::SetColliders{record.id, std::move(list)}, "Collider removed");
+                break;
+            }
+        }
+        for (const auto &issue : session.physics_bridge().diagnostics().issues)
+            if (issue.entity == record.id) {
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.45f, 0.35f, 1));
+                ImGui::TextWrapped("Physics: %s", issue.message.c_str());
+                ImGui::PopStyleColor();
+            }
+    }
+    // Puts physics problems in the Console once, when they appear.
+    void report_physics() {
+        std::set<std::string> current;
+        for (const auto &issue : session.physics_bridge().diagnostics().issues) {
+            const auto record = session.scene().inspect(issue.entity);
+            current.insert("Physics: " + (record ? record->name : std::to_string(issue.entity)) + ": " + issue.message);
+        }
+        for (const auto &message : current) if (!reported_issues.contains(message)) log(message);
+        reported_issues = std::move(current);
+        if (session.physics_error() != reported_physics_error) {
+            reported_physics_error = session.physics_error();
+            if (!reported_physics_error.empty()) log("Error: " + reported_physics_error);
+        }
+    }
+    // Puts asset problems in the Console once, when they appear.
+    void report_assets() {
+        std::set<std::string> current(session.asset_problems().begin(), session.asset_problems().end());
+        for (const auto &issue : session.asset_issues()) current.insert("Asset folder: " + issue.path + ": " + issue.message);
+        for (const auto &issue : renderer.take_issues()) log("Renderer: " + issue);
+        for (const auto &message : current) if (!reported_asset_problems.contains(message)) log(message);
+        reported_asset_problems = std::move(current);
+    }
+    void import_file(const std::filesystem::path &file) {
+        const auto imported = session.import_asset(file);
+        if (!imported) { log("Import failed: " + imported.error().message); return; }
+        const auto &asset = imported.value();
+        log("Imported " + asset.path + " as a " + assets::to_string(asset.type));
+        for (const auto &warning : asset.warnings) log("Warning: " + asset.path + ": " + warning);
+        selected_asset = asset.id;
     }
     void viewport() {
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, {0,0});
@@ -181,6 +613,7 @@ struct EditorUI {
         if (!visible) { ImGui::End(); return; }
         const auto origin = ImGui::GetCursorScreenPos();
         auto size = ImGui::GetContentRegionAvail(); size.x = std::max(size.x, 1.f); size.y = std::max(size.y, 1.f);
+        viewport_center = {origin.x + size.x / 2, origin.y + size.y / 2}; viewport_size = size;
         const auto &io = ImGui::GetIO();
         renderer.resize_viewport(unsigned(size.x * io.DisplayFramebufferScale.x), unsigned(size.y * io.DisplayFramebufferScale.y));
         ImGui::Image(ImTextureRef(renderer.viewport_texture()), size, {0,1}, {1,0});
@@ -213,14 +646,112 @@ struct EditorUI {
             }
             gizmo_active = using_now;
         } else gizmo_active = false;
+        if (show_colliders) collider_outlines(origin, size);
+        report_physics();
+        report_assets();
+        const EntityId marker = markers(origin, size);
         if (hovered && ImGui::IsMouseClicked(0) && !ImGuizmo::IsOver() && !gizmo_active)
-            session.select(session.pick(*frame, (io.MousePos.x-origin.x) / size.x * 2-1, 1-(io.MousePos.y-origin.y) / size.y * 2));
-        ImGui::GetWindowDrawList()->AddText({origin.x+12,origin.y+10}, IM_COL32(210,220,235,255), "RMB orbit  |  MMB pan  |  Wheel zoom  |  F focus  |  Click select");
+            session.select(marker ? marker : session.pick(*frame, (io.MousePos.x-origin.x) / size.x * 2-1, 1-(io.MousePos.y-origin.y) / size.y * 2));
+        auto *draw = ImGui::GetWindowDrawList();
+        const float margin = px(12), line = ImGui::GetTextLineHeightWithSpacing();
+        draw->AddText({origin.x+margin,origin.y+px(10)}, IM_COL32(210,220,235,255), "RMB orbit  |  MMB pan  |  Wheel zoom  |  F focus  |  Click select");
+        if (playing()) {
+            draw->AddRect(origin, ImVec2(origin.x+size.x, origin.y+size.y), IM_COL32(115,215,115,255), 0.0f, ImDrawFlags_None, px(3));
+            draw->AddText({origin.x+margin,origin.y+px(10)+line}, IM_COL32(115,215,115,255),
+                session.play_state() == editor::PlayState::Paused ? "PLAY MODE (paused) - changes are discarded on Stop"
+                                                                  : "PLAY MODE - changes are discarded on Stop");
+            std::string view = "Viewing through the editor camera (no primary camera)";
+            if (const auto camera = session.scene().inspect(session.view_camera())) view = "Viewing through camera '" + camera->name + "'";
+            if (!session.view_camera_issue().empty()) view = session.view_camera_issue() + "; using the editor camera";
+            draw->AddText({origin.x+margin,origin.y+px(10)+2*line}, IM_COL32(115,215,115,255), view.c_str());
+        }
+        if (!playing() && frame->lights.empty())
+            draw->AddText({origin.x+margin,origin.y+size.y-px(24)}, IM_COL32(150,160,175,255), "No lights in the scene: editor lighting is used");
         ImGui::End();
+    }
+    // Screen position of a world point in the current frame; empty behind the camera.
+    std::optional<ImVec2> project(glm::dvec3 p, ImVec2 origin, ImVec2 size) const {
+        const auto clip = glm::make_mat4(frame->camera.projection.matrix.data()) * glm::make_mat4(frame->camera.view.matrix.data()) * glm::dvec4(p, 1);
+        if (clip.w <= 1e-6) return std::nullopt;
+        return ImVec2(origin.x + float((clip.x / clip.w + 1) / 2) * size.x, origin.y + float((1 - clip.y / clip.w) / 2) * size.y);
+    }
+    // Collider wireframes from the physics bridge, drawn over the image without depth testing (contract C-4a).
+    // An edge with an end behind the camera is skipped rather than clipped.
+    void collider_outlines(ImVec2 origin, ImVec2 size) {
+        auto *draw = ImGui::GetWindowDrawList();
+        for (const auto &line : session.physics_bridge().debug_geometry().lines) {
+            const auto a = project({line.a.x, line.a.y, line.a.z}, origin, size), b = project({line.b.x, line.b.y, line.b.z}, origin, size);
+            if (!a || !b) continue;
+            const auto c = physics::default_color(line.category);
+            draw->AddLine(*a, *b, ImGui::ColorConvertFloat4ToU32({c[0], c[1], c[2], c[3]}));
+        }
+    }
+    // Lights and cameras have no mesh, so they get clickable screen-space markers. Returns the hovered one.
+    EntityId markers(ImVec2 origin, ImVec2 size) {
+        const auto project = [&](glm::dvec3 p) { return this->project(p, origin, size); };
+        auto *draw = ImGui::GetWindowDrawList();
+        const auto mouse = ImGui::GetIO().MousePos;
+        EntityId hovered = 0;
+        for (const auto &e : session.scene().snapshot().entities) {
+            if (!e.components.light && !e.components.camera) continue;
+            if (e.id == session.view_camera()) continue; // The camera being looked through sits at the eye.
+            const auto m = glm::make_mat4(session.scene().world_transform(e.id)->matrix.data());
+            const glm::dvec3 at(m[3]);
+            const auto screen = project(at);
+            if (!screen) continue;
+            const bool selected = e.id == session.selection();
+            const ImU32 color = e.components.light ? IM_COL32(250,215,90,255) : IM_COL32(110,200,240,255);
+            if (e.components.light && e.components.light->type == LightType::Directional)
+                if (const auto tip = project(at - glm::normalize(glm::dvec3(m[2])))) draw->AddLine(*screen, *tip, color, px(2));
+            if (e.components.light) draw->AddCircleFilled(*screen, px(7), color);
+            else draw->AddRectFilled({screen->x-px(8), screen->y-px(6)}, {screen->x+px(8), screen->y+px(6)}, color);
+            if (selected) draw->AddCircle(*screen, px(11), IM_COL32(255,255,255,255), 0, px(2));
+            draw->AddText({screen->x+px(11), screen->y-px(7)}, color, e.name.c_str());
+            const float dx = mouse.x - screen->x, dy = mouse.y - screen->y;
+            if (dx*dx + dy*dy <= px(10)*px(10)) hovered = e.id;
+        }
+        return hovered;
     }
     void assets() {
         ImGui::Begin("Asset Browser");
-        if (ImGui::Button("Built-in: Cube")) report(session.create(), "Created cube from asset browser");
+        ImGui::SetNextItemWidth(std::max(ImGui::GetContentRegionAvail().x - px(150), px(80)));
+        const bool entered = ImGui::InputText("##import", import_path.data(), import_path.size(), ImGuiInputTextFlags_EnterReturnsTrue);
+        ImGui::SameLine();
+        if (ImGui::Button("Import") || entered) {
+            if (import_path[0]) import_file(utf8_path(import_path.data()));
+            else log("Error: Enter a file to import, or drop one on the window");
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Rescan")) report(session.rescan_assets(), "Asset folder rescanned");
+        ImGui::TextDisabled("Assets in %s (.glb .obj .png .jpg .tga .ppm; or drop files on the window)", session.asset_folder().generic_string().c_str());
+        const auto catalogue = session.assets();
+        const auto chosen = std::find_if(catalogue.begin(), catalogue.end(), [&](const assets::AssetMetadata &a) { return a.id == selected_asset; });
+        const bool have = chosen != catalogue.end();
+        ImGui::BeginDisabled(!have || !session.selection());
+        if (ImGui::Button("Assign to selection")) report(session.assign_asset(session.selection(), selected_asset), "Asset assigned to the selected entity");
+        ImGui::EndDisabled();
+        ImGui::SameLine(); ImGui::BeginDisabled(!have || chosen->type != assets::AssetType::Mesh);
+        if (ImGui::Button("Add to scene")) report(session.place_asset(selected_asset), "Model added to the scene");
+        ImGui::EndDisabled();
+        ImGui::SameLine(); ImGui::BeginDisabled(!have);
+        if (ImGui::Button("Reload")) report(session.reload_asset(selected_asset), "Asset re-imported from disk");
+        ImGui::EndDisabled();
+        for (const auto &meta : catalogue) {
+            const auto state = session.asset_state(meta.id);
+            const bool failed = state == assets::AssetState::Failed || state == assets::AssetState::Missing;
+            if (failed) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.45f, 0.35f, 1));
+            const auto label = std::string(meta.type == assets::AssetType::Mesh ? "[model]   " : "[texture] ") + meta.path + "  (" + assets::to_string(state) + ")##" + assets::to_string(meta.id);
+            if (ImGui::Selectable(label.c_str(), meta.id == selected_asset)) selected_asset = meta.id;
+            if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left) && meta.type == assets::AssetType::Mesh)
+                report(session.place_asset(meta.id), "Model added to the scene");
+            if (failed) ImGui::PopStyleColor();
+        }
+        if (catalogue.empty()) ImGui::TextDisabled("No assets yet.");
+        ImGui::Separator();
+        ImGui::TextDisabled("Built-in meshes");
+        if (ImGui::Button("Cube")) spawn("Cube", {MeshComponent{BuiltinMesh::Cube}, {}, {}});
+        ImGui::SameLine(); if (ImGui::Button("Sphere")) spawn("Sphere", {MeshComponent{BuiltinMesh::Sphere}, {}, {}});
+        ImGui::SameLine(); if (ImGui::Button("Plane")) spawn("Plane", {MeshComponent{BuiltinMesh::Plane}, {}, {}}, {{0,0,0}, {}, {10,1,10}});
         ImGui::TextDisabled("Scene files in current scene folder");
         auto directory = std::filesystem::path(scene_path.data()).parent_path();
         if (directory.empty()) directory = ".";
@@ -234,40 +765,80 @@ struct EditorUI {
         ImGui::End();
     }
     void draw() {
-        docking(); toolbar(); hierarchy(); inspector(); viewport(); assets();
+        for (const auto &file : std::exchange(dropped_files, {})) import_file(file);
+        // Before the viewport: it extracts the frame, whose handles must be those of the latest import or reload.
+        docking(); toolbar(); hierarchy(); inspector(); assets(); viewport();
         ImGui::Begin("Console");
         for (const auto &m : messages) ImGui::TextWrapped("%s", m.c_str());
+        // The newest message, such as an import error, is what the user needs to see.
+        if (std::exchange(scroll_console, false)) ImGui::SetScrollHereY(1);
         ImGui::End();
+        confirm();
         const auto &io = ImGui::GetIO();
-        if (!io.WantTextInput && !gizmo_active) {
+        if (!io.WantTextInput && !gizmo_active && !ImGui::IsPopupOpen("Unsaved changes")) {
             if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Z)) report(io.KeyShift ? session.redo() : session.undo(), io.KeyShift ? "Redo" : "Undo");
             if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Y)) report(session.redo(), "Redo");
             if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_S)) report(session.save(scene_path.data()), "Scene saved");
+            if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_N)) request(Pending::NewScene);
+            if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_D, false)) duplicate_selection();
+            if (!io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Delete, false)) delete_selection();
         }
     }
 };
 }
 int main(int argc, char **argv) {
     try {
-        const bool smoke = argc > 1 && std::string_view(argv[1]) == "--smoke";
+        bool smoke = false;
+        std::filesystem::path project = std::filesystem::current_path();
+        for (int i = 1; i < argc; ++i) {
+            const std::string_view arg = argv[i];
+            if (arg == "--smoke") smoke = true;
+            else if (arg == "--project" && i + 1 < argc) project = utf8_path(argv[++i]);
+            else throw std::runtime_error("Usage: engine_editor [--project <folder>] [--smoke]");
+        }
         Host host; host.start();
         if (smoke) ImGui::GetIO().IniFilename = nullptr;
+        glfwSetDropCallback(host.window, [](GLFWwindow *, int count, const char **paths) {
+            for (int i = 0; i < count; ++i) dropped_files.push_back(utf8_path(paths[i]));
+        });
         editor::EditorSession session;
+        // Not fatal: the editor works without a project, and imports then say why they cannot run.
+        const auto project_opened = session.open_project(project);
         auto created = session.create("Cube");
         if (!created) throw std::runtime_error(created.error().message);
+        session.mark_clean(); // The starter cube is not a user change.
         const auto cube = session.selection();
         renderer::DesktopRenderer renderer(glfwGetWin32Window(host.window), EDITOR_MATERIAL_DIR);
         renderer.resize_viewport(800, 600);
         EditorUI ui(session, renderer);
+        if (!project_opened) ui.log("Error: " + project_opened.error().message);
         int frame = 0, rendered = 0;
-        while (!glfwWindowShouldClose(host.window)) {
+        SceneSnapshot before_play;
+        std::uint64_t revision_before_play = 0;
+        EntityId probe = 0;
+        std::array<int, 3> probe_color{}, lit_color{}, texture_top{}, texture_bottom{};
+        std::string shown_title;
+        auto last = std::chrono::steady_clock::now();
+        while (!ui.quit) {
             glfwPollEvents();
+            if (glfwWindowShouldClose(host.window)) {
+                if (smoke) break;
+                // Closing goes through the unsaved-changes prompt; restore first so a minimized window shows it.
+                glfwSetWindowShouldClose(host.window, GLFW_FALSE);
+                if (glfwGetWindowAttrib(host.window, GLFW_ICONIFIED)) glfwRestoreWindow(host.window);
+                ui.request(Pending::Quit);
+                if (ui.quit) break;
+            }
+            const auto now = std::chrono::steady_clock::now();
+            session.update(now - last); last = now;
+            if (const auto title = ui.title(); title != shown_title) { glfwSetWindowTitle(host.window, title.c_str()); shown_title = title; }
+            host.follow_monitor();
             int width, height; glfwGetFramebufferSize(host.window, &width, &height);
             if (width <= 0 || height <= 0) { glfwWaitEventsTimeout(0.05); continue; }
             ImGui_ImplGlfw_NewFrame(); ImGui::NewFrame(); ImGuizmo::BeginFrame();
             ui.draw(); ImGui::Render();
             if (!ui.frame) { auto f = session.frame(4.0 / 3); if (f) ui.frame = f.value(); }
-            if (ui.frame && renderer.render(*ui.frame, ImGui::GetDrawData(), width, height)) ++rendered;
+            if (ui.frame && renderer.render(*ui.frame, session.resources(), ImGui::GetDrawData(), width, height)) ++rendered;
             if (smoke) {
                 std::this_thread::sleep_for(std::chrono::milliseconds(16));
                 if (frame == 15) {
@@ -283,15 +854,92 @@ int main(int argc, char **argv) {
                 }
                 if (frame == 65) glfwIconifyWindow(host.window);
                 if (frame == 65) { glfwPollEvents(); glfwRestoreWindow(host.window); }
-                if (++frame == 100) {
-                    if (rendered < 20 || renderer.object_count() != session.scene().size()) throw std::runtime_error("Smoke renderer did not reconcile: rendered=" + std::to_string(rendered) + " objects=" + std::to_string(renderer.object_count()));
+                if (frame == 70) {
+                    before_play = session.editor_scene().snapshot(); revision_before_play = session.commands().revision();
+                    if (!session.play()) throw std::runtime_error("Smoke play failed");
+                }
+                if (frame == 72) {
+                    Transform t; t.position = {-2,0.5,0};
+                    if (!session.execute(commands::SetTransform{cube,t}) || !session.create("RuntimeOnly")) throw std::runtime_error("Smoke runtime edit failed");
+                }
+                if (frame == 80) {
+                    if (!session.runtime_ticks() || renderer.object_count() != 2) throw std::runtime_error("Smoke runtime scene not ticking or not rendered");
+                    if (!session.stop()) throw std::runtime_error("Smoke stop failed");
+                    if (session.editor_scene().snapshot() != before_play || session.commands().revision() != revision_before_play)
+                        throw std::runtime_error("Smoke play mode changed the editor scene");
+                }
+                // Surface color and scene lights reach the GPU: read the viewport center back and check its hue.
+                // `offset` is a fraction of the viewport height below the center.
+                const auto center_pixel = [&](float offset = 0) {
+                    const auto pixels = renderer.readback(width, height);
+                    const auto scale = ImGui::GetIO().DisplayFramebufferScale;
+                    const auto x = std::clamp(int(ui.viewport_center.x * scale.x), 0, width - 1);
+                    const auto y = std::clamp(int((ui.viewport_center.y + offset * ui.viewport_size.y) * scale.y), 0, height - 1);
+                    const auto *p = pixels.data() + (std::size_t(y) * width + x) * 4;
+                    return std::array<int, 3>{p[0], p[1], p[2]};
+                };
+                const auto dominant = [](const std::array<int, 3> &c, int channel) {
+                    return c[channel] > 60 && c[channel] > 3 * c[(channel + 1) % 3] && c[channel] > 3 * c[(channel + 2) % 3];
+                };
+                if (frame == 82) {
+                    Transform t; t.position = {-3,0.5,0};
+                    auto r = session.execute(commands::CreateEntity{"Probe", t, 0, 0, {MeshComponent{BuiltinMesh::Cube, {1,0,0}, 0.9, 0}, {}, {}}});
+                    if (!r) throw std::runtime_error("Smoke probe creation failed");
+                    probe = r.value().created.front();
+                    session.select(probe); session.focus(); session.select(0); // No gizmo over the sampled pixel.
+                }
+                if (frame == 86 && !dominant(probe_color = center_pixel(), 0))
+                    throw std::runtime_error("Smoke: red surface not visible under editor lighting");
+                if (frame == 87) {
+                    // White surface lit only by a blue scene light shining along the view direction.
+                    const auto q = glm::quat_cast(glm::make_mat4(session.camera.world().matrix.data()));
+                    Transform t; t.rotation = {q.x, q.y, q.z, q.w};
+                    if (!session.execute(commands::SetMesh{probe, MeshComponent{BuiltinMesh::Cube, {1,1,1}, 0.9, 0}}) ||
+                        !session.execute(commands::CreateEntity{"Blue light", t, 0, 0, {{}, {}, LightComponent{LightType::Directional, {0,0,1}, 100000, 10}}}))
+                        throw std::runtime_error("Smoke component edit failed");
+                }
+                if (frame == 91 && (!dominant(lit_color = center_pixel(), 2) || renderer.light_count() != 1))
+                    throw std::runtime_error("Smoke: scene light did not replace editor lighting");
+                // An imported texture reaches the GPU the right way up: a plane seen from above, with -Z up the screen,
+                // shows the image's first row (red) at the top.
+                if (frame == 100) {
+                    namespace fs = std::filesystem;
+                    fs::remove_all("smoke-project"); fs::remove_all("smoke-source");
+                    fs::create_directories("smoke-project"); fs::create_directories("smoke-source");
+                    {
+                        std::ofstream image("smoke-source/two_tone.ppm", std::ios::binary);
+                        image << "P6\n2 2\n255\n";
+                        for (const auto *pixel : {"\xff\x01\x01", "\xff\x01\x01", "\x01\x01\xff", "\x01\x01\xff"}) image.write(pixel, 3);
+                    }
+                    const auto opened = session.open_project("smoke-project");
+                    const auto imported = session.import_asset("smoke-source/two_tone.ppm");
+                    if (!opened || !imported || !session.new_scene()) throw std::runtime_error("Smoke import failed");
+                    Transform t; t.position = {0,0.05,0}; t.scale = {4,1,4}; // Above the grid's axis lines.
+                    auto plane = session.execute(commands::CreateEntity{"Textured", t, 0, 0, {MeshComponent{BuiltinMesh::Plane, {1,1,1}, 0.9, 0}, {}, {}}});
+                    if (!plane || !session.assign_asset(plane.value().created.front(), imported.value().id)) throw std::runtime_error("Smoke texture assignment failed");
+                    session.select(0);
+                    session.camera.target = {0,0,0}; session.camera.yaw = 0; session.camera.pitch = 1.5; session.camera.distance = 6;
+                }
+                if (frame == 105) {
+                    texture_top = center_pixel(-0.12f); texture_bottom = center_pixel(0.12f);
+                    if (!dominant(texture_top, 0) || !dominant(texture_bottom, 2) || renderer.asset_texture_count() != 1)
+                        throw std::runtime_error("Smoke: imported texture not shown upright: top " + std::to_string(texture_top[0]) + "," + std::to_string(texture_top[2]) +
+                                                 ", bottom " + std::to_string(texture_bottom[0]) + "," + std::to_string(texture_bottom[2]));
+                }
+                if (++frame == 112) {
+                    const auto meshes = std::ranges::count_if(session.scene().snapshot().entities, [](const EntityRecord &e) { return e.components.mesh.has_value(); });
+                    if (rendered < 20 || renderer.object_count() != std::size_t(meshes)) throw std::runtime_error("Smoke renderer did not reconcile: rendered=" + std::to_string(rendered) + " objects=" + std::to_string(renderer.object_count()));
                     renderer.capture("editor-smoke.ppm", width, height);
-                    std::cout << "GPU smoke passed: " << rendered << " frames; transform, undo/redo, save/load, resize and capture.\n";
+                    std::cout << "GPU smoke passed: " << rendered << " frames; transform, undo/redo, save/load, play/stop isolation, resize, "
+                                 "surface color (" << probe_color[0] << ',' << probe_color[1] << ',' << probe_color[2] << "), scene light ("
+                              << lit_color[0] << ',' << lit_color[1] << ',' << lit_color[2] << "), imported texture (top "
+                              << texture_top[0] << ',' << texture_top[1] << ',' << texture_top[2] << "; bottom "
+                              << texture_bottom[0] << ',' << texture_bottom[1] << ',' << texture_bottom[2] << ") and capture.\n";
                     break;
                 }
             } else glfwWaitEventsTimeout(0.005);
         }
-        if (smoke && frame != 100) throw std::runtime_error("Smoke run closed before completing all checks");
+        if (smoke && frame != 112) throw std::runtime_error("Smoke run closed before completing all checks");
         std::cout << "Editor stopped cleanly.\n";
         return 0;
     } catch (const std::exception &e) { std::cerr << "Editor failed: " << e.what() << '\n'; return 1; }

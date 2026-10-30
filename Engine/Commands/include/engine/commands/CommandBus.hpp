@@ -18,6 +18,7 @@ struct CreateEntity {
     Transform transform;
     EntityId parent = 0;
     EntityId requested_id = 0;
+    Components components;
 };
 struct DeleteEntity {
     EntityId id;
@@ -37,8 +38,38 @@ struct SetParent {
 struct ReplaceScene {
     SceneSnapshot snapshot;
 };
-using Command =
-    std::variant<CreateEntity, DeleteEntity, RenameEntity, SetTransform, SetParent, ReplaceScene>;
+// Component commands add or replace a component; an empty optional removes it.
+struct SetMesh {
+    EntityId id;
+    std::optional<MeshComponent> mesh;
+};
+struct SetCamera {
+    EntityId id;
+    std::optional<CameraComponent> camera;
+};
+struct SetLight {
+    EntityId id;
+    std::optional<LightComponent> light;
+};
+// Copies the entity and its whole subtree, components included, under the same parent. Copies get new
+// stable IDs in breadth-first order (Receipt::created, the copy of `id` first). An empty name keeps the
+// original name for the copied root; descendants always keep theirs.
+struct DuplicateEntity {
+    EntityId id;
+    std::string name;
+};
+struct SetRigidBody {
+    EntityId id;
+    std::optional<RigidBodyComponent> body;
+};
+// Replaces the entity's whole collider list; an empty list removes all colliders.
+struct SetColliders {
+    EntityId id;
+    std::vector<ColliderComponent> colliders;
+};
+using Command = std::variant<CreateEntity, DeleteEntity, RenameEntity, SetTransform, SetParent,
+                             ReplaceScene, SetMesh, SetCamera, SetLight, DuplicateEntity,
+                             SetRigidBody, SetColliders>;
 struct CommandDescriptor {
     std::string_view name;
     Capability permission;
