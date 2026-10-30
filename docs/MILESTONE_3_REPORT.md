@@ -3,7 +3,144 @@
 Branch `agent/claude-milestone-3`, worktree `D:\AI\GameEngine-Integration`. Plan: `docs/MILESTONE_3_PLAN.md`
 (approved 2026-10-29).
 
-**Status: in progress. Slices S1–S5 are complete and verified; S6 (final report and polish) is not started.**
+**Status: complete on `agent/claude-milestone-3`, not merged into `main`.** The brief's 13-step acceptance workflow
+passes on a fresh Release build with real mouse and keyboard input. Three Inspector controls were not clicked through
+(listed under "What was not verified"). Hosted CI has never run.
+
+This top part is the final result, written on 2026-10-30. The slice sections below are records as of each slice; where
+one says something is still open, this part supersedes it.
+
+## Final result
+
+### Deliverables
+
+| Deliverable | Where |
+|---|---|
+| Editor executable | `build-m3-windows-msvc-release\bin\engine_editor.exe`, run as `engine_editor [--project <folder>]`. It finds its compiled materials by an absolute path into the build tree, so it runs from there and is not yet relocatable |
+| Tests | 146 CTest entries, including 23 core scenarios, 12 editor groups and 35 asset cases, plus the GPU smoke (`engine_editor --smoke`). See `docs/testing/README.md` |
+| Verification results | Below, and per slice |
+| Documented scene format | `docs/architecture/006-scene-format.md`, version 5; versions 1–4 still load |
+| Known limitations and defects | Below |
+
+### Acceptance criteria (plan section 5)
+
+| # | Criterion | Result |
+|---|---|---|
+| 1 | Brief's workflow on the Release editor with real input | **Met**: table below |
+| 2 | Same workflow as an automated CPU test | **Met**: `acceptance_workflow` in `engine.editor.acceptance` |
+| 3 | Both presets configure, build and pass from fresh directories; nothing removed or weakened; engine targets warning-free under `/WX` | **Met**: below. Physics tests that used a removed API were migrated, as listed under S4 |
+| 4 | Every Phase 2–6 feature has a test where practical, plus a real-input check | **Met, with the exceptions listed under "What was not verified"** |
+| 5 | This report lists what was verified, how, and what was not | **Met** |
+
+### Fresh-directory builds
+
+Run from new directories `build-m3-windows-msvc-release` and `build-m3-windows-msvc-ci` on Windows 10, MSVC 19.44, with
+the code in this commit.
+
+| Preset | Configure | Build | CTest | Core | Editor | Assets | GPU smoke |
+|---|---|---|---|---|---|---|---|
+| `windows-msvc-release` | exit 0 | exit 0, 883 steps, about 4 min | 146/146 | 23/23 | 12 groups | 35/35 | exit 0 |
+| `windows-msvc-ci` (`/WX`, strict lock) | exit 0, dependencies `(locked)` | exit 0, 883 steps, about 4 min | 146/146 | 23/23 | 12 groups | 35/35 | exit 0 |
+
+Compiler warnings: none in engine code. The logs hold warnings from `resources/filament`, plus 2 C4267 in the MSVC header
+`xutility` while instantiating Filament's `FixedCapacityVector`. GPU smoke readback on both: surface color (73, 1, 1),
+scene light (0, 0, 151), imported texture top (165, 3, 19) and bottom (20, 3, 164).
+
+### Acceptance workflow with real input
+
+Fresh Release executable, new empty folder, real `SendInput` events, a desktop capture after the actions, and the file
+read from disk. The driver reported no cursor interference during this run.
+
+| # | Step | Evidence | Result |
+|---|---|---|---|
+| 1 | Open the editor | Starter scene, clean title | Pass |
+| 2 | Create a new scene | **New**: no prompt, 0 entities, "New scene" | Pass |
+| 3 | Add a cube | **+ Cube**: 1 entity, stable ID 2, "(unsaved)" | Pass |
+| 4 | Select it in the viewport | Empty click clears the Inspector; clicking the cube shows ID 2 | Pass |
+| 5 | Move, rotate, scale | X arrow: X 0 → 1.766. Y ring: rotation Y 66.161°. Y scale handle: 1.828. Three "Gizmo transform committed" | Pass |
+| 6 | Edit transform in the Inspector | Position Z typed as −1.25; world position 1.766, 0.500, −1.250 | Pass |
+| 7 | Save | Ctrl+S, "Scene saved"; `ENGINE_SCENE 5 3 1` / `ENTITY 2 0 "Cube" 1.7659938… 0.5 -1.25 …` / `MESH 2 cube … - -` | Pass |
+| 8 | Close and reopen | Close exits with no prompt; relaunched | Pass |
+| 9 | Load | **Load**, "Scene loaded (undoable)" | Pass |
+| 10 | Transform retained | Inspector: (1.766, 0.500, −1.250), (0, 66.161, 0), (1, 1.828, 1); same on screen | Pass |
+| 11 | Enter Play mode | Green border and banner, `PLAYING tick 150`, Undo, Redo, Save and Load disabled | Pass |
+| 12 | Stop Play mode | "Stopped; runtime copy discarded", revision still 2 | Pass |
+| 13 | Editor scene unchanged | Same Inspector values and view; saving again gives a byte-identical file (SHA-256) | Pass |
+
+An earlier run the same day is not counted. The driver reported the cursor jumping during the scale drag, leaving Y
+scale at 0.001. It was repeated from step 1 in a new folder, and the table above is that repeat.
+
+### Brief's phases
+
+| Phase | Delivered | Slice |
+|---|---|---|
+| 1. Audit | `docs/MILESTONE_3_PLAN.md` section 1 | Plan |
+| 2. Scene interaction | Picking, selection sync, gizmos, Local and World, create, delete, duplicate, parent and child tree. All edits go through typed commands into the Flecs-mirrored scene | M2, S1–S3 |
+| 3. Inspector | Name, ID, transform; mesh, model, texture and color; camera; light; rigid body; colliders | S2, S4, S5 |
+| 4. Asset workflow | GLB, PNG, JPEG (with OBJ, TGA, PPM), Asset Browser, assignment, errors and warnings, references saved in scenes. Filament's gltfio `AssetLoader` is not used, but its parsers are: see D4 in the plan | S5 |
+| 5. Persistence | New, Save, Load, components and references in a versioned format, undo and redo | S1, S2, S4, S5 |
+| 6. Play mode | Isolated runtime scene, Play, Pause, Step, Stop, physics stepping, editor scene restored | S1, S4 |
+| 7. Verification | This report | All |
+
+### S6 changes
+
+| Change | Detail |
+|---|---|
+| DPI scaling | The window opens at the monitor's scale, kept within its work area, and centered. Fonts are rasterized for that scale and UI sizes follow it. Checked at 150% only: 2160×1350 window, sharp text |
+| Moving between monitors | Sizes and text follow the window's content scale each frame. Not exercised on a monitor with another scale |
+| `-0.000` | Euler angles round to 0 within 0.0005°, so rotation fields no longer read `-0.000` |
+| Fitted collider | `EditorSession::model_collider` replaces the code in `Main.cpp`, so it is now covered by `asset_workflow` |
+| Console auto-scroll | Done in S5 |
+| Testing guide | `docs/testing/README.md` refreshed |
+
+### Real-input checks closed in S6
+
+Same run conditions, on the fresh Release executable, with DamagedHelmet.glb, Fox.glb and two_tone.jpg.
+
+| Check | Observed | Result |
+|---|---|---|
+| Inspector Model combo | Lists `(built-in mesh)` and both models; DamagedHelmet replaces the cube; the Mesh row disappears; roughness and metallic become a note | Pass |
+| Inspector Texture combo, overriding a GLB's image | Lists `(from the model)` and two_tone.jpg; the helmet turns red and blue | Pass |
+| Reload | "Asset re-imported from disk"; the helmet keeps drawing | Pass |
+| Fitted collider for a model | Outline encloses the helmet; center (−0.002, 0, −0.187), half extents (0.945, 0.901, 1.000) | Pass |
+| Place Fox | Added as "Fox", textured and upright, with skinning and animation warnings at import; Focus frames it | Pass |
+| Collider shape: capsule | Fields become radius and half height; the outline changes | Pass |
+| Collider local rotation | X typed as 45; the outline tilts | Pass |
+| Close | 10 of 10 start and close cycles exited within 0.3 s, 4 of them after editing and saving | Pass |
+
+One check in this batch looked like a failure and was not: an editor was still running after a close, but it was the
+instance from the discounted run, which that script never closed.
+
+### What was not verified
+
+- **Inspector controls never clicked through:** Sensor and Report events (the attempt was spoiled by cursor movement,
+  and neither box was set), the Kinematic body type, and a primary camera combined with physics. Sensor, events and
+  kinematic bodies are covered by `physics_scene_tests` at the bridge level.
+- **Hosted CI, and every platform other than Windows x64 with MSVC.** No remote exists. Linux code paths are unbuilt
+  here; the build without cgltf and stb_image was only compiled with MSVC.
+- **`windows-msvc-debug`** was not built in this milestone.
+- **DPI scales other than 150%**, and moving the window to a monitor with another scale.
+- **GameNetworkingSockets, miniaudio, Tracy:** out of scope; GNS stays deferred.
+- **Symlink-escape rejection in the asset database:** implemented, untested, since symlinks need elevated rights here.
+
+### Known limitations and remaining defects
+
+No known defect blocks the acceptance workflow. These remain:
+
+| Area | Limitation |
+|---|---|
+| Distribution | The executable depends on its build tree for materials. The build directory must share a drive with `resources` (Filament limitation) |
+| Rendering | No shadows and no image-based lighting, so surfaces facing away from every light are black, and a fully metallic surface with no map renders nearly black. Exposure is fixed (sunny 16), so indoor-scale point lights need about 10⁶ lm. No transparency. Everything draws double-sided. A plane at y = 0 fights with the grid |
+| Materials | No material assets: a mesh renderer has a color, roughness, metallic and one texture. GLB import uses the base color image only and ignores other maps with a warning. A material with a metallic-roughness map becomes a non-metal with roughness 0.65 |
+| Models | Skinned models import in the bind pose, with no animation. A file's own scale is kept, so Fox is far larger than the 40 m grid. One asset per file, with no entity hierarchy from glTF nodes. `.gltf`, external images, Draco, WebP and KTX2 are rejected. Picking uses bounding boxes, not triangles |
+| Assets | Importing blocks the UI (the helmet takes about a second). No thumbnails. Imported data stays in RAM until exit. Scene files are not tied to a project: loading one with another project open gives placeholders and problems |
+| Physics | Collider outlines have no depth test, and an edge with an end behind the camera is skipped. A runtime edit teleports a dynamic body. Play timing follows wall-clock frames, so identical inputs can land a few millimeters apart |
+| Hierarchy | Drag-and-drop reparents but does not reorder. No multi-selection. Duplicates sit exactly on the original |
+| Inspector | Values pass through `float`, so 0.2 is stored as 0.20000000298023224. A color change through the picker popup makes several undo steps. Cameras have no frustum gizmo |
+| Gizmos | `float` matrices can leave `1.0000001` on untouched scale components. A scale drag past the origin stops near zero (Y 0.001 in the discounted run), which collapses the object until undone |
+| Layout | Very small windows are not handled specially. A scaled UI fills a small window faster |
+| Build | Two ImGui builds (`gameengine::imgui`, `editor_imgui`) and two entry points (`cmake -S Engine/Editor`) remain. The ImGui renderable is rebuilt each frame, and resizing calls `flushAndWait` |
+| Documents | `docs/integration/m2-integration-report.md` is a Milestone 2 record and still describes the old API |
 
 ## S5: assets (2026-10-30)
 
@@ -71,9 +208,8 @@ files from the dependency tree. The driver reported no cursor interference.
 | Orientation on screen | The dropped image on a plane seen from above: red (first row) at the top of the desktop capture, blue below | Pass |
 | Undo and close | Ctrl+Z removes the texture; closing gives the unsaved-changes prompt, Discard exits; a clean close exits with no prompt | Pass |
 
-Not exercised with real input: the **Reload** button, the Inspector's Model and Texture combos, a texture overriding a
-GLB's image, placing Fox, and Add Component's fitted collider for a model. Reload is covered by `asset_workflow` at the
-session level, and the fitted collider has no automated test.
+Not exercised with real input in S5: the **Reload** button, the Inspector's Model and Texture combos, a texture
+overriding a GLB's image, placing Fox, and Add Component's fitted collider for a model. All of them were checked in S6.
 
 ### Limitations
 

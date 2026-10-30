@@ -33,6 +33,8 @@ using namespace engine;
 struct Host {
     GLFWwindow *window = nullptr;
     bool glfw = false, imgui = false, backend = false;
+    ImGuiStyle base_style; // Unscaled.
+    float font_scale = 1, ui_scale = 0;
     ~Host() {
         if (backend) ImGui_ImplGlfw_Shutdown();
         if (imgui) ImGui::DestroyContext();
@@ -44,8 +46,18 @@ struct Host {
         if (!glfwInit()) throw std::runtime_error("GLFW initialization failed");
         glfw = true;
         glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-        window = glfwCreateWindow(1440, 900, "GameEngine Editor", nullptr, nullptr);
+        glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
+        // 1440x900 at the monitor's scale, kept within its work area.
+        GLFWmonitor *monitor = glfwGetPrimaryMonitor();
+        float scale = 1, unused = 1;
+        int area_x = 0, area_y = 0, area_width = 1440, area_height = 900;
+        if (monitor) { glfwGetMonitorContentScale(monitor, &scale, &unused); glfwGetMonitorWorkarea(monitor, &area_x, &area_y, &area_width, &area_height); }
+        const float fit = std::min({std::max(scale, 1.f), 0.9f * float(area_width) / 1440, 0.9f * float(area_height) / 900});
+        const int window_width = std::max(int(1440 * fit), 640), window_height = std::max(int(900 * fit), 400);
+        window = glfwCreateWindow(window_width, window_height, "GameEngine Editor", nullptr, nullptr);
         if (!window) throw std::runtime_error("Window creation failed");
+        if (monitor) glfwSetWindowPos(window, area_x + std::max(area_width - window_width, 0) / 2, area_y + std::max(area_height - window_height, 0) / 2);
+        glfwShowWindow(window);
         IMGUI_CHECKVERSION(); ImGui::CreateContext(); imgui = true;
         ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_DockingEnable | ImGuiConfigFlags_NavEnableKeyboard;
         ImGui::StyleColorsDark();
@@ -54,8 +66,27 @@ struct Host {
         style.Colors[ImGuiCol_WindowBg] = {0.075f,0.085f,0.105f,1};
         style.Colors[ImGuiCol_Header] = {0.16f,0.27f,0.39f,1};
         style.Colors[ImGuiCol_Button] = {0.13f,0.23f,0.34f,1};
+        base_style = style;
+        // The renderer uploads the font atlas once, so the font is built for the scale the editor opens at;
+        // follow_monitor() scales it on another monitor.
+        font_scale = std::max(scale, 1.f);
+        ImFontConfig font;
+        font.SizePixels = 13 * font_scale;
+        if (font_scale > 1) ImGui::GetIO().Fonts->AddFontDefaultVector(&font); else ImGui::GetIO().Fonts->AddFontDefaultBitmap(&font);
+        follow_monitor();
         backend = ImGui_ImplGlfw_InitForOther(window, true);
         if (!backend) throw std::runtime_error("ImGui GLFW initialization failed");
+    }
+    // Between frames: sizes and text follow the content scale of the monitor the window is on.
+    void follow_monitor() {
+        float scale = 0, unused = 0;
+        glfwGetWindowContentScale(window, &scale, &unused);
+        if (scale <= 0 || scale == ui_scale) return;
+        ui_scale = scale;
+        auto &style = ImGui::GetStyle();
+        style = base_style;
+        style.ScaleAllSizes(scale);
+        style.FontScaleDpi = scale / font_scale;
     }
 };
 // UTF-8 text from ImGui or GLFW to a path.
@@ -64,6 +95,10 @@ std::filesystem::path utf8_path(std::string_view text) { return std::u8string(re
 std::vector<std::filesystem::path> dropped_files;
 // Actions that discard the editor scene ask first when it has unsaved changes.
 enum class Pending { None, NewScene, Load, Quit };
+// A length in pixels at 100% scale, in pixels at the current scale.
+float px(float length) { return length * ImGui::GetFontSize() / 13; }
+// Euler angles from a quaternion carry rounding noise, which would read as -0.000.
+float tidy_degrees(double degrees) { return std::abs(degrees) < 0.0005 ? 0.f : float(degrees); }
 struct EditorUI {
     editor::EditorSession &session;
     renderer::DesktopRenderer &renderer;
@@ -116,13 +151,8 @@ struct EditorUI {
     // A box around a model, in its local space. Falls back to the built-in shape without one.
     ColliderComponent fitted_collider(const std::optional<MeshComponent> &mesh) {
         if (!mesh) return fitted_collider(BuiltinMesh::Cube);
-        const auto data = session.model(mesh->mesh_asset);
-        if (!data) return fitted_collider(mesh->mesh_asset.empty() ? mesh->mesh : BuiltinMesh::Cube);
-        ColliderComponent k;
-        const auto &b = data->bounds;
-        k.center = {(double(b.min[0]) + b.max[0]) / 2, (double(b.min[1]) + b.max[1]) / 2, (double(b.min[2]) + b.max[2]) / 2};
-        k.half_extents = {std::max((double(b.max[0]) - b.min[0]) / 2, 0.001), std::max((double(b.max[1]) - b.min[1]) / 2, 0.001), std::max((double(b.max[2]) - b.min[2]) / 2, 0.001)};
-        return k;
+        if (const auto fitted = session.model_collider(mesh->mesh_asset)) return *fitted;
+        return fitted_collider(mesh->mesh_asset.empty() ? mesh->mesh : BuiltinMesh::Cube);
     }
     static Components physical(BuiltinMesh mesh) {
         Components c{MeshComponent{mesh}, {}, {}};
@@ -238,9 +268,9 @@ struct EditorUI {
         if (playing()) ImGui::TextColored({0.45f, 0.85f, 0.45f, 1}, "%s  tick %llu", state == editor::PlayState::Paused ? "PAUSED" : "PLAYING",
                                           static_cast<unsigned long long>(session.runtime_ticks()));
         else ImGui::TextDisabled("Revision %llu%s", static_cast<unsigned long long>(session.commands().revision()), session.dirty() ? "  (unsaved)" : "");
-        ImGui::SetNextItemWidth(490); ImGui::InputText("Scene file", scene_path.data(), scene_path.size());
-        ImGui::SameLine(); ImGui::SetNextItemWidth(110); ImGui::Combo("##operation", &operation, "Move\0Rotate\0Scale\0");
-        ImGui::SameLine(); ImGui::SetNextItemWidth(100); ImGui::Combo("##coordinates", &coordinates, "Local\0World\0");
+        ImGui::SetNextItemWidth(px(490)); ImGui::InputText("Scene file", scene_path.data(), scene_path.size());
+        ImGui::SameLine(); ImGui::SetNextItemWidth(px(110)); ImGui::Combo("##operation", &operation, "Move\0Rotate\0Scale\0");
+        ImGui::SameLine(); ImGui::SetNextItemWidth(px(100)); ImGui::Combo("##coordinates", &coordinates, "Local\0World\0");
         ImGui::SameLine(); ImGui::Checkbox("Colliders", &show_colliders);
         ImGui::End();
     }
@@ -322,7 +352,7 @@ struct EditorUI {
         for (const auto &[id, e] : records) if (!e.parent) tree_node(id, open_path);
         // The rest of the panel is a drop zone for moving entities back to the root.
         const auto room = ImGui::GetContentRegionAvail();
-        ImGui::InvisibleButton("##hierarchy-root", {std::max(room.x, 1.f), std::max(room.y, 24.f)});
+        ImGui::InvisibleButton("##hierarchy-root", {std::max(room.x, 1.f), std::max(room.y, px(24))});
         drop_onto(0);
         if (ImGui::IsItemClicked(ImGuiMouseButton_Left)) session.select(0);
         ImGui::End();
@@ -339,7 +369,7 @@ struct EditorUI {
             const auto &t = record->transform;
             position[0] = float(t.position.x); position[1] = float(t.position.y); position[2] = float(t.position.z);
             const auto euler = glm::degrees(glm::eulerAngles(glm::dquat(t.rotation.w, t.rotation.x, t.rotation.y, t.rotation.z)));
-            for (int i = 0; i < 3; ++i) rotation[i] = float(euler[i]);
+            for (int i = 0; i < 3; ++i) rotation[i] = tidy_degrees(euler[i]);
             scale[0] = float(t.scale.x); scale[1] = float(t.scale.y); scale[2] = float(t.scale.z);
             components = record->components;
         }
@@ -517,7 +547,7 @@ struct EditorUI {
             if (k.shape == ColliderShape::Capsule) commit |= drag("Half height", k.half_height, 0.01f, 0, 10000);
             if (k.shape != ColliderShape::Sphere) {
                 const auto euler = glm::degrees(glm::eulerAngles(glm::dquat(k.rotation.w, k.rotation.x, k.rotation.y, k.rotation.z)));
-                float r[3]{float(euler.x), float(euler.y), float(euler.z)};
+                float r[3]{tidy_degrees(euler.x), tidy_degrees(euler.y), tidy_degrees(euler.z)};
                 if (ImGui::DragFloat3("Local rotation", r, 0.5f)) {
                     const glm::dquat q(glm::radians(glm::dvec3(r[0], r[1], r[2])));
                     k.rotation = {q.x, q.y, q.z, q.w};
@@ -623,19 +653,20 @@ struct EditorUI {
         if (hovered && ImGui::IsMouseClicked(0) && !ImGuizmo::IsOver() && !gizmo_active)
             session.select(marker ? marker : session.pick(*frame, (io.MousePos.x-origin.x) / size.x * 2-1, 1-(io.MousePos.y-origin.y) / size.y * 2));
         auto *draw = ImGui::GetWindowDrawList();
-        draw->AddText({origin.x+12,origin.y+10}, IM_COL32(210,220,235,255), "RMB orbit  |  MMB pan  |  Wheel zoom  |  F focus  |  Click select");
+        const float margin = px(12), line = ImGui::GetTextLineHeightWithSpacing();
+        draw->AddText({origin.x+margin,origin.y+px(10)}, IM_COL32(210,220,235,255), "RMB orbit  |  MMB pan  |  Wheel zoom  |  F focus  |  Click select");
         if (playing()) {
-            draw->AddRect(origin, ImVec2(origin.x+size.x, origin.y+size.y), IM_COL32(115,215,115,255), 0.0f, ImDrawFlags_None, 3.0f);
-            draw->AddText({origin.x+12,origin.y+28}, IM_COL32(115,215,115,255),
+            draw->AddRect(origin, ImVec2(origin.x+size.x, origin.y+size.y), IM_COL32(115,215,115,255), 0.0f, ImDrawFlags_None, px(3));
+            draw->AddText({origin.x+margin,origin.y+px(10)+line}, IM_COL32(115,215,115,255),
                 session.play_state() == editor::PlayState::Paused ? "PLAY MODE (paused) - changes are discarded on Stop"
                                                                   : "PLAY MODE - changes are discarded on Stop");
             std::string view = "Viewing through the editor camera (no primary camera)";
             if (const auto camera = session.scene().inspect(session.view_camera())) view = "Viewing through camera '" + camera->name + "'";
             if (!session.view_camera_issue().empty()) view = session.view_camera_issue() + "; using the editor camera";
-            draw->AddText({origin.x+12,origin.y+46}, IM_COL32(115,215,115,255), view.c_str());
+            draw->AddText({origin.x+margin,origin.y+px(10)+2*line}, IM_COL32(115,215,115,255), view.c_str());
         }
         if (!playing() && frame->lights.empty())
-            draw->AddText({origin.x+12,origin.y+size.y-24}, IM_COL32(150,160,175,255), "No lights in the scene: editor lighting is used");
+            draw->AddText({origin.x+margin,origin.y+size.y-px(24)}, IM_COL32(150,160,175,255), "No lights in the scene: editor lighting is used");
         ImGui::End();
     }
     // Screen position of a world point in the current frame; empty behind the camera.
@@ -671,19 +702,19 @@ struct EditorUI {
             const bool selected = e.id == session.selection();
             const ImU32 color = e.components.light ? IM_COL32(250,215,90,255) : IM_COL32(110,200,240,255);
             if (e.components.light && e.components.light->type == LightType::Directional)
-                if (const auto tip = project(at - glm::normalize(glm::dvec3(m[2])))) draw->AddLine(*screen, *tip, color, 2);
-            if (e.components.light) draw->AddCircleFilled(*screen, 7, color);
-            else draw->AddRectFilled({screen->x-8, screen->y-6}, {screen->x+8, screen->y+6}, color);
-            if (selected) draw->AddCircle(*screen, 11, IM_COL32(255,255,255,255), 0, 2);
-            draw->AddText({screen->x+11, screen->y-7}, color, e.name.c_str());
+                if (const auto tip = project(at - glm::normalize(glm::dvec3(m[2])))) draw->AddLine(*screen, *tip, color, px(2));
+            if (e.components.light) draw->AddCircleFilled(*screen, px(7), color);
+            else draw->AddRectFilled({screen->x-px(8), screen->y-px(6)}, {screen->x+px(8), screen->y+px(6)}, color);
+            if (selected) draw->AddCircle(*screen, px(11), IM_COL32(255,255,255,255), 0, px(2));
+            draw->AddText({screen->x+px(11), screen->y-px(7)}, color, e.name.c_str());
             const float dx = mouse.x - screen->x, dy = mouse.y - screen->y;
-            if (dx*dx + dy*dy <= 10*10) hovered = e.id;
+            if (dx*dx + dy*dy <= px(10)*px(10)) hovered = e.id;
         }
         return hovered;
     }
     void assets() {
         ImGui::Begin("Asset Browser");
-        ImGui::SetNextItemWidth(std::max(ImGui::GetContentRegionAvail().x - 150, 80.f));
+        ImGui::SetNextItemWidth(std::max(ImGui::GetContentRegionAvail().x - px(150), px(80)));
         const bool entered = ImGui::InputText("##import", import_path.data(), import_path.size(), ImGuiInputTextFlags_EnterReturnsTrue);
         ImGui::SameLine();
         if (ImGui::Button("Import") || entered) {
@@ -801,6 +832,7 @@ int main(int argc, char **argv) {
             const auto now = std::chrono::steady_clock::now();
             session.update(now - last); last = now;
             if (const auto title = ui.title(); title != shown_title) { glfwSetWindowTitle(host.window, title.c_str()); shown_title = title; }
+            host.follow_monitor();
             int width, height; glfwGetFramebufferSize(host.window, &width, &height);
             if (width <= 0 || height <= 0) { glfwWaitEventsTimeout(0.05); continue; }
             ImGui_ImplGlfw_NewFrame(); ImGui::NewFrame(); ImGuizmo::BeginFrame();

@@ -511,7 +511,17 @@ void asset_workflow() {
     ok(s.assign_asset(empty, obj.value().id));
     check(s.scene().inspect(empty)->components.mesh.has_value(), "assigning adds a mesh renderer");
 
-    // Picking uses the model's bounds, focus its center. The placed triangle's box spans x -1..1, y 0..3.
+    // The placed triangle's box spans x -1..1, y 0..3, z flat: a fitted collider matches it, with some thickness.
+    const auto fitted = s.model_collider(record.components.mesh->mesh_asset);
+    check(fitted && fitted->shape == ColliderShape::Box && near(fitted->center.y, 1.5) && near(fitted->half_extents.x, 1) &&
+          near(fitted->half_extents.y, 1.5) && near(fitted->half_extents.z, 0.001), "collider fitted to the model");
+    check(!s.model_collider({}) && !s.model_collider({1, "absent.glb"}), "no collider for an unresolved model");
+    ok(s.execute(commands::SetColliders{placed, {*fitted}}));
+    s.sync_physics();
+    check(s.physics_bridge().diagnostics().issues.empty(), "the fitted collider is accepted by physics");
+    ok(s.undo());
+
+    // Picking uses the model's bounds, focus its center.
     s.camera.target = {0, 1.5, 0}; s.camera.yaw = 0; s.camera.pitch = 0; s.camera.distance = 8;
     ok(s.execute(commands::DeleteEntity{box})); ok(s.execute(commands::DeleteEntity{empty}));
     f = s.frame(1); ok(f);

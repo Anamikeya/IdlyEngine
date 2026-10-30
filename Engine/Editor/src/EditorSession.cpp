@@ -496,4 +496,14 @@ Result<commands::Receipt> EditorSession::place_asset(assets::AssetId asset) {
 std::shared_ptr<const assets::MeshData> EditorSession::model(const AssetRef &ref) {
     return ref.empty() ? nullptr : resources_.find(resolve(ref, assets::AssetType::Mesh).mesh);
 }
+std::optional<ColliderComponent> EditorSession::model_collider(const AssetRef &ref) {
+    const auto data = model(ref);
+    if (!data) return std::nullopt;
+    const auto low = vector(data->bounds.min), high = vector(data->bounds.max);
+    const auto center = (low + high) / 2.0, half = glm::max((high - low) / 2.0, glm::dvec3(0.001)); // A flat model still gets a volume.
+    ColliderComponent collider;
+    collider.center = {center.x, center.y, center.z};
+    collider.half_extents = {half.x, half.y, half.z};
+    return collider;
+}
 } // namespace engine::editor

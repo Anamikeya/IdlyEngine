@@ -160,6 +160,8 @@ public:
     Result<commands::Receipt> place_asset(assets::AssetId);
     // The model a reference names, loading it if needed; null when it cannot be resolved.
     std::shared_ptr<const assets::MeshData> model(const AssetRef &);
+    // A box collider around that model, in its local space; empty when it cannot be resolved.
+    std::optional<ColliderComponent> model_collider(const AssetRef &);
     // Problems with the references in the last frame().
     const std::vector<std::string> &asset_problems() const { return asset_problems_; }
     const renderer::ResourceRegistry &resources() const { return resources_; }
