@@ -209,6 +209,23 @@ function Click-ComboRow { param([string]$Name, [int]$Row)
     Update-Window
     Click-At (($w.X0 + 0.5 * ($w.X1 - $w.X0)) / $script:width) (($w.Y1 + (8 + ($Row + 0.5) * 17) * $unit) / $script:height)
 }
+# Any mouse button. As with the left button, a release is always sent.
+function Mouse-Press { param([string]$Button, [bool]$Down)
+    if ($Down) { Assert-EditorFocused }
+    $flags = switch ($Button) { 'Left' { if ($Down) { 2 } else { 4 } } 'Right' { if ($Down) { 8 } else { 16 } } 'Middle' { if ($Down) { 32 } else { 64 } } }
+    [Win32Input]::Mouse(0, 0, $flags)
+}
+function Scroll-Wheel { param([int]$Notches)
+    Assert-EditorFocused
+    # mouseData holds a signed amount in an unsigned field.
+    [Win32Input]::Mouse(0, 0, 0x800, [uint32]([BitConverter]::ToUInt32([BitConverter]::GetBytes([int32](120 * $Notches)), 0)))
+    Start-Sleep -Milliseconds 40
+}
+function Get-CursorPosition {
+    $p = New-Object Win32Input+POINT
+    [void][Win32Input]::GetCursorPos([ref]$p)
+    return @($p.X, $p.Y)
+}
 # A release is always sent: a button left down would be worse wherever focus went.
 function Mouse-Button { param([bool]$Down)
     if ($Down) { Assert-EditorFocused }
@@ -240,7 +257,8 @@ function Hold-Key { param([string[]]$Keys, [int]$Milliseconds)
 function Get-VirtualKey { param([string]$Key)
     switch ($Key) {
         'Space' { return [uint16]0x20 } 'Shift' { return [uint16]0xA0 } 'Esc' { return [uint16]0x1B } 'Enter' { return [uint16]0x0D }
-        'Ctrl' { return [uint16]0xA2 } 'Delete' { return [uint16]0x2E }
+        'Ctrl' { return [uint16]0xA2 } 'Delete' { return [uint16]0x2E } 'Alt' { return [uint16]0xA4 } 'End' { return [uint16]0x23 } 'F11' { return [uint16]0x7A }
+        'Grave' { return [uint16]0xC0 } 'LeftBracket' { return [uint16]0xDB } 'RightBracket' { return [uint16]0xDD }
         default { return [uint16][char]$Key.ToUpper() }
     }
 }
