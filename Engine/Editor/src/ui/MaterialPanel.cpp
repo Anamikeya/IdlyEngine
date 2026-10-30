@@ -13,7 +13,7 @@ bool EditorUI::texture_slot(const char *label, assets::MaterialTexture &slot) {
     return changed;
 }
 void EditorUI::material_editor() {
-    const bool open = ImGui::Begin("Material Editor");
+    const bool open = begin_panel("Material Editor", "Material Editor", context::details);
     const auto catalogue = session.assets();
     const auto chosen = std::find_if(catalogue.begin(), catalogue.end(), [&](const assets::AssetMetadata &a) { return a.id == selected_asset && a.type == assets::AssetType::Material; });
     if (chosen == catalogue.end() || !open) {
@@ -35,6 +35,12 @@ void EditorUI::material_editor() {
     bool live = false, commit = false;
     const auto color4 = [&](const char *label, std::array<double, 4> &value) {
         float v[4]{float(value[0]), float(value[1]), float(value[2]), float(value[3])};
+        // The four number fields alone: the whole control also has a swatch and its label.
+        if (ui_map.enabled()) {
+            const auto at = ImGui::GetCursorScreenPos();
+            const auto width = ImGui::CalcItemWidth() - ImGui::GetFrameHeight() - ImGui::GetStyle().ItemInnerSpacing.x;
+            ui_map.mark("Material.BaseColor.Fields", at, {at.x + width, at.y + ImGui::GetFrameHeight()});
+        }
         const bool changed = ImGui::ColorEdit4(label, v, ImGuiColorEditFlags_Float | ImGuiColorEditFlags_AlphaBar);
         if (changed) for (int i = 0; i < 4; ++i) value[std::size_t(i)] = std::clamp(double(v[i]), 0.0, 1.0);
         live |= changed; commit |= committed(changed);
@@ -48,6 +54,7 @@ void EditorUI::material_editor() {
     const auto number = [&](const char *label, double &value, float speed, double low, double high) {
         float v = float(value);
         const bool changed = ImGui::DragFloat(label, &v, speed, float(low), float(high), "%.3f", ImGuiSliderFlags_AlwaysClamp);
+        mark(std::string("Material.") + label);
         if (changed) value = v;
         live |= changed; commit |= committed(changed);
     };
@@ -60,7 +67,9 @@ void EditorUI::material_editor() {
     number("Strength", m.emissive_strength, 0.05f, 0, 1000);
     ImGui::SeparatorText("Alpha and sides");
     int alpha = int(m.alpha_mode);
-    if (ImGui::Combo("Alpha mode", &alpha, "Opaque\0Mask\0Blend\0")) { m.alpha_mode = assets::AlphaMode(alpha); commit = true; }
+    const bool alpha_changed = ImGui::Combo("Alpha mode", &alpha, "Opaque\0Mask\0Blend\0");
+    mark("Material.AlphaMode");
+    if (alpha_changed) { m.alpha_mode = assets::AlphaMode(alpha); commit = true; }
     if (m.alpha_mode == assets::AlphaMode::Mask) number("Alpha cutoff", m.alpha_cutoff, 0.01f, 0, 1);
     if (ImGui::Checkbox("Double-sided", &m.double_sided)) commit = true;
     ImGui::SeparatorText("Textures");

@@ -22,9 +22,10 @@ void EditorUI::finish_imports() {
     }
 }
 void EditorUI::assets() {
-    ImGui::Begin("Asset Browser");
+    begin_panel("Asset Browser", "Asset Browser", context::asset_browser);
     ImGui::SetNextItemWidth(std::max(ImGui::GetContentRegionAvail().x - px(150), px(80)));
     const bool entered = ImGui::InputText("##import", import_path.data(), import_path.size(), ImGuiInputTextFlags_EnterReturnsTrue);
+    mark("Asset.ImportPath");
     ImGui::SameLine();
     if (ImGui::Button("Import") || entered) {
         if (import_path[0]) import_file(utf8_path(import_path.data()));
@@ -40,6 +41,7 @@ void EditorUI::assets() {
         const auto created = session.create_material(new_material_name.data());
         if (report(created, "Material created")) selected_asset = created.value();
     }
+    mark("Asset.NewMaterial");
     const auto catalogue = session.assets();
     const auto chosen = std::find_if(catalogue.begin(), catalogue.end(), [&](const assets::AssetMetadata &a) { return a.id == selected_asset; });
     const bool have = chosen != catalogue.end();
@@ -50,13 +52,16 @@ void EditorUI::assets() {
         if (report(copied, "Material duplicated")) selected_asset = copied.value();
     }
     ImGui::EndDisabled();
+    mark("Asset.DuplicateMaterial");
     ImGui::BeginDisabled(!have || !session.selection() || chosen->type == assets::AssetType::Environment);
     if (ImGui::Button("Assign to selection"))
         report(have_material ? session.assign_material(session.selection(), selected_asset) : session.assign_asset(session.selection(), selected_asset), "Asset assigned to the selected entity");
     ImGui::EndDisabled();
+    mark("Asset.Assign");
     ImGui::SameLine(); ImGui::BeginDisabled(!have || chosen->type != assets::AssetType::Mesh);
     if (ImGui::Button("Add to scene")) report(session.place_asset(selected_asset), "Model added to the scene");
     ImGui::EndDisabled();
+    mark("Asset.AddToScene");
     ImGui::SameLine(); ImGui::BeginDisabled(!have);
     if (ImGui::Button("Reload")) report(session.reload_asset(selected_asset), "Asset re-imported from disk");
     ImGui::EndDisabled();

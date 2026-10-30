@@ -5,7 +5,7 @@
 
 namespace engine::editor {
 void EditorUI::inspector() {
-    ImGui::Begin("Inspector");
+    begin_panel("Inspector", "Inspector", context::details);
     const auto record = session.scene().inspect(session.selection());
     if (!record) { ImGui::TextWrapped("Select an entity in the hierarchy, or click an object or a light/camera marker in the viewport."); ImGui::End(); return; }
     // Physics changes the revision every tick in Play mode; a field being edited keeps its value until released.
@@ -21,6 +21,7 @@ void EditorUI::inspector() {
         components = record->components;
     }
     if (playing()) ImGui::TextColored({0.45f, 0.85f, 0.45f, 1}, "Play mode: edits affect the runtime copy only");
+    if (session.selected().size() > 1) ImGui::TextColored({0.45f, 0.75f, 0.95f, 1}, "%zu entities selected. These fields edit '%s' only.", session.selected().size(), record->name.c_str());
     ImGui::TextDisabled("Stable ID: %llu", static_cast<unsigned long long>(record->id));
     if (ImGui::InputText("Name", name.data(), name.size(), ImGuiInputTextFlags_EnterReturnsTrue))
         report(session.execute(commands::RenameEntity{record->id, name.data()}), "Renamed entity");
@@ -126,7 +127,9 @@ void EditorUI::component_sections(const EntityRecord &record) {
                 AssetRef chosen;
                 const auto slot = std::find_if(m.material_slots.begin(), m.material_slots.end(), [&](const MaterialSlot &s) { return s.slot == part; });
                 if (slot != m.material_slots.end()) chosen = slot->material;
-                if (asset_combo(("Part " + std::to_string(part)).c_str(), chosen, assets::AssetType::Material, "(default)", false)) {
+                const bool part_changed = asset_combo(("Part " + std::to_string(part)).c_str(), chosen, assets::AssetType::Material, "(default)", false);
+                mark("Inspector.Part" + std::to_string(part));
+                if (part_changed) {
                     report(session.assign_material(record.id, assets::AssetId{chosen.id}, part), "Part material changed");
                     draft_revision = ~uint64_t(0);
                     ImGui::PopID();

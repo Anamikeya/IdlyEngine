@@ -7,6 +7,7 @@
 #include <imgui_impl_glfw.h>
 #include <ImGuizmo.h>
 #include "ui/EditorUI.hpp"
+#include <engine/editor/EditorPrefs.hpp>
 #include "RenderTest.hpp"
 #include <glm/gtc/quaternion.hpp>
 #include <glm/gtc/type_ptr.hpp>
@@ -99,7 +100,10 @@ struct StateLog {
         if (now - last_line < std::chrono::milliseconds(50)) return;
         last_line = now;
         const char *state = session.play_state() == editor::PlayState::Editing ? "editing" : session.play_state() == editor::PlayState::Paused ? "paused" : "playing";
-        out << "state=" << state << " tick=" << session.runtime_ticks() << " entities=" << session.scene().size() << " revision=" << session.commands().revision() << " dirty=" << (session.dirty() ? 1 : 0);
+        out << "state=" << state << " tick=" << session.runtime_ticks() << " entities=" << session.scene().size() << " revision=" << session.commands().revision() << " dirty=" << (session.dirty() ? 1 : 0)
+            << " selected=" << session.selected().size() << " history=" << session.history_position() << '/' << session.history_names().size()
+            << " camera=" << session.camera.target.x << ',' << session.camera.target.y << ',' << session.camera.target.z;
+        if (const auto w = session.scene().world_transform(session.selection())) out << " primary=" << w->matrix[12] << ',' << w->matrix[13] << ',' << w->matrix[14];
         if (auto *game = session.game()) {
             const auto hud = game->hud();
             out << " phase=" << gameplay::to_string(hud.phase) << " score=" << hud.score << " targets=" << hud.targets_remaining << " time=" << hud.time_remaining
@@ -170,7 +174,7 @@ int main(int argc, char **argv) {
     try {
         const auto program_start = std::chrono::steady_clock::now();
         bool smoke = false, open_sample_at_start = false;
-        std::filesystem::path project = std::filesystem::current_path(), render_test_output, perf_log, game_log, start_scene;
+        std::filesystem::path project = std::filesystem::current_path(), render_test_output, perf_log, game_log, start_scene, config_folder, ui_map_file, shortcuts_file;
         for (int i = 1; i < argc; ++i) {
             const std::string_view arg = argv[i];
             if (arg == "--smoke") smoke = true;
@@ -180,10 +184,30 @@ int main(int argc, char **argv) {
             else if (arg == "--perf-log" && i + 1 < argc) perf_log = utf8_path(argv[++i]);
             else if (arg == "--game-log" && i + 1 < argc) game_log = utf8_path(argv[++i]);
             else if (arg == "--scene" && i + 1 < argc) start_scene = utf8_path(argv[++i]);
-            else throw std::runtime_error("Usage: engine_editor [--project <folder>] [--scene <file>] [--sample] [--smoke] [--render-test <folder>] [--perf-log <file>] [--game-log <file>]");
+            else if (arg == "--config-dir" && i + 1 < argc) config_folder = utf8_path(argv[++i]);
+            else if (arg == "--ui-map" && i + 1 < argc) ui_map_file = utf8_path(argv[++i]);
+            else if (arg == "--dump-shortcuts" && i + 1 < argc) shortcuts_file = utf8_path(argv[++i]);
+            else throw std::runtime_error("Usage: engine_editor [--project <folder>] [--scene <file>] [--sample] [--smoke] [--render-test <folder>] [--perf-log <file>] [--game-log <file>] [--config-dir <folder>] [--ui-map <file>] [--dump-shortcuts <file>]");
         }
+        if (!shortcuts_file.empty()) {
+            const auto table = default_command_table();
+            const auto written = write_text_file(shortcuts_file, shortcuts_markdown(table));
+            if (!written) throw std::runtime_error(written.error().message);
+            return 0;
+        }
+        // Test runs neither read nor change the user's settings.
+        const bool automated = smoke || !render_test_output.empty();
+        if (!automated && config_folder.empty()) config_folder = default_config_folder();
         Host host; host.start();
-        if (smoke || !render_test_output.empty()) ImGui::GetIO().IniFilename = nullptr;
+        std::string layout_file;
+        if (automated) ImGui::GetIO().IniFilename = nullptr;
+        else {
+            std::error_code error;
+            std::filesystem::create_directories(config_folder, error);
+            const auto utf8 = (config_folder / "layout.ini").u8string();
+            layout_file.assign(reinterpret_cast<const char *>(utf8.data()), utf8.size());
+            ImGui::GetIO().IniFilename = error ? nullptr : layout_file.c_str();
+        }
         if (!render_test_output.empty()) return editor::run_render_test(host.window, EDITOR_MATERIAL_DIR, render_test_output);
         glfwSetDropCallback(host.window, [](GLFWwindow *, int count, const char **paths) {
             for (int i = 0; i < count; ++i) dropped_files.push_back(utf8_path(paths[i]));
@@ -199,6 +223,8 @@ int main(int argc, char **argv) {
         renderer.resize_viewport(800, 600);
         GameInput game_input;
         EditorUI ui(session, renderer, game_input, host.window);
+        if (!automated) { ui.config_folder = config_folder; ui.load_keymap(); }
+        ui.ui_map.set_file(ui_map_file);
         if (!project_opened) ui.log("Error: " + project_opened.error().message);
         if (open_sample_at_start) ui.open_sample();
         if (!start_scene.empty()) {
@@ -245,7 +271,9 @@ int main(int argc, char **argv) {
             host.follow_monitor();
             int width, height; glfwGetFramebufferSize(host.window, &width, &height);
             if (width <= 0 || height <= 0) { glfwWaitEventsTimeout(0.05); continue; }
-            ImGui_ImplGlfw_NewFrame(); ImGui::NewFrame(); ImGuizmo::BeginFrame();
+            ImGui_ImplGlfw_NewFrame();
+            ui.popup_before_frame = ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel);
+            ImGui::NewFrame(); ImGuizmo::BeginFrame();
             ui.draw(); ImGui::Render();
             if (!ui.frame) { auto f = session.frame(4.0 / 3); if (f) ui.frame = f.value(); }
             const auto render_start = std::chrono::steady_clock::now();

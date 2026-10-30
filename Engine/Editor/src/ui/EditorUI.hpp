@@ -5,10 +5,13 @@
 #include <GLFW/glfw3.h>
 #include <imgui.h>
 #include <imgui_internal.h>
+#include <engine/editor/EditorCommands.hpp>
 #include <engine/editor/EditorSession.hpp>
 #include <engine/renderer/DesktopRenderer.hpp>
 #include <glm/glm.hpp>
+#include <algorithm>
 #include <array>
+#include <cctype>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -71,6 +74,20 @@ struct GameInput {
 inline float px(float length) { return length * ImGui::GetFontSize() / 13; }
 // Euler angles from a quaternion carry rounding noise, which would read as -0.000.
 inline float tidy_degrees(double degrees) { return std::abs(degrees) < 0.0005 ? 0.f : float(degrees); }
+// Where named controls are on screen, written to a file for real-input runs (--ui-map), so they find a control by name
+// and not by a position that changes with the layout. Costs nothing unless a file is set.
+class UiMap {
+    std::filesystem::path file_;
+    std::map<std::string, std::array<float, 4>> items_;
+    std::string written_;
+    std::chrono::steady_clock::time_point last_write_{};
+public:
+    void set_file(std::filesystem::path file) { file_ = std::move(file); }
+    bool enabled() const { return !file_.empty(); }
+    void begin_frame() { items_.clear(); }
+    void mark(std::string_view name, ImVec2 min, ImVec2 max) { items_[std::string(name)] = {min.x, min.y, max.x, max.y}; }
+    void flush();
+};
 struct EditorUI {
     EditorSession &session;
     renderer::DesktopRenderer &renderer;
@@ -103,10 +120,40 @@ struct EditorUI {
     std::array<char, 1024> project_path{};
     bool project_prompt = false, project_create = true;
     std::uint64_t preview_token = 0;
-    explicit EditorUI(EditorSession &s, renderer::DesktopRenderer &r, GameInput &g, GLFWwindow *w) : session(s), renderer(r), game_input(g), window(w) {
-        std::snprintf(scene_path.data(), scene_path.size(), "%s", "Untitled.scene");
-        std::snprintf(new_material_name.data(), new_material_name.size(), "%s", "New Material");
-    }
+    // ---- Commands: every action has one definition, and menus, buttons and shortcuts are built from it ----
+    CommandRegistry registry;
+    std::filesystem::path config_folder; // Empty: nothing is read or saved, as in test runs.
+    UiMap ui_map;
+    std::string_view hovered_context, focused_context; // Of the panels drawn this frame.
+    bool show_history = false, show_shortcuts = false;
+    std::size_t history_scrolled = ~std::size_t(0);
+    std::array<char, 128> shortcut_search{};
+    std::string rebind_command; // The Keyboard Shortcuts panel is waiting for keys for this command.
+    int rebind_index = -1;      // Which binding it replaces; -1 adds one.
+    KeyChord rebind_chord;      // Set when the keys conflict, while the panel asks what to do.
+    std::array<float, 16> gizmo_start{};
+    std::string drag_error; // The latest failed step of a gizmo drag, reported when it ends.
+    // Registers every command and binds its behavior; throws if the table and the bindings disagree.
+    void bind_commands();
+    void load_keymap();
+    void save_keymap();
+    // Set by the host before NewFrame, which is where Esc closes a popup: that press must not also act as a shortcut.
+    bool popup_before_frame = false;
+    void route_shortcuts(bool rebinding_at_frame_start);
+    void main_menu();
+    // Begin() that records the panel's context for shortcuts and its place for the UI map. `control` is its title without any ID suffix.
+    bool begin_panel(const char *title, std::string_view control, std::string_view context, bool *open = nullptr);
+    // A menu item, button or checkbox built from a command: its label, shortcut, enabled and checked state and tooltip.
+    bool command_item(const char *id, const char *label = nullptr);
+    bool command_button(const char *id, const char *label = nullptr);
+    bool command_checkbox(const char *id, const char *label = nullptr);
+    void mark(std::string_view control);
+    void history_panel();
+    void shortcuts_panel();
+    void begin_rebind(const std::string &id, int index);
+    void finish_rebind();
+    void move_selection_to_root();
+    explicit EditorUI(EditorSession &s, renderer::DesktopRenderer &r, GameInput &g, GLFWwindow *w);
     bool scroll_console = false;
     void log(std::string text);
     template<class T> bool report(const Result<T> &r, const char *success) {
@@ -121,6 +168,7 @@ struct EditorUI {
     // A box around a model, in its local space. Falls back to the built-in shape without one.
     ColliderComponent fitted_collider(const std::optional<MeshComponent> &mesh);
     static Components physical(BuiltinMesh mesh);
+    void create_items();
     void create_menu();
     std::string title() const;
     LightComponent point_light() const;
@@ -141,6 +189,9 @@ struct EditorUI {
     std::map<EntityId, EntityRecord> records;
     std::map<EntityId, std::vector<EntityId>> children;
     EntityId revealed = 0; // Selection whose ancestors were last opened, so viewport picks show up in the tree.
+    std::vector<EntityId> visible_rows, shown_rows; // Rows of the tree in draw order, this frame and last: Shift+click ranges over them.
+    EntityId selection_anchor = 0, click_on_release = 0;
+    void click_row(EntityId id);
     void drop_onto(EntityId parent);
     void duplicate_selection();
     void delete_selection();
@@ -186,6 +237,9 @@ struct EditorUI {
     void collider_outlines(ImVec2 origin, ImVec2 size);
     // Lights and cameras have no mesh, so they get clickable screen-space markers. Returns the hovered one.
     EntityId markers(ImVec2 origin, ImVec2 size);
+    // A box around each selected entity, so a multi-selection shows without a gizmo on each.
+    void selection_outlines(ImVec2 origin, ImVec2 size);
+    void gizmo(ImVec2 origin, ImVec2 size);
     void assets();
     void draw();
 };

@@ -3,6 +3,7 @@
 #include <ImGuizmo.h>
 #include <glm/gtc/type_ptr.hpp>
 #include <algorithm>
+#include <array>
 
 namespace engine::editor {
 void EditorUI::report_physics() {
@@ -27,7 +28,8 @@ void EditorUI::report_assets() {
 }
 void EditorUI::viewport() {
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, {0,0});
-    const bool visible = ImGui::Begin("3D Viewport");
+    // The tab shows the same unsaved-changes star as the title bar; the ID after ### stays the same.
+    const bool visible = begin_panel(session.dirty() ? "3D Viewport*###3D Viewport" : "3D Viewport###3D Viewport", "3D Viewport", context::viewport);
     ImGui::PopStyleVar();
     if (!visible) { ImGui::End(); return; }
     const auto origin = ImGui::GetCursorScreenPos();
@@ -43,36 +45,23 @@ void EditorUI::viewport() {
         if (ImGui::IsMouseDragging(ImGuiMouseButton_Right)) session.camera.orbit(io.MouseDelta.x, io.MouseDelta.y);
         if (ImGui::IsMouseDragging(ImGuiMouseButton_Middle)) session.camera.pan(io.MouseDelta.x, io.MouseDelta.y, size.y);
         session.camera.zoom(io.MouseWheel);
-        if (ImGui::IsKeyPressed(ImGuiKey_F)) session.focus();
     }
     auto snapshot = session.frame(double(size.x) / size.y);
     if (!snapshot) { log(snapshot.error().message); ImGui::End(); return; }
     frame = snapshot.value();
     ImGuizmo::SetDrawlist(ImGui::GetWindowDrawList()); ImGuizmo::SetRect(origin.x, origin.y, size.x, size.y);
     ImGuizmo::SetOrthographic(false);
-    if (const auto world = session.scene().world_transform(session.selection()); world && !game) {
-        float view[16], projection[16];
-        for (int i = 0; i < 16; ++i) { view[i] = float(frame->camera.view.matrix[i]); projection[i] = float(frame->camera.projection.matrix[i]); }
-        if (!gizmo_active || gizmo_id != session.selection()) {
-            for (int i = 0; i < 16; ++i) gizmo_matrix[i] = float(world->matrix[i]);
-            gizmo_id = session.selection();
-        }
-        const ImGuizmo::OPERATION op[] = {ImGuizmo::TRANSLATE, ImGuizmo::ROTATE, ImGuizmo::SCALE};
-        ImGuizmo::Manipulate(view, projection, op[operation], coordinates == 0 ? ImGuizmo::LOCAL : ImGuizmo::WORLD, gizmo_matrix);
-        const bool using_now = ImGuizmo::IsUsing();
-        if (gizmo_active && !using_now && gizmo_id == session.selection()) {
-            WorldTransform result;
-            for (int i = 0; i < 16; ++i) result.matrix[i] = gizmo_matrix[i];
-            report(session.set_world(gizmo_id, result), "Gizmo transform committed");
-        }
-        gizmo_active = using_now;
-    } else gizmo_active = false;
+    gizmo(origin, size);
     if (show_colliders && !game) collider_outlines(origin, size);
+    if (!game) selection_outlines(origin, size);
     report_physics();
     report_assets();
     const EntityId marker = game ? 0 : markers(origin, size);
-    if (hovered && ImGui::IsMouseClicked(0) && !ImGuizmo::IsOver() && !gizmo_active && !game)
-        session.select(marker ? marker : session.pick(*frame, (io.MousePos.x-origin.x) / size.x * 2-1, 1-(io.MousePos.y-origin.y) / size.y * 2));
+    if (hovered && ImGui::IsMouseClicked(0) && !ImGuizmo::IsOver() && !gizmo_active && !game) {
+        const auto hit = marker ? marker : session.pick(*frame, (io.MousePos.x-origin.x) / size.x * 2-1, 1-(io.MousePos.y-origin.y) / size.y * 2);
+        if (!io.KeyCtrl) session.select(hit);
+        else session.selection_set().toggle(hit);
+    }
     auto *draw = ImGui::GetWindowDrawList();
     const float margin = px(12), line = ImGui::GetTextLineHeightWithSpacing();
     if (game) {
@@ -94,6 +83,65 @@ void EditorUI::viewport() {
     if (!playing() && frame->lights.empty())
         draw->AddText({origin.x+margin,origin.y+size.y-px(24)}, IM_COL32(150,160,175,255), "No lights in the scene: editor lighting is used");
     ImGui::End();
+}
+void EditorUI::gizmo(ImVec2 origin, ImVec2 size) {
+    const auto *game = session.game();
+    const auto world = session.scene().world_transform(session.selection());
+    if (!world || game) {
+        if (gizmo_active) { (void)session.end_drag(); gizmo_active = false; }
+        return;
+    }
+    if (ui_map.enabled())
+        if (const auto center = project({world->matrix[12], world->matrix[13], world->matrix[14]}, origin, size))
+            ui_map.mark("Gizmo.Center", {center->x - 1, center->y - 1}, {center->x + 1, center->y + 1});
+    float view[16], projection[16];
+    for (int i = 0; i < 16; ++i) { view[i] = float(frame->camera.view.matrix[i]); projection[i] = float(frame->camera.projection.matrix[i]); }
+    if (!gizmo_active) {
+        for (int i = 0; i < 16; ++i) gizmo_matrix[i] = float(world->matrix[i]);
+        gizmo_id = session.selection();
+    }
+    const float before_drag[16] = {gizmo_matrix[0], gizmo_matrix[1], gizmo_matrix[2], gizmo_matrix[3], gizmo_matrix[4], gizmo_matrix[5], gizmo_matrix[6], gizmo_matrix[7],
+                                   gizmo_matrix[8], gizmo_matrix[9], gizmo_matrix[10], gizmo_matrix[11], gizmo_matrix[12], gizmo_matrix[13], gizmo_matrix[14], gizmo_matrix[15]};
+    const ImGuizmo::OPERATION op[] = {ImGuizmo::TRANSLATE, ImGuizmo::ROTATE, ImGuizmo::SCALE};
+    const bool changed = ImGuizmo::Manipulate(view, projection, op[operation], coordinates == 0 ? ImGuizmo::LOCAL : ImGuizmo::WORLD, gizmo_matrix);
+    const bool using_now = ImGuizmo::IsUsing();
+    if (using_now && !gizmo_active) {
+        std::copy_n(before_drag, 16, gizmo_start.begin());
+        drag_error.clear();
+        constexpr const char *verbs[] = {"Move", "Rotate", "Scale"};
+        if (const auto begun = session.begin_drag(verbs[operation]); !begun) log("Error: " + begun.error().message);
+    }
+    if (using_now && changed && session.dragging()) {
+        // Relative to where the drag began, so each entity keeps its own place and double precision.
+        const auto delta = glm::make_mat4(gizmo_matrix) * glm::inverse(glm::make_mat4(gizmo_start.data()));
+        WorldTransform moved;
+        const auto *values = glm::value_ptr(delta);
+        for (int i = 0; i < 16; ++i) moved.matrix[std::size_t(i)] = values[i];
+        if (const auto updated = session.update_drag(moved); !updated) drag_error = updated.error().message;
+    }
+    if (gizmo_active && !using_now && session.dragging()) {
+        const auto ended = session.end_drag();
+        if (!drag_error.empty()) log("Error: " + drag_error);
+        else report(ended, "Gizmo transform committed");
+    }
+    gizmo_active = using_now;
+}
+void EditorUI::selection_outlines(ImVec2 origin, ImVec2 size) {
+    auto *draw = ImGui::GetWindowDrawList();
+    for (const auto id : session.selected().items()) {
+        const auto bounds = session.local_bounds(id);
+        const auto world = session.scene().world_transform(id);
+        if (!bounds || !world) continue;
+        const auto m = glm::make_mat4(world->matrix.data());
+        const auto &[low, high] = *bounds;
+        std::array<std::optional<ImVec2>, 8> corners;
+        for (int i = 0; i < 8; ++i)
+            corners[std::size_t(i)] = project(glm::dvec3(m * glm::dvec4(i & 1 ? high.x : low.x, i & 2 ? high.y : low.y, i & 4 ? high.z : low.z, 1)), origin, size);
+        const ImU32 color = id == session.selection() ? IM_COL32(255, 170, 40, 255) : IM_COL32(255, 210, 120, 200);
+        for (int a = 0; a < 8; ++a)
+            for (const int bit : {1, 2, 4})
+                if (!(a & bit) && corners[std::size_t(a)] && corners[std::size_t(a | bit)]) draw->AddLine(*corners[std::size_t(a)], *corners[std::size_t(a | bit)], color, px(1.5f));
+    }
 }
 void EditorUI::game_overlay(gameplay::Game &game, ImVec2 origin, ImVec2 size, bool hovered) {
     const auto hud = game.hud();
@@ -152,7 +200,7 @@ EntityId EditorUI::markers(ImVec2 origin, ImVec2 size) {
         const glm::dvec3 at(m[3]);
         const auto screen = project(at);
         if (!screen) continue;
-        const bool selected = e.id == session.selection();
+        const bool selected = session.selected().contains(e.id);
         const ImU32 color = e.components.light ? IM_COL32(250,215,90,255) : IM_COL32(110,200,240,255);
         if (e.components.light && e.components.light->type == LightType::Directional)
             if (const auto tip = project(at - glm::normalize(glm::dvec3(m[2])))) draw->AddLine(*screen, *tip, color, px(2));

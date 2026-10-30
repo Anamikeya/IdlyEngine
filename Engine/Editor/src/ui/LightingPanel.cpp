@@ -2,18 +2,23 @@
 
 namespace engine::editor {
 void EditorUI::lighting() {
-    ImGui::Begin("Lighting");
+    begin_panel("Lighting", "Lighting", context::details);
     auto e = session.environment();
     const auto owner = session.environment_entity();
     if (owner) ImGui::TextDisabled("On entity '%s'", session.scene().inspect(owner)->name.c_str());
     else ImGui::TextWrapped("This scene has no environment, so the defaults below apply. Changing anything adds an Environment entity.");
     if (playing()) ImGui::TextColored({0.45f, 0.85f, 0.45f, 1}, "Play mode: edits affect the runtime copy only");
     ImGui::SeparatorText("Presets");
-    if (ImGui::Button("Outdoor")) { report(session.set_environment(editor::EditorSession::outdoor_environment()), "Outdoor lighting applied"); return ImGui::End(); }
+    const bool outdoor = ImGui::Button("Outdoor");
+    mark("Lighting.Outdoor");
+    if (outdoor) { report(session.set_environment(editor::EditorSession::outdoor_environment()), "Outdoor lighting applied"); return ImGui::End(); }
     ImGui::SameLine();
-    if (ImGui::Button("Indoor")) { report(session.set_environment(editor::EditorSession::indoor_environment()), "Indoor lighting applied"); return ImGui::End(); }
+    const bool indoor = ImGui::Button("Indoor");
+    mark("Lighting.Indoor");
+    if (indoor) { report(session.set_environment(editor::EditorSession::indoor_environment()), "Indoor lighting applied"); return ImGui::End(); }
     ImGui::SameLine();
     if (ImGui::Button("Add sun")) report(session.create_preset_lights(true), "Sun created");
+    mark("Lighting.AddSun");
     ImGui::SameLine();
     if (ImGui::Button("Add key light")) report(session.create_preset_lights(false), "Key light created");
     bool commit = false;

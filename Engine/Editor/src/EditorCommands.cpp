@@ -179,7 +179,7 @@ Result<KeymapReport> CommandRegistry::load_keymap(std::string_view text) {
         std::vector<KeyChord> chords;
         // "=" and "," are keys as well as separators, so a chord ending in one is taken before splitting on commas.
         while (!keys.empty()) {
-            auto comma = keys.find(',', keys.size() > 1 && keys[0] == ',' ? 1 : 0);
+            auto comma = keys.find(',', keys[0] == ',' ? 1 : 0);
             while (comma != std::string_view::npos && comma > 0 && keys[comma - 1] == '+') comma = keys.find(',', comma + 1);
             const auto chord = parse_chord(keys.substr(0, comma));
             if (!chord) return malformed("'" + std::string(trim(keys.substr(0, comma))) + "' is not a key");
@@ -231,10 +231,10 @@ std::vector<CommandInfo> default_command_table() {
         {"Create.FallingCube", "Falling Cube", "Add a cube with a dynamic body and a collider.", "Create", global, {}},
         {"Create.FallingSphere", "Falling Sphere", "Add a sphere with a dynamic body and a collider.", "Create", global, {}},
         {"Create.Floor", "Floor", "Add a plane with a static collider.", "Create", global, {}},
-        {"Create.ChildEmpty", "Empty", "Add an empty entity under the selection.", "Create", outliner, {}},
-        {"Create.ChildCube", "Cube", "Add a cube under the selection.", "Create", outliner, {}},
-        {"Create.ChildSphere", "Sphere", "Add a sphere under the selection.", "Create", outliner, {}},
-        {"Create.ChildPointLight", "Point Light", "Add a point light under the selection.", "Create", outliner, {}},
+        {"Create.ChildEmpty", "Child Empty", "Add an empty entity under the selection.", "Create", outliner, {}},
+        {"Create.ChildCube", "Child Cube", "Add a cube under the selection.", "Create", outliner, {}},
+        {"Create.ChildSphere", "Child Sphere", "Add a sphere under the selection.", "Create", outliner, {}},
+        {"Create.ChildPointLight", "Child Point Light", "Add a point light under the selection.", "Create", outliner, {}},
 
         {"Viewport.FocusSelected", "Focus Selected", "Frame the selection in the viewport.", "Viewport", viewport, {chord(Key::F)}},
         {"Viewport.ToggleColliders", "Show Colliders", "Draw collider outlines over the view.", "Viewport", viewport, {}},

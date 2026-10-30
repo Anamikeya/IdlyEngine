@@ -1,13 +1,34 @@
 #include "EditorUI.hpp"
+#include <engine/editor/EditorPrefs.hpp>
 #include <glm/gtc/quaternion.hpp>
+#include <stdexcept>
 #include <filesystem>
 #include <algorithm>
 #include <utility>
 
 namespace engine::editor {
+void UiMap::flush() {
+    if (!enabled()) return;
+    const auto now = std::chrono::steady_clock::now();
+    if (now - last_write_ < std::chrono::milliseconds(50)) return;
+    std::string text;
+    for (const auto &[name, r] : items_)
+        text += name + '\t' + std::to_string(r[0]) + '\t' + std::to_string(r[1]) + '\t' + std::to_string(r[2]) + '\t' + std::to_string(r[3]) + '\n';
+    if (text == written_) return;
+    last_write_ = now;
+    if (write_text_file(file_, text)) written_ = std::move(text);
+}
+EditorUI::EditorUI(EditorSession &s, renderer::DesktopRenderer &r, GameInput &g, GLFWwindow *w) : session(s), renderer(r), game_input(g), window(w) {
+    std::snprintf(scene_path.data(), scene_path.size(), "%s", "Untitled.scene");
+    std::snprintf(new_material_name.data(), new_material_name.size(), "%s", "New Material");
+    for (auto &info : default_command_table())
+        if (const auto added = registry.add(std::move(info)); !added) throw std::runtime_error(added.error().message);
+    bind_commands();
+    if (const auto missing = registry.unbound(); !missing.empty()) throw std::runtime_error("Command with no behavior: " + missing.front());
+}
 void EditorUI::log(std::string text) { if (messages.size() == 128) messages.erase(messages.begin()); messages.push_back(std::move(text)); scroll_console = true; }
 void EditorUI::spawn(const char *label, Components c, Transform t, EntityId parent) {
-    auto r = session.execute(commands::CreateEntity{label, t, parent, 0, std::move(c)});
+    auto r = session.execute(commands::CreateEntity{label, t, parent, 0, std::move(c)}, std::string("Create ") + label);
     if (report(r, (std::string("Created ") + label).c_str())) session.select(r.value().created.front());
 }
 Transform EditorUI::aimed(Vec3 position, double pitch_degrees, double yaw_degrees) {
@@ -31,26 +52,16 @@ Components EditorUI::physical(BuiltinMesh mesh) {
     c.colliders = {fitted_collider(mesh)};
     return c;
 }
+void EditorUI::create_items() {
+    for (const auto *id : {"Create.Cube", "Create.Sphere", "Create.Plane", "Create.Empty"}) command_item(id);
+    ImGui::Separator();
+    for (const auto *id : {"Create.DirectionalLight", "Create.PointLight", "Create.SpotLight", "Create.Camera"}) command_item(id);
+    ImGui::Separator();
+    for (const auto *id : {"Create.FallingCube", "Create.FallingSphere", "Create.Floor"}) command_item(id);
+}
 void EditorUI::create_menu() {
     if (!ImGui::BeginPopup("Create")) return;
-    if (ImGui::MenuItem("Cube")) spawn("Cube", {MeshComponent{BuiltinMesh::Cube}, {}, {}});
-    if (ImGui::MenuItem("Sphere")) spawn("Sphere", {MeshComponent{BuiltinMesh::Sphere}, {}, {}});
-    if (ImGui::MenuItem("Plane")) spawn("Plane", {MeshComponent{BuiltinMesh::Plane}, {}, {}}, {{0,0,0}, {}, {10,1,10}});
-    if (ImGui::MenuItem("Empty")) spawn("Empty", {});
-    ImGui::Separator();
-    if (ImGui::MenuItem("Directional Light")) spawn("Directional Light", {{}, {}, LightComponent{}}, aimed({0,4,0}, -50, 30));
-    // Sized for the scene's exposure: a real bulb's output indoors, far more under daylight exposure.
-    if (ImGui::MenuItem("Point Light")) spawn("Point Light", {{}, {}, point_light()}, {{0,2,0}, {}, {1,1,1}});
-    if (ImGui::MenuItem("Spot Light")) { auto l = point_light(); l.type = LightType::Spot; l.cast_shadows = true; spawn("Spot Light", {{}, {}, l}, aimed({0,4,0}, -90, 0)); }
-    if (ImGui::MenuItem("Camera")) spawn("Camera", {{}, CameraComponent{}, {}}, aimed({0,1.5,6}, -8, 0));
-    ImGui::Separator();
-    if (ImGui::MenuItem("Falling Cube")) spawn("Falling Cube", physical(BuiltinMesh::Cube), {{0,3,0}, {}, {1,1,1}});
-    if (ImGui::MenuItem("Falling Sphere")) spawn("Falling Sphere", physical(BuiltinMesh::Sphere), {{0,3,0}, {}, {1,1,1}});
-    if (ImGui::MenuItem("Floor")) {
-        Components floor{MeshComponent{BuiltinMesh::Plane}, {}, {}};
-        floor.colliders = {fitted_collider(BuiltinMesh::Plane)};
-        spawn("Floor", std::move(floor), {{0,0,0}, {}, {10,1,10}});
-    }
+    create_items();
     ImGui::EndPopup();
 }
 std::string EditorUI::title() const {
@@ -140,85 +151,76 @@ void EditorUI::docking() {
         ImGui::DockBuilderDockWindow("Inspector", right);
         ImGui::DockBuilderDockWindow("Lighting", right);
         ImGui::DockBuilderDockWindow("Material Editor", right);
-        ImGui::DockBuilderDockWindow("3D Viewport", center);
+        ImGui::DockBuilderDockWindow("###3D Viewport", center);
         ImGui::DockBuilderDockWindow("Asset Browser", assets);
         ImGui::DockBuilderDockWindow("Console", console);
         ImGui::DockBuilderFinish(dock);
     }
 }
 void EditorUI::toolbar() {
-    ImGui::Begin("Toolbar");
+    begin_panel("Toolbar", "Toolbar", context::global);
     const auto state = session.play_state();
-    ImGui::BeginDisabled(playing());
-    if (ImGui::Button("New")) request(Pending::NewScene);
-    ImGui::EndDisabled();
-    ImGui::SameLine(); if (ImGui::Button("+ Cube")) report(session.create(), "Created cube");
+    command_button("File.NewScene", "New");
+    ImGui::SameLine(); command_button("Create.Cube", "+ Cube");
     ImGui::SameLine(); if (ImGui::Button("Create...")) ImGui::OpenPopup("Create");
+    mark("Toolbar.Create");
     create_menu();
-    ImGui::SameLine(); ImGui::BeginDisabled(!session.selection());
-    if (ImGui::Button("Duplicate")) duplicate_selection();
-    ImGui::SameLine(); if (ImGui::Button("Delete")) delete_selection();
-    ImGui::SameLine(); if (ImGui::Button("Focus [F]")) session.focus();
-    ImGui::EndDisabled();
-    ImGui::SameLine(); ImGui::BeginDisabled(playing() || !session.can_undo());
-    if (ImGui::Button("Undo")) report(session.undo(), "Undo"); ImGui::EndDisabled();
-    ImGui::SameLine(); ImGui::BeginDisabled(playing() || !session.can_redo());
-    if (ImGui::Button("Redo")) report(session.redo(), "Redo"); ImGui::EndDisabled();
-    ImGui::SameLine(); ImGui::BeginDisabled(playing());
-    if (ImGui::Button("Save")) report(session.save(scene_path.data()), "Scene saved");
-    ImGui::SameLine(); if (ImGui::Button("Load")) request(Pending::Load);
-    ImGui::EndDisabled();
+    ImGui::SameLine(); command_button("Edit.Duplicate");
+    ImGui::SameLine(); command_button("Edit.Delete");
+    ImGui::SameLine(); command_button("Viewport.FocusSelected", "Focus");
+    ImGui::SameLine(); command_button("Edit.Undo");
+    ImGui::SameLine(); command_button("Edit.Redo");
+    ImGui::SameLine(); command_button("File.Save");
+    ImGui::SameLine(); command_button("File.LoadFromPath");
     ImGui::SameLine(); ImGui::TextDisabled("|"); ImGui::SameLine();
     ImGui::BeginDisabled(playing());
     if (ImGui::Button("Project...")) ImGui::OpenPopup("Project menu");
     ImGui::EndDisabled();
+    mark("Toolbar.Project");
     if (ImGui::BeginPopup("Project menu")) {
-        if (ImGui::MenuItem("Open Physics Shooter sample")) request(Pending::OpenSample);
+        command_item("File.OpenSample");
         ImGui::Separator();
-        if (ImGui::MenuItem("New empty project...")) { project_create = true; project_prompt = true; }
-        if (ImGui::MenuItem("Open project...")) { project_create = false; project_prompt = true; }
+        command_item("File.NewProject");
+        command_item("File.OpenProject");
         ImGui::EndPopup();
     }
     ImGui::SameLine(); ImGui::TextDisabled("|"); ImGui::SameLine();
-    if (state == editor::PlayState::Playing) { if (ImGui::Button("Pause")) report(session.pause(), "Paused"); }
-    else if (ImGui::Button(state == editor::PlayState::Paused ? "Resume" : "Play"))
-        report(session.play(), state == editor::PlayState::Paused ? "Resumed" : "Play mode: running a copy of the scene; changes are discarded on Stop");
-    ImGui::SameLine(); ImGui::BeginDisabled(state != editor::PlayState::Paused);
-    if (ImGui::Button("Step")) report(session.step(), "Stepped one tick"); ImGui::EndDisabled();
-    ImGui::SameLine(); ImGui::BeginDisabled(state == editor::PlayState::Editing);
-    if (ImGui::Button("Stop")) stop_play(); ImGui::EndDisabled();
+    command_button(state == PlayState::Playing ? "Play.Pause" : state == PlayState::Paused ? "Play.Resume" : "Play.Play");
+    ImGui::SameLine(); command_button("Play.Step");
+    ImGui::SameLine(); command_button("Play.Stop");
     ImGui::SameLine();
-    if (playing()) ImGui::TextColored({0.45f, 0.85f, 0.45f, 1}, "%s  tick %llu", state == editor::PlayState::Paused ? "PAUSED" : "PLAYING",
+    if (playing()) ImGui::TextColored({0.45f, 0.85f, 0.45f, 1}, "%s  tick %llu", state == PlayState::Paused ? "PAUSED" : "PLAYING",
                                       static_cast<unsigned long long>(session.runtime_ticks()));
     else ImGui::TextDisabled("Revision %llu%s", static_cast<unsigned long long>(session.commands().revision()), session.dirty() ? "  (unsaved)" : "");
     ImGui::SetNextItemWidth(px(490)); ImGui::InputText("Scene file", scene_path.data(), scene_path.size());
+    mark("Toolbar.ScenePath");
     ImGui::SameLine(); ImGui::SetNextItemWidth(px(110)); ImGui::Combo("##operation", &operation, "Move\0Rotate\0Scale\0");
     ImGui::SameLine(); ImGui::SetNextItemWidth(px(100)); ImGui::Combo("##coordinates", &coordinates, "Local\0World\0");
-    ImGui::SameLine(); ImGui::Checkbox("Colliders", &show_colliders);
+    ImGui::SameLine(); command_checkbox("Viewport.ToggleColliders", "Colliders");
     ImGui::End();
 }
-void EditorUI::duplicate_selection() { if (session.selection()) report(session.duplicate(session.selection()), "Duplicated entity subtree"); }
-void EditorUI::delete_selection() { if (session.selection()) report(session.execute(commands::DeleteEntity{session.selection()}), "Deleted entity subtree"); }
+void EditorUI::duplicate_selection() { if (session.selection()) report(session.duplicate_selection(), "Duplicated entity subtree"); }
+void EditorUI::delete_selection() { if (session.selection()) report(session.delete_selection(), "Deleted entity subtree"); }
 void EditorUI::draw() {
+    ui_map.begin_frame();
+    hovered_context = {}; focused_context = {};
+    // The keys that finish a rebinding this frame must not also run a command.
+    const bool rebinding_at_frame_start = !rebind_command.empty();
     for (const auto &file : std::exchange(dropped_files, {})) import_file(file);
     finish_imports();
+    main_menu();
     // Before the viewport: it extracts the frame, whose handles must be those of the latest import or reload.
     docking(); toolbar(); hierarchy(); lighting(); material_editor(); inspector(); assets(); viewport();
-    ImGui::Begin("Console");
+    begin_panel("Console", "Console", context::global);
     for (const auto &m : messages) ImGui::TextWrapped("%s", m.c_str());
     // The newest message, such as an import error, is what the user needs to see.
     if (std::exchange(scroll_console, false)) ImGui::SetScrollHereY(1);
     ImGui::End();
+    history_panel();
+    shortcuts_panel();
     confirm();
     project_dialog();
-    const auto &io = ImGui::GetIO();
-    if (!io.WantTextInput && !gizmo_active && !game_input.captured && !ImGui::IsPopupOpen("Unsaved changes")) {
-        if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Z)) report(io.KeyShift ? session.redo() : session.undo(), io.KeyShift ? "Redo" : "Undo");
-        if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Y)) report(session.redo(), "Redo");
-        if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_S)) report(session.save(scene_path.data()), "Scene saved");
-        if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_N)) request(Pending::NewScene);
-        if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_D, false)) duplicate_selection();
-        if (!io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Delete, false)) delete_selection();
-    }
+    route_shortcuts(rebinding_at_frame_start);
+    ui_map.flush();
 }
 } // namespace engine::editor
