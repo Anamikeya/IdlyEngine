@@ -1,11 +1,13 @@
 #pragma once
 #include <engine/assets/asset_database.h>
 #include <engine/commands/CommandBus.hpp>
+#include <engine/editor/CameraController.hpp>
 #include <engine/editor/Selection.hpp>
 #include <engine/gameplay/game.h>
 #include <engine/physics/scene_physics.h>
 #include <engine/renderer/RenderSnapshot.hpp>
 #include <engine/renderer/ResourceRegistry.hpp>
+#include <array>
 #include <chrono>
 #include <filesystem>
 #include <future>
@@ -21,13 +23,25 @@
 #include <vector>
 
 namespace engine::editor {
-struct OrbitCamera {
-    Vec3 target{0, 0.5, 0};
-    double yaw = 0.7, pitch = 0.4, distance = 8;
-    void orbit(double dx, double dy);
-    void pan(double dx, double dy, double viewport_height);
-    void zoom(double steps);
-    WorldTransform world() const;
+// What the open scene remembers for the editor only, in "<scene file>.editor" beside the scene. It is view state, not
+// content: it joins no undo step, does not make the scene dirty, and Play mode ignores it.
+struct CameraBookmark {
+    Vec3 target;
+    double yaw = 0, pitch = 0, distance = 8;
+    bool orthographic = false;
+    bool operator==(const CameraBookmark &) const = default;
+};
+struct EditorViewState {
+    std::set<EntityId> hidden;
+    std::array<std::optional<CameraBookmark>, 10> bookmarks;
+    bool operator==(const EditorViewState &) const = default;
+    bool empty() const { return *this == EditorViewState{}; }
+};
+std::string write_view_state(const EditorViewState &);
+Result<EditorViewState> read_view_state(std::string_view);
+// What the viewport leaves out. These only take things away from what the scene says.
+struct ViewFlags {
+    bool grid = true, skybox = true, shadows = true, ambient_occlusion = true, bloom = true;
 };
 
 enum class PlayState { Editing, Playing, Paused };
@@ -87,9 +101,10 @@ class EditorSession {
         std::string problem;
     };
     std::filesystem::path project_;
-    std::optional<assets::AssetDatabase> assets_;
-    renderer::ResourceRegistry resources_;
-    std::map<std::tuple<std::uint64_t, std::string, assets::AssetType>, Resolved> resolved_;
+    // Loading an asset to answer a question about it changes no document, so these are mutable.
+    mutable std::optional<assets::AssetDatabase> assets_;
+    mutable renderer::ResourceRegistry resources_;
+    mutable std::map<std::tuple<std::uint64_t, std::string, assets::AssetType>, Resolved> resolved_;
     std::vector<std::string> asset_problems_;
     // Material edits in progress, not saved yet (a drag in the Material Editor); these win over the file.
     std::map<assets::AssetId, assets::MaterialData> material_drafts_;
@@ -102,12 +117,20 @@ class EditorSession {
     bool transaction_cancelled_ = false;
     // A gizmo drag in progress: where each moved entity started.
     std::vector<std::pair<EntityId, WorldTransform>> drag_start_;
+    EditorViewState view_state_;
+    std::filesystem::path document_; // The scene file last saved or loaded; empty for a new scene.
+    std::string view_state_problem_;
+    void store_view_state();
+    void load_view_state();
+    std::set<EntityId> selection_subtrees() const;
+    // Nearest hit along a world ray, skipping `exclude`. 0 and an empty distance when nothing is hit.
+    std::pair<EntityId, std::optional<double>> cast_ray(const renderer::FrameSnapshot &, const Vec3 &origin, const Vec3 &direction, double limit, const std::set<EntityId> &exclude) const;
     void sync_history();
     std::vector<std::shared_future<Result<assets::PreparedImport>>> imports_;
     std::vector<std::filesystem::path> import_sources_;
     std::uint64_t frames_since_trim_ = 0;
     std::uint64_t assets_released_ = 0;
-    const Resolved &resolve(const AssetRef &, assets::AssetType);
+    const Resolved &resolve(const AssetRef &, assets::AssetType) const;
     void forget_materials();
     Result<ImportedAsset> finish_import(const assets::PreparedImport &);
     std::set<assets::AssetId> referenced_assets();
@@ -119,6 +142,8 @@ public:
     static constexpr std::chrono::nanoseconds fixed_step{16'666'667}; // 60 Hz runtime ticks
     static constexpr int max_ticks_per_update = 5;
     OrbitCamera camera;
+    ViewFlags view_flags;
+    double grid_spacing = 1; // Meters between the grid's lines.
     EditorSession();
     ~EditorSession();
     EditorSession(const EditorSession &) = delete;
@@ -183,7 +208,8 @@ public:
     // Deletes the selection and its subtrees in one undo step.
     Result<void> delete_selection();
     // ---- A gizmo drag: one undo step named "<verb> <name>" or "<verb> 3 Entities", drawn live ----
-    Result<void> begin_drag(std::string_view verb);
+    // With `duplicate`, the selection is copied first and the copies are what moves.
+    Result<void> begin_drag(std::string_view verb, bool duplicate = false);
     // Places every moved entity at `delta` times where it started. All or nothing: a shear leaves the last good place.
     Result<void> update_drag(const WorldTransform &delta);
     Result<void> end_drag();
@@ -191,8 +217,29 @@ public:
     Result<void> cancel_drag();
     bool dragging() const { return !drag_start_.empty(); }
     void focus();
+    // Where focus() would put the camera: the same angles, framing the whole selection. Empty with nothing selected.
+    std::optional<OrbitCamera> focus_goal() const;
+    // The middle of the selection's bounds, which Alt+LMB orbits around. Empty with nothing selected.
+    std::optional<Vec3> selection_center() const;
+    // Moves each selected root straight down so its bounds rest on the surface under its middle, or on the ground plane
+    // when it is above that and nothing else is below. One undo step. Fails if nothing can move.
+    Result<void> snap_selection_to_floor(const renderer::FrameSnapshot &);
+    // Where a ray through the view point hits something, or the ground plane; empty when it does neither.
+    std::optional<Vec3> ray_hit(const renderer::FrameSnapshot &, double ndc_x, double ndc_y) const;
+    // The drawn vertex nearest the cursor within `radius` pixels, leaving out the selection and its children.
+    std::optional<Vec3> nearest_vertex(const renderer::FrameSnapshot &, double x, double y, double width, double height, double radius) const;
+    // ---- Editor-only view state ----
+    const EditorViewState &view_state() const { return view_state_; }
+    bool hidden(EntityId id) const { return view_state_.hidden.contains(id); }
+    // Hides the selection and its children in the editor, and deselects them. Saved with the view state.
+    void hide_selection();
+    void unhide_all();
+    void set_bookmark(std::size_t slot);
+    std::optional<OrbitCamera> bookmark(std::size_t slot) const;
+    // A view state file that could not be read since the last call, for the host to report.
+    std::string take_view_state_problem() { return std::exchange(view_state_problem_, {}); }
     // The box the entity draws, in its local space; empty when it draws nothing.
-    std::optional<std::pair<Vec3, Vec3>> local_bounds(EntityId);
+    std::optional<std::pair<Vec3, Vec3>> local_bounds(EntityId) const;
     // Extracts the shown scene: mesh components become lit meshes, light components scene lights. An asset that
     // cannot be resolved draws as a magenta cube and is listed in asset_problems(); nothing else changes.
     // Edit mode views through the editor camera. Play mode views through the first primary camera component
@@ -248,8 +295,10 @@ public:
     Result<commands::Receipt> assign_asset(EntityId, assets::AssetId);
     // Creates an entity drawing the model, named after the file and resting on the floor (y = 0), and selects it.
     Result<commands::Receipt> place_asset(assets::AssetId);
+    // The same with its base at `point`.
+    Result<commands::Receipt> place_asset_at(assets::AssetId, const Vec3 &point);
     // The model a reference names, loading it if needed; null when it cannot be resolved.
-    std::shared_ptr<const assets::MeshData> model(const AssetRef &);
+    std::shared_ptr<const assets::MeshData> model(const AssetRef &) const;
     // A box collider around that model, in its local space; empty when it cannot be resolved.
     std::optional<ColliderComponent> model_collider(const AssetRef &);
     // Problems with the references in the last frame().
@@ -275,7 +324,7 @@ public:
     Result<assets::AssetId> create_material(const std::string &name, const assets::MaterialData & = {});
     Result<assets::AssetId> duplicate_material(assets::AssetId);
     // The current value: a draft while one is being dragged, otherwise the saved one.
-    std::optional<assets::MaterialData> material(assets::AssetId);
+    std::optional<assets::MaterialData> material(assets::AssetId) const;
     // A live change: every object using the material shows it at once, nothing is saved and no undo step is added.
     Result<void> preview_material(assets::AssetId, const assets::MaterialData &);
     // Saves the material to its file: one undo step. A draft is replaced.

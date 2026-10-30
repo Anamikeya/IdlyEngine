@@ -1,9 +1,13 @@
 #include <engine/editor/EditorSession.hpp>
 #include <engine/assets/importers.h>
+#include <engine/editor/EditorPrefs.hpp>
 #include <algorithm>
 #include <cmath>
 #include <fstream>
+#include <limits>
 #include <set>
+#include <sstream>
+#include <tuple>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -79,22 +83,38 @@ std::string trimmed_name(std::string name) {
     return name;
 }
 }
-void OrbitCamera::orbit(double dx, double dy) {
-    yaw = std::remainder(yaw - dx * 0.008, 6.283185307179586);
-    pitch = std::clamp(pitch + dy * 0.008, -1.5, 1.5);
+std::string write_view_state(const EditorViewState &state) {
+    std::ostringstream out;
+    out.precision(17);
+    out << "EDITORVIEW 1\n";
+    for (const auto id : state.hidden) out << "HIDDEN " << id << '\n';
+    for (std::size_t slot = 0; slot < state.bookmarks.size(); ++slot)
+        if (const auto &b = state.bookmarks[slot])
+            out << "BOOKMARK " << slot << ' ' << b->target.x << ' ' << b->target.y << ' ' << b->target.z << ' ' << b->yaw << ' ' << b->pitch << ' ' << b->distance << ' ' << (b->orthographic ? 1 : 0) << '\n';
+    return out.str();
 }
-void OrbitCamera::pan(double dx, double dy, double height) {
-    const auto m = glm::make_mat4(world().matrix.data());
-    const auto shift = (-dx * glm::dvec3(m[0]) + dy * glm::dvec3(m[1])) *
-        (2 * distance * std::tan(0.523598775598) / std::max(height, 1.0));
-    target = {target.x + shift.x, target.y + shift.y, target.z + shift.z};
-}
-void OrbitCamera::zoom(double steps) { distance = std::clamp(distance * std::exp(-steps * 0.15), 0.2, 500.0); }
-WorldTransform OrbitCamera::world() const {
-    const auto center = vector(target);
-    const auto eye = center + distance * glm::dvec3(std::cos(pitch) * std::sin(yaw),
-        std::sin(pitch), std::cos(pitch) * std::cos(yaw));
-    return copy(glm::inverse(glm::lookAtRH(eye, center, glm::dvec3(0, 1, 0))));
+Result<EditorViewState> read_view_state(std::string_view text) {
+    std::istringstream in{std::string(text)};
+    std::string word;
+    int version = 0;
+    if (!(in >> word >> version) || word != "EDITORVIEW" || version != 1) return fail(ErrorCode::ParseError, "Not an editor view state file");
+    EditorViewState state;
+    while (in >> word) {
+        if (word == "HIDDEN") {
+            EntityId id = 0;
+            if (!(in >> id) || !id) return fail(ErrorCode::ParseError, "Bad HIDDEN record");
+            state.hidden.insert(id);
+        } else if (word == "BOOKMARK") {
+            std::size_t slot = 0;
+            CameraBookmark b;
+            int flat = 0;
+            if (!(in >> slot >> b.target.x >> b.target.y >> b.target.z >> b.yaw >> b.pitch >> b.distance >> flat) || slot >= state.bookmarks.size() || !(b.distance > 0))
+                return fail(ErrorCode::ParseError, "Bad BOOKMARK record");
+            b.orthographic = flat != 0;
+            state.bookmarks[slot] = b;
+        } else return fail(ErrorCode::ParseError, "Unknown record " + word);
+    }
+    return state;
 }
 struct EditorSession::Runtime {
     Scene scene;
@@ -263,6 +283,8 @@ Result<void> EditorSession::new_scene() {
     if (!r) return r.error();
     selection_.clear();
     clean_.clear(); dirty_revision_ = ~std::uint64_t(0);
+    document_.clear();
+    view_state_ = {};
     return {};
 }
 bool EditorSession::dirty() const {
@@ -276,6 +298,7 @@ void EditorSession::mark_clean() { clean_ = scene_.snapshot().entities; dirty_re
 Result<void> EditorSession::save(const std::filesystem::path &path) {
     if (auto allowed = editing_only("Save"); !allowed) return allowed;
     if (path.empty()) return fail(ErrorCode::InvalidArgument, "Choose a scene filename");
+    document_ = path;
     auto temp = path; temp += ".tmp";
     std::ofstream stream(temp, std::ios::binary | std::ios::trunc);
     if (!stream) return fail(ErrorCode::InvalidState, "Cannot open temporary scene file");
@@ -292,6 +315,7 @@ Result<void> EditorSession::save(const std::filesystem::path &path) {
     if (ec) return fail(ErrorCode::InvalidState, ec.message());
 #endif
     mark_clean();
+    store_view_state();
     return {};
 }
 Result<void> EditorSession::load(const std::filesystem::path &path) {
@@ -304,6 +328,8 @@ Result<void> EditorSession::load(const std::filesystem::path &path) {
     if (!r) return r.error();
     selection_.clear();
     mark_clean();
+    document_ = path;
+    load_view_state();
     return {};
 }
 Result<Transform> EditorSession::local_from_world(EntityId parent, const WorldTransform &world) const {
@@ -381,12 +407,16 @@ Result<void> EditorSession::delete_selection() {
         if (auto deleted = execute(commands::DeleteEntity{id}); !deleted) { transaction.cancel(); return deleted.error(); }
     return {};
 }
-Result<void> EditorSession::begin_drag(std::string_view verb) {
+Result<void> EditorSession::begin_drag(std::string_view verb, bool duplicate) {
     if (dragging()) return fail(ErrorCode::InvalidState, "A drag is already in progress");
     const auto roots = selection_roots();
     if (roots.empty()) return fail(ErrorCode::InvalidState, "Nothing is selected");
-    if (auto begun = begin_transaction(many(verb, roots.size(), scene().inspect(roots.front())->name)); !begun) return begun;
-    for (const auto id : roots) drag_start_.emplace_back(id, *scene().world_transform(id));
+    const auto name = many(verb, roots.size(), scene().inspect(roots.front())->name);
+    if (auto begun = begin_transaction(duplicate ? "Duplicate and " + name : name); !begun) return begun;
+    if (duplicate) {
+        if (auto copied = duplicate_selection(); !copied) { cancel_transaction(); (void)end_transaction(); return copied; }
+    }
+    for (const auto id : selection_roots()) drag_start_.emplace_back(id, *scene().world_transform(id));
     return {};
 }
 Result<void> EditorSession::update_drag(const WorldTransform &delta) {
@@ -424,7 +454,189 @@ Result<void> EditorSession::cancel_drag() {
     cancel_transaction();
     return end_transaction();
 }
-std::optional<std::pair<Vec3, Vec3>> EditorSession::local_bounds(EntityId id) {
+std::set<EntityId> EditorSession::selection_subtrees() const {
+    std::set<EntityId> all(selection_.items().begin(), selection_.items().end());
+    for (const auto &e : scene().snapshot().entities)
+        for (EntityId p = e.parent; p; p = scene().inspect(p)->parent)
+            if (all.contains(p)) { all.insert(e.id); break; }
+    return all;
+}
+namespace {
+// World-space box around a local box.
+std::pair<glm::dvec3, glm::dvec3> world_box(const glm::dmat4 &m, const Vec3 &low, const Vec3 &high) {
+    glm::dvec3 lo(std::numeric_limits<double>::max()), hi(std::numeric_limits<double>::lowest());
+    for (int i = 0; i < 8; ++i) {
+        const glm::dvec3 corner(m * glm::dvec4(i & 1 ? high.x : low.x, i & 2 ? high.y : low.y, i & 4 ? high.z : low.z, 1));
+        lo = glm::min(lo, corner); hi = glm::max(hi, corner);
+    }
+    return {lo, hi};
+}
+}
+std::optional<OrbitCamera> EditorSession::focus_goal() const {
+    if (selection_.empty()) return std::nullopt;
+    glm::dvec3 lo(std::numeric_limits<double>::max()), hi(std::numeric_limits<double>::lowest());
+    bool boxed = false;
+    for (const auto id : selection_.items()) {
+        const auto w = scene().world_transform(id);
+        if (!w) continue;
+        const auto m = glm::make_mat4(w->matrix.data());
+        if (const auto bounds = local_bounds(id)) {
+            const auto [low, high] = world_box(m, bounds->first, bounds->second);
+            lo = glm::min(lo, low); hi = glm::max(hi, high);
+            boxed = true;
+        } else { lo = glm::min(lo, glm::dvec3(m[3])); hi = glm::max(hi, glm::dvec3(m[3])); }
+    }
+    auto goal = camera;
+    const auto center = (lo + hi) / 2.0;
+    goal.target = {center.x, center.y, center.z};
+    const double size = glm::length(hi - lo);
+    // A marker with no size is framed as a unit cube would be.
+    goal.distance = std::clamp(boxed || size > 0 ? 1.75 * size : 3.0, 0.2, 500.0);
+    return goal;
+}
+std::optional<Vec3> EditorSession::selection_center() const {
+    const auto goal = focus_goal();
+    if (!goal) return std::nullopt;
+    return goal->target;
+}
+std::pair<EntityId, std::optional<double>> EditorSession::cast_ray(const renderer::FrameSnapshot &frame, const Vec3 &from, const Vec3 &direction, double limit, const std::set<EntityId> &exclude) const {
+    const glm::dvec4 a(from.x, from.y, from.z, 1), d(direction.x, direction.y, direction.z, 0);
+    double nearest = limit;
+    EntityId entity = 0;
+    for (const auto &object : frame.objects) {
+        if (exclude.contains(object.entity)) continue;
+        const auto inverse = glm::inverse(glm::make_mat4(object.world.matrix.data()));
+        // The local ray is not normalized, so t stays a world-space distance along the ray.
+        const glm::dvec3 origin(inverse * a), ray(inverse * d);
+        // Models are tested by their bounding box.
+        const auto data = resources_.find(object.mesh);
+        const double t = data ? box_hit(vector(data->bounds.min), vector(data->bounds.max), origin, ray, nearest) : hit(object.mesh, origin, ray, nearest);
+        if (t >= 0 && t < nearest) { nearest = t; entity = object.entity; }
+    }
+    if (!entity) return {0, std::nullopt};
+    return {entity, nearest};
+}
+std::optional<Vec3> EditorSession::ray_hit(const renderer::FrameSnapshot &frame, double x, double y) const {
+    const auto inv = glm::inverse(glm::make_mat4(frame.camera.projection.matrix.data()) * glm::make_mat4(frame.camera.view.matrix.data()));
+    auto a = inv * glm::dvec4(x, y, -1, 1), b = inv * glm::dvec4(x, y, 1, 1);
+    a /= a.w; b /= b.w;
+    const auto segment = glm::dvec3(b - a);
+    const double length = glm::length(segment);
+    const auto direction = segment / length;
+    const auto [entity, t] = cast_ray(frame, {a.x, a.y, a.z}, {direction.x, direction.y, direction.z}, length, {});
+    if (entity) { const auto p = glm::dvec3(a) + direction * *t; return Vec3{p.x, p.y, p.z}; }
+    if (direction.y >= -1e-9 || a.y <= 0) return std::nullopt;
+    const auto p = glm::dvec3(a) + direction * (-a.y / direction.y);
+    return Vec3{p.x, 0, p.z};
+}
+Result<void> EditorSession::snap_selection_to_floor(const renderer::FrameSnapshot &frame) {
+    const auto roots = selection_roots();
+    if (roots.empty()) return fail(ErrorCode::InvalidState, "Nothing is selected");
+    const auto exclude = selection_subtrees();
+    ScopedTransaction transaction(*this, many("Snap", roots.size(), scene().inspect(roots.front())->name) + " to Floor");
+    bool moved = false;
+    for (const auto id : roots) {
+        const auto w = scene().world_transform(id);
+        const auto m = glm::make_mat4(w->matrix.data());
+        glm::dvec3 lo(m[3]), hi(m[3]);
+        if (const auto bounds = local_bounds(id)) std::tie(lo, hi) = world_box(m, bounds->first, bounds->second);
+        const auto middle = (lo + hi) / 2.0;
+        const auto [entity, t] = cast_ray(frame, {middle.x, middle.y, middle.z}, {0, -1, 0}, 100000, exclude);
+        double surface = 0;
+        if (entity) surface = middle.y - *t;
+        else if (lo.y <= 0) continue; // Nothing below, and already at or under the ground plane.
+        if (std::abs(surface - lo.y) < 1e-9) continue;
+        auto placed = glm::make_mat4(w->matrix.data());
+        placed[3].y += surface - lo.y;
+        auto local = local_from_world(scene().inspect(id)->parent, copy(placed));
+        if (!local) { transaction.cancel(); return local.error(); }
+        if (auto done = execute(commands::SetTransform{id, local.value()}); !done) { transaction.cancel(); return done.error(); }
+        moved = true;
+    }
+    if (!moved) return fail(ErrorCode::NotFound, "Nothing to snap to below the selection");
+    return {};
+}
+std::optional<Vec3> EditorSession::nearest_vertex(const renderer::FrameSnapshot &frame, double x, double y, double width, double height, double radius) const {
+    const auto clip_from_world = glm::make_mat4(frame.camera.projection.matrix.data()) * glm::make_mat4(frame.camera.view.matrix.data());
+    const auto exclude = selection_subtrees();
+    std::optional<Vec3> best;
+    double best_distance = radius * radius;
+    const auto consider = [&](const glm::dmat4 &world, const glm::dvec3 &local) {
+        const glm::dvec4 at = world * glm::dvec4(local, 1);
+        const auto clip = clip_from_world * at;
+        if (clip.w <= 1e-6) return;
+        const double sx = (clip.x / clip.w + 1) / 2 * width - x, sy = (1 - clip.y / clip.w) / 2 * height - y;
+        const double squared = sx * sx + sy * sy;
+        if (squared < best_distance) { best_distance = squared; best = Vec3{at.x, at.y, at.z}; }
+    };
+    for (const auto &object : frame.objects) {
+        if (exclude.contains(object.entity)) continue;
+        const auto world = glm::make_mat4(object.world.matrix.data());
+        if (const auto data = resources_.find(object.mesh)) {
+            // A model far from the cursor is passed over by its box, so one with many vertices costs nothing unless near.
+            double min_x = std::numeric_limits<double>::max(), max_x = std::numeric_limits<double>::lowest(), min_y = min_x, max_y = max_x;
+            bool behind = false;
+            const auto low = vector(data->bounds.min), high = vector(data->bounds.max);
+            for (int i = 0; i < 8; ++i) {
+                const auto clip = clip_from_world * world * glm::dvec4(i & 1 ? high.x : low.x, i & 2 ? high.y : low.y, i & 4 ? high.z : low.z, 1);
+                if (clip.w <= 1e-6) { behind = true; break; }
+                const double sx = (clip.x / clip.w + 1) / 2 * width, sy = (1 - clip.y / clip.w) / 2 * height;
+                min_x = std::min(min_x, sx); max_x = std::max(max_x, sx); min_y = std::min(min_y, sy); max_y = std::max(max_y, sy);
+            }
+            if (!behind && (x < min_x - radius || x > max_x + radius || y < min_y - radius || y > max_y + radius)) continue;
+            for (const auto &vertex : data->vertices) consider(world, vector(vertex.position));
+        } else if (object.mesh == renderer::builtin_plane) {
+            for (const double sx : {-0.5, 0.5}) for (const double sz : {-0.5, 0.5}) consider(world, {sx, 0, sz});
+        } else if (object.mesh == renderer::builtin_sphere) {
+            for (const auto &p : {glm::dvec3(0.5, 0, 0), glm::dvec3(-0.5, 0, 0), glm::dvec3(0, 0.5, 0), glm::dvec3(0, -0.5, 0), glm::dvec3(0, 0, 0.5), glm::dvec3(0, 0, -0.5)}) consider(world, p);
+        } else {
+            for (int i = 0; i < 8; ++i) consider(world, {i & 1 ? 0.5 : -0.5, i & 2 ? 0.5 : -0.5, i & 4 ? 0.5 : -0.5});
+        }
+    }
+    return best;
+}
+void EditorSession::hide_selection() {
+    const auto all = selection_subtrees();
+    view_state_.hidden.insert(all.begin(), all.end());
+    selection_.clear();
+    store_view_state();
+}
+void EditorSession::unhide_all() {
+    view_state_.hidden.clear();
+    store_view_state();
+}
+void EditorSession::set_bookmark(std::size_t slot) {
+    if (slot >= view_state_.bookmarks.size()) return;
+    view_state_.bookmarks[slot] = CameraBookmark{camera.target, camera.yaw, camera.pitch, camera.distance, camera.orthographic};
+    store_view_state();
+}
+std::optional<OrbitCamera> EditorSession::bookmark(std::size_t slot) const {
+    if (slot >= view_state_.bookmarks.size() || !view_state_.bookmarks[slot]) return std::nullopt;
+    const auto &b = *view_state_.bookmarks[slot];
+    auto goal = camera;
+    goal.target = b.target; goal.yaw = b.yaw; goal.pitch = b.pitch; goal.distance = b.distance; goal.orthographic = b.orthographic;
+    return goal;
+}
+void EditorSession::store_view_state() {
+    if (document_.empty()) return;
+    auto file = document_;
+    file += ".editor";
+    std::error_code error;
+    if (view_state_.empty()) { std::filesystem::remove(file, error); return; }
+    if (auto written = write_text_file(file, write_view_state(view_state_)); !written) view_state_problem_ = written.error().message;
+}
+void EditorSession::load_view_state() {
+    view_state_ = {};
+    auto file = document_;
+    file += ".editor";
+    std::error_code error;
+    if (!std::filesystem::exists(file, error)) return;
+    const auto text = read_text_file(file);
+    auto state = text ? read_view_state(text.value()) : Result<EditorViewState>(text.error());
+    if (state) view_state_ = std::move(state.value());
+    else view_state_problem_ = file.generic_string() + " was ignored: " + state.error().message;
+}
+std::optional<std::pair<Vec3, Vec3>> EditorSession::local_bounds(EntityId id) const {
     const auto record = scene().inspect(id);
     if (!record || !record->components.mesh) return std::nullopt;
     const auto &mesh = *record->components.mesh;
@@ -436,21 +648,7 @@ std::optional<std::pair<Vec3, Vec3>> EditorSession::local_bounds(EntityId id) {
     return std::pair<Vec3, Vec3>{{-0.5, -0.5, -0.5}, {0.5, 0.5, 0.5}};
 }
 void EditorSession::focus() {
-    if (const auto w = scene().world_transform(selection_.primary())) {
-        const auto m = glm::make_mat4(w->matrix.data());
-        const double scale = std::max({glm::length(glm::dvec3(m[0])), glm::length(glm::dvec3(m[1])), glm::length(glm::dvec3(m[2]))});
-        glm::dvec3 center(m[3]);
-        double size = 3.0 / 1.75; // Diagonal-like size that puts a unit cube 3 m away.
-        const auto record = scene().inspect(selection_.primary());
-        // A model's origin can be far from its geometry, and its size is anything.
-        if (const auto data = record->components.mesh ? model(record->components.mesh->mesh_asset) : nullptr) {
-            const auto low = vector(data->bounds.min), high = vector(data->bounds.max);
-            center = glm::dvec3(m * glm::dvec4((low + high) / 2.0, 1));
-            size = glm::length(high - low);
-        }
-        camera.target = {center.x, center.y, center.z};
-        camera.distance = std::clamp(1.75 * scale * size, 0.2, 500.0);
-    }
+    if (const auto goal = focus_goal()) { camera.target = goal->target; camera.distance = goal->distance; }
 }
 Result<renderer::Frame> EditorSession::frame(double aspect) {
     sync_physics();
@@ -492,9 +690,9 @@ Result<renderer::Frame> EditorSession::frame(double aspect) {
                 if (resolved.material.index) parts.push_back({slot.slot, resolved.material});
                 if (!resolved.problem.empty()) problem(resolved.problem);
             }
-            meshes.push_back({e.id, handle, material, true, surface, std::move(parts)});
+            meshes.push_back({e.id, handle, material, runtime_ || !hidden(e.id), surface, std::move(parts)});
         }
-        if (const auto &l = e.components.light) {
+        if (const auto &l = e.components.light; l && (runtime_ || !hidden(e.id))) {
             const auto kind = l->type == LightType::Point ? renderer::LightKind::Point : l->type == LightType::Spot ? renderer::LightKind::Spot : renderer::LightKind::Directional;
             lights.push_back({e.id, kind, linear(l->color), l->intensity, l->range, glm::radians(l->inner_cone_degrees), glm::radians(l->outer_cone_degrees), l->cast_shadows});
         }
@@ -507,13 +705,14 @@ Result<renderer::Frame> EditorSession::frame(double aspect) {
     environment_settings.ground_color = linear(authored.ground_color);
     environment_settings.intensity = authored.intensity;
     environment_settings.rotation_radians = glm::radians(authored.rotation_degrees);
-    environment_settings.show_skybox = authored.show_skybox;
+    // A sky has no meaning in a parallel view, where every pixel would look the same way.
+    environment_settings.show_skybox = authored.show_skybox && view_flags.skybox && !(camera.orthographic && !runtime_);
     environment_settings.ev100 = authored.ev100;
     environment_settings.tone_mapping = authored.tone_mapping;
-    environment_settings.shadow_quality = authored.shadow_quality;
+    environment_settings.shadow_quality = view_flags.shadows ? authored.shadow_quality : ShadowQuality::Off;
     environment_settings.shadow_distance = authored.shadow_distance;
-    environment_settings.ambient_occlusion = authored.ambient_occlusion;
-    environment_settings.bloom = authored.bloom;
+    environment_settings.ambient_occlusion = authored.ambient_occlusion && view_flags.ambient_occlusion;
+    environment_settings.bloom = authored.bloom && view_flags.bloom;
     if (authored.source == EnvironmentSource::Image) {
         const auto &resolved = resolve(authored.image, assets::AssetType::Environment);
         environment_settings.image = resolved.environment;
@@ -531,13 +730,22 @@ Result<renderer::Frame> EditorSession::frame(double aspect) {
         if (primary != entities.end()) {
             const auto &c = *primary->components.camera;
             const renderer::PerspectiveCamera lens{primary->id, glm::radians(c.vertical_fov_degrees), aspect, c.near_plane, c.far_plane};
-            auto through_camera = renderer::extract_frame(shown, stamp, lens, meshes, lights, environment_settings, !runtime_);
+            auto through_camera = renderer::extract_frame(shown, stamp, lens, meshes, lights, environment_settings, !runtime_ && view_flags.grid, grid_spacing);
             if (through_camera) { view_camera_ = primary->id; return through_camera; }
             view_camera_issue_ = "Camera '" + primary->name + "' cannot be used: " + through_camera.error().message;
         }
     }
     renderer::PerspectiveCamera lens; lens.aspect_ratio = aspect;
-    return renderer::extract_frame(shown, stamp, lens, camera.world(), meshes, lights, environment_settings, !runtime_);
+    lens.vertical_fov_radians = glm::radians(camera.fov_degrees);
+    auto eye = camera;
+    if (camera.orthographic) {
+        // Distance does not change what an orthographic view shows, so the eye stands far back and nothing is behind it.
+        constexpr double stand_back = 1000;
+        lens.orthographic_half_height = camera.half_height();
+        eye.distance += stand_back;
+        lens.far_plane = eye.distance + 2 * stand_back;
+    }
+    return renderer::extract_frame(shown, stamp, lens, eye.world(), meshes, lights, environment_settings, !runtime_ && view_flags.grid, grid_spacing);
 }
 std::uint64_t EditorSession::scene_identity() const { return runtime_ ? 1 + play_sessions_ : 1; }
 std::uint64_t EditorSession::scene_revision() const { return runtime_ ? runtime_->bus.revision() : bus_.revision(); }
@@ -632,22 +840,11 @@ EntityId EditorSession::pick(const renderer::FrameSnapshot &frame, double x, dou
     auto a = inv * glm::dvec4(x, y, -1, 1), b = inv * glm::dvec4(x, y, 1, 1);
     a /= a.w; b /= b.w;
     const auto segment = glm::dvec3(b - a);
-    double nearest = glm::length(segment);
-    const auto direction = segment / nearest;
-    EntityId nearest_entity = 0;
-    for (const auto &object : frame.objects) {
-        const auto inverse = glm::inverse(glm::make_mat4(object.world.matrix.data()));
-        // The local ray is not normalized, so t stays a world-space distance along the pick ray.
-        const glm::dvec3 origin(inverse * a), ray(inverse * glm::dvec4(direction, 0));
-        // Models pick by their bounding box.
-        const auto data = resources_.find(object.mesh);
-        const double t = data ? box_hit(vector(data->bounds.min), vector(data->bounds.max), origin, ray, nearest)
-                              : hit(object.mesh, origin, ray, nearest);
-        if (t >= 0 && t < nearest) { nearest = t; nearest_entity = object.entity; }
-    }
-    return nearest_entity;
+    const double length = glm::length(segment);
+    const auto direction = segment / length;
+    return cast_ray(frame, {a.x, a.y, a.z}, {direction.x, direction.y, direction.z}, length, {}).first;
 }
-const EditorSession::Resolved &EditorSession::resolve(const AssetRef &ref, assets::AssetType type) {
+const EditorSession::Resolved &EditorSession::resolve(const AssetRef &ref, assets::AssetType type) const {
     const auto key = std::make_tuple(ref.id, ref.path, type);
     if (const auto found = resolved_.find(key); found != resolved_.end()) return found->second;
     Resolved result;
@@ -817,7 +1014,7 @@ Result<assets::AssetId> EditorSession::duplicate_material(assets::AssetId id) {
     const auto stem = std::filesystem::path(std::u8string(reinterpret_cast<const char8_t *>(meta->path.data()), meta->path.size())).stem().u8string();
     return create_material(std::string(reinterpret_cast<const char *>(stem.data()), stem.size()) + " copy", *data);
 }
-std::optional<assets::MaterialData> EditorSession::material(assets::AssetId id) {
+std::optional<assets::MaterialData> EditorSession::material(assets::AssetId id) const {
     if (const auto draft = material_drafts_.find(id); draft != material_drafts_.end()) return draft->second;
     if (!assets_) return std::nullopt;
     auto loaded = assets_->load_material(id);
@@ -1003,7 +1200,8 @@ Result<commands::Receipt> EditorSession::assign_asset(EntityId id, assets::Asset
     (meta->type == assets::AssetType::Mesh ? mesh.mesh_asset : mesh.texture) = reference(*meta);
     return execute(commands::SetMesh{id, mesh}, "Assign " + std::string(assets::to_string(meta->type)));
 }
-Result<commands::Receipt> EditorSession::place_asset(assets::AssetId asset) {
+Result<commands::Receipt> EditorSession::place_asset(assets::AssetId asset) { return place_asset_at(asset, {}); }
+Result<commands::Receipt> EditorSession::place_asset_at(assets::AssetId asset, const Vec3 &point) {
     const auto meta = assets_ ? assets_->find(asset) : std::nullopt;
     if (!meta) return fail(ErrorCode::NotFound, "Asset is not in the asset folder");
     if (meta->type != assets::AssetType::Mesh) return fail(ErrorCode::InvalidArgument, meta->path + " is not a model; assign it to an entity instead");
@@ -1013,7 +1211,7 @@ Result<commands::Receipt> EditorSession::place_asset(assets::AssetId asset) {
     MeshComponent mesh;
     mesh.color = {1, 1, 1};
     mesh.mesh_asset = ref;
-    Transform t; t.position.y = -double(data->bounds.min[1]);
+    Transform t; t.position = {point.x, point.y - double(data->bounds.min[1]), point.z};
     const auto stem = std::filesystem::path(std::u8string(reinterpret_cast<const char8_t *>(meta->path.data()), meta->path.size())).stem().u8string();
     auto name = trimmed_name(std::string(reinterpret_cast<const char *>(stem.data()), stem.size()));
     const auto label = "Place " + name;
@@ -1021,7 +1219,7 @@ Result<commands::Receipt> EditorSession::place_asset(assets::AssetId asset) {
     if (result) selection_.set(result.value().created.front());
     return result;
 }
-std::shared_ptr<const assets::MeshData> EditorSession::model(const AssetRef &ref) {
+std::shared_ptr<const assets::MeshData> EditorSession::model(const AssetRef &ref) const {
     return ref.empty() ? nullptr : resources_.find(resolve(ref, assets::AssetType::Mesh).mesh);
 }
 std::optional<ColliderComponent> EditorSession::model_collider(const AssetRef &ref) {

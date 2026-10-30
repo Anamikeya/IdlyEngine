@@ -1,6 +1,8 @@
 /resources/
 /build/
 /build-*/
+# What one person hid and bookmarked in a scene. Editor view state, not content.
+*.scene.editor
 /out/
 /cmake-build-*/
 /.vs/
