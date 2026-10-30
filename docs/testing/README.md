@@ -20,7 +20,10 @@ Real mouse and keyboard runs are scripts, on a Release build, with no one using 
 ```powershell
 powershell -ExecutionPolicy Bypass -File Tests/RealInput/shooter_acceptance.ps1 -Editor <engine_editor.exe> -Output <folder>
 powershell -ExecutionPolicy Bypass -File Tests/RealInput/editor_workflow.ps1 -Editor <engine_editor.exe> -Output <folder>
+powershell -ExecutionPolicy Bypass -File Tests/RealInput/editor_ux_phase1.ps1 -Editor <engine_editor.exe> -Output <folder>
 ```
+
+They use a settings folder of their own (`--config-dir`) and find controls by name (`--ui-map`).
 
 They read the editor's `--game-log` and the files on disk, and save captures. `SendInput` goes to whatever has focus, so
 `Tests/RealInput/InputDriver.psm1` waits for an idle desktop and stops the run if the editor loses focus or the cursor moves
@@ -48,7 +51,7 @@ LIBRARIES ...)` (`cmake/GameEngineTesting.cmake`). After each build the executab
 runs in a fresh process, which isolates process-global state such as Box3D's world table.
 Case names must be unique within an executable.
 
-## Current suites (207 CTest entries)
+## Current suites (268 CTest entries)
 
 | Executable | Labels | Cases | Covers |
 |---|---|---|---|
@@ -58,6 +61,7 @@ Case names must be unique within an executable.
 | `asset_tests` | assets, unit | 47 | Paths and stable ids, OBJ, TGA, PPM, `.meta`, database catalogue, cache/reload/revision/unload, missing and failed files, scan issues. GLB: geometry, transforms, mirroring, materials, embedded images, warnings, invalid and unsupported files, real models from the dependency tree. PNG and JPEG decoding and rejection. `import_file` naming, ids, and leaving nothing behind on failure. Milestone 4: all five maps and their color spaces, alpha and sides, broken secondary maps, tangents, material text and files, `.hdr`, background import |
 | `systems_smoke_tests` | integration, smoke | 1 | OBJ asset sizes a collider, physics drives a scene entity, `extract_frame` sees the published pose |
 | `editor_dependency_smoke` | editor, smoke | 2 | `gameengine::imgui` renders frames through ImGui's null backend (no window, no GPU); `gameengine::glfw` links and reports its version without `glfwInit` |
+| `editor_ux_tests` | editor, unit | 61 | The editor's foundation without a window: chords, command registry, context routing, input blocks, conflicts, keymap files, the default command table and its generated document, bus and session transactions, history order and jumps, gizmo drags, selection, property tables |
 | `networking_tests` | networking, unit | 41 | Serialization, loopback transport, connection manager |
 | `online_services_tests` | online, unit | 7 | NullOnlineService |
 | `engine_core_tests` | none | 1 entry, 24 scenarios | `engine.core.acceptance`: scene, commands, undo, components, serialization of all format versions, malformed input |

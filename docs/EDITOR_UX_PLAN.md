@@ -3,7 +3,7 @@
 Branch `feature/ui-ux`, worktree `D:\AI\GameEngine-Integration`, created from `main` at `8d12a03` (Milestone 4 merged).
 Reference: `docs/UNREAL_UX_REFERENCE.md`. Blueprints are out of scope.
 
-**Status: Step 0 done. Waiting for approval; no engine code has changed.**
+**Status: Phase 1 done, waiting for approval to start Phase 2.** Results and deviations are in section 9.
 
 ## 1. Audit
 
@@ -132,7 +132,7 @@ Nothing below is overridden silently; each row is the proposed resolution.
 | RMB drag | Orbit | Look | Follow the request. Orbit moves to Alt+LMB |
 | Wheel | Zoom | Only RMB+Wheel is specified | Keep: wheel alone dollies, RMB+Wheel sets speed |
 | LMB | Click selects | Drag moves and yaws | Click (under the drag threshold) selects; gizmo and markers take priority over drag |
-| **Esc while playing** | Frees mouse and pauses (M4 tested) | Stop | **First Esc frees the mouse and pauses, second Esc stops. Needs your decision** |
+| **Esc while playing** | Frees mouse and pauses (M4 tested) | Stop | First Esc frees the mouse and pauses, second Esc stops. Approved 2026-10-30; built in Phase 4 |
 | Esc while editing | Nothing | Deselect | Gizmo drag or typed value cancels first, then deselect |
 | R | Game: restart after win or loss | Scale gizmo | Possessed game owns it; once ejected (F8) it is scale |
 | WASD, Space, Shift, mouse | Game reads them while it holds the mouse | Editor actions | Registry is suspended while captured, except Esc, Shift+F1, F8 |
@@ -230,7 +230,7 @@ Tests: registry, chord parsing, keymap round trip and conflicts, routing order, 
 | Rename and move | MISSING | New `AssetDatabase::move`; moves file and `.meta`, then updates stale paths in the scene in one transaction. Material map paths too | M |
 | Ctrl+Space drawer | MISSING | Same browser content in a slide-up overlay | S |
 | Dockable tabs, floating inside the window | EXISTS | | S |
-| Tear-off to separate OS windows | MISSING | See section 5. Proposed as a follow-up | L |
+| Tear-off to separate OS windows | MISSING | See section 5. Approved as a follow-up after Phase 5 | L |
 | Named layouts, Reset | PARTIAL | Layout persists through `imgui.ini`; `LoadIniSettingsFromMemory` and files under prefs | S |
 | Window menu from commands | MISSING | | S |
 
@@ -264,7 +264,7 @@ Tests: registry, chord parsing, keymap round trip and conflicts, routing order, 
 1. **Real-input scripts use fixed screen coordinates.** `editor_workflow.ps1` has 23 `Click-At` calls and `shooter_acceptance.ps1` has 5. Adding a menu bar breaks them. Fix in Phase 1: `--ui-map <file>` writes named widget rectangles each frame, and the scripts look controls up by name. Runs keep their focus and idle guards, and need a free desktop.
 2. **Live edits cost more.** `CommandBus::execute` copies the whole scene per call, and `dirty()` compares all entities per revision. A live drag makes this a per-frame cost, fine for 73 entities but not for thousands. Measure in Phase 1 on a generated 10,000-entity scene. If needed, make `dirty()` lazy and update only changed entities.
 3. **Edit-mode physics during live drags.** The bridge syncs each frame, and collider rebuilds may be slow. Measure in Phase 2.
-4. **Separate OS windows.** They need a Filament swap chain per ImGui viewport and `RendererHasViewports` in `ImGuiRenderer`. Floating inside the main window works today. Proposed: treat OS windows as a follow-up after Phase 5, because this is the one item that risks renderer stability.
+4. **Separate OS windows.** They need a Filament swap chain per ImGui viewport and `RendererHasViewports` in `ImGuiRenderer`. Floating inside the main window works today. Approved: OS windows are a follow-up after Phase 5, because this is the one item that risks renderer stability.
 5. **Orthographic lens** touches `extract_frame`'s validation, which existing tests cover. Perspective behavior must stay identical.
 6. **Details rewrite** replaces working UI, and every field needs re-checking. It lands component by component, with a test that each table covers its struct's fields.
 7. **Alt handling** in ImGui navigation and Windows needs testing early, as Phase 2 depends on it.
@@ -285,3 +285,44 @@ Both MSVC presets build into fresh `build-ux-windows-msvc-release` and `-ci` fol
 ## 9. Changelog
 
 - 2026-10-30: Step 0 audit and plan written. No build run, no code changed. Waiting for approval.
+- 2026-10-30: Plan approved, with the three recommendations: first Esc pauses and second Esc stops, separate OS windows after Phase 5, Alt+2 and Alt+3 greyed out and mouse gestures read-only at first.
+- 2026-10-30: Phase 1 done.
+
+### Phase 1 checklist
+
+- [x] `EditorUI` split out of `Main.cpp` into `src/ui/`
+- [x] `EditorCommand`, `CommandRegistry`, chords, default table with handlers bound by ID
+- [x] Main menu bar, toolbar and hierarchy context menu built from commands, with shortcuts, enabled and checked state, tooltips
+- [x] Context routing, text-field guard and other input blocks
+- [x] Keymap file with overrides, import, export, per-command and full reset
+- [x] Keyboard Shortcuts panel: search, groups, click to rebind, conflict warning, right-click to remove
+- [x] `docs/EDITOR_SHORTCUTS.md`, generated, with a test that it is current
+- [x] Transactions, nesting, scoped guard, cancel; every mutation named
+- [x] Gizmo drags live and one undo step, for the whole selection
+- [x] Undo History panel with jumps; scene and material edits in one order
+- [x] `*` on the viewport tab as well as the title bar
+- [x] `SelectionSet` with primary entity and change event; Ctrl+click, Shift+click, Ctrl+A, Esc; multi-select duplicate, delete and row drag
+- [x] Reflection metadata for all seven component types, with tests (the Inspector adopts it in Phase 3)
+- [x] `--config-dir`, `--ui-map`, `--dump-shortcuts`; settings moved to `%APPDATA%\GameEngine\`
+- [x] Real-input scripts find controls by name
+- [x] `docs/architecture/008-editor-ux.md`, with how to add a command and a property
+
+### Phase 1 deviations
+
+- **Scrubbing stays commit-on-release.** Inspector and Material Editor drags are still one undo step, but nothing moves until release, except materials. Live scrubbing comes with the Details rewrite in Phase 3, as planned.
+- **Named `EditorCommand`,** because `engine::commands::Command` already exists (D1).
+- **A byte-identical sample was the wrong test.** The plan asked for the sample to be byte-identical after load and save. It never was: the Python generator writes shortest-form numbers and the engine writes 17 digits, for the same values. What holds, and what is now checked, is that the scene code is unchanged in this work and that saving, playing, stopping and saving again gives identical bytes.
+- **Save All only saves the scene,** because materials already save themselves on release. Nothing else is unsaved.
+- **Layouts reset once.** Moving settings means the first run ignores any old `imgui.ini`, which can be deleted.
+
+### Phase 1 known limits
+
+- **Large scenes:** one live drag step with its dirty check takes about 32 ms at 10,000 entities, measured in Release, so a drag would fall below 60 Hz at that size. It scales with entity count, and the sample has 73. `CommandBus::execute` copying the scene is the cause; not fixed yet.
+- **Not driven with real input:** the system file dialogs (Ctrl+O, Save As, keymap Import and Export), because the driver stops by design when focus leaves the editor; Ctrl+click in the viewport; Keep both; `Edit.MoveToRoot`. Keymap parsing behind Import has unit tests. The dialogs have only been compiled, so try them by hand.
+- **The Alt question is still open:** no default uses Alt yet. It is tested when Phase 2 adds Alt+LMB.
+
+### Phase 1 bugs found by running it
+
+- The key press that finished a rebinding also ran the command it had just been bound to.
+- Esc that closed a menu, or cancelled a rebinding, also cleared the selection.
+- A keymap line ending in a lone `,` key failed to parse.
