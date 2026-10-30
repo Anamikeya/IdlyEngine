@@ -182,11 +182,26 @@ function Get-Widget { param([string]$Name, [int]$TimeoutMilliseconds = 4000)
     } while ($clock.ElapsedMilliseconds -lt $TimeoutMilliseconds)
     throw "The editor shows no control called '$Name'."
 }
+# Whether the control is on screen now, without waiting long for it.
+function Test-Widget { param([string]$Name)
+    try { $null = Get-Widget $Name 400; return $true } catch { if ("$_" -like "*no control called*") { return $false }; throw }
+}
 # Client-area fractions of a point inside a control; Fx and Fy are fractions of the control.
 function Get-WidgetPoint { param([string]$Name, [double]$Fx = 0.5, [double]$Fy = 0.5)
     $w = Get-Widget $Name
     Update-Window
     return @((($w.X0 + $Fx * ($w.X1 - $w.X0)) / $script:width), (($w.Y0 + $Fy * ($w.Y1 - $w.Y0)) / $script:height))
+}
+# Presses on one point and releases on another, with a real movement between: what a drag and drop is made of.
+function Drag-Between { param([double[]]$From, [double[]]$To, [string]$Capture)
+    Move-To $From[0] $From[1]; [Win32Input]::Mouse(1, 0, 1); Start-Sleep -Milliseconds 150
+    Mouse-Press 'Left' $true; Start-Sleep -Milliseconds 120
+    try {
+        Move-Relative 0 -12 120
+        Move-To $To[0] $To[1]; [Win32Input]::Mouse(1, 0, 1); Start-Sleep -Milliseconds 150
+        [Win32Input]::Mouse(1, 0, 1); Start-Sleep -Milliseconds 200
+        if ($Capture) { Save-Capture $Capture }
+    } finally { Mouse-Press 'Left' $false; Start-Sleep -Milliseconds 350 }
 }
 function Click-Widget { param([string]$Name, [double]$Fx = 0.5, [double]$Fy = 0.5, [switch]$Right)
     $p = Get-WidgetPoint $Name $Fx $Fy
@@ -257,7 +272,7 @@ function Hold-Key { param([string[]]$Keys, [int]$Milliseconds)
 function Get-VirtualKey { param([string]$Key)
     switch ($Key) {
         'Space' { return [uint16]0x20 } 'Shift' { return [uint16]0xA0 } 'Esc' { return [uint16]0x1B } 'Enter' { return [uint16]0x0D }
-        'Ctrl' { return [uint16]0xA2 } 'Delete' { return [uint16]0x2E } 'Alt' { return [uint16]0xA4 } 'End' { return [uint16]0x23 } 'F11' { return [uint16]0x7A }
+        'Ctrl' { return [uint16]0xA2 } 'Delete' { return [uint16]0x2E } 'Alt' { return [uint16]0xA4 } 'End' { return [uint16]0x23 } 'F2' { return [uint16]0x71 } 'F11' { return [uint16]0x7A }
         'Grave' { return [uint16]0xC0 } 'LeftBracket' { return [uint16]0xDB } 'RightBracket' { return [uint16]0xDD }
         default { return [uint16][char]$Key.ToUpper() }
     }

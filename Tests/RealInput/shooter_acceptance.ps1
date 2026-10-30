@@ -240,11 +240,17 @@ try {
     Step 11 'Reload works' ($during.reloading -eq '1' -and [int]$done.ammo -eq 15 -and [int]$done.reserve -lt [int]$low.reserve) "ammo $($low.ammo) reserve $($low.reserve), then $($done.ammo) and $($done.reserve)"
 
     # Sensor events: a crate pushed off the shelf lands in the bonus zone, a sensor, and scores.
+    # A light crate can bounce anywhere, so if one misses the zone the next is tried: what this checks is the sensor.
     $scoreBefore = [int](Get-State).score
-    Aim-At @(0, 2.92, -11.5)
-    Shoot 3
-    Start-Sleep -Milliseconds 1600
-    $scoreAfter = [int](Get-State).score
+    $scoreAfter = $scoreBefore
+    foreach ($x in 0, -0.8, 0.8, -1.6, 1.6) {
+        Reload-IfLow
+        Aim-At @($x, 2.92, -11.5)
+        Shoot 1
+        Start-Sleep -Milliseconds 1400
+        $scoreAfter = [int](Get-State).score
+        if ($scoreAfter -ge $scoreBefore + 50) { break }
+    }
     Save-Capture (Join-Path $Output '11_bonus_zone.jpg')
     Step 11 'A crate falling into the bonus zone scores through a sensor event' ($scoreAfter -ge $scoreBefore + 50) "score $scoreBefore to $scoreAfter"
 
