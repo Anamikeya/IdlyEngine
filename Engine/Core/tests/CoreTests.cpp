@@ -42,7 +42,7 @@ void creation_and_flecs() {
         ++count;
     });
     check(count == 1, "Entity not stored in Flecs");
-    check(registry().size() == 10, "Registry incomplete");
+    check(registry().size() == 12, "Registry incomplete");
     check(describe(Command{DeleteEntity{id}}).name == "entity.delete", "Typed registry mismatch");
 }
 void permissions_and_revision() {
@@ -163,6 +163,89 @@ void serialization_roundtrip() {
     std::ostringstream again;
     ok(write_scene(again, dest.snapshot()));
     check(again.str() == out.str(), "Serialization not deterministic");
+}
+void physics_components() {
+    Scene s;
+    CommandBus b(s);
+    RigidBodyComponent body;
+    body.kind = BodyKind::Kinematic;
+    body.linear_velocity = {1, 0.5, 0};
+    body.angular_damping = 0.25;
+    body.enable_sleep = false;
+    ColliderComponent floor;
+    floor.half_extents = {5, 0.5, 5};
+    floor.friction = 0.75;
+    ColliderComponent probe;
+    probe.shape = ColliderShape::Capsule;
+    probe.center = {0, 1, 0};
+    probe.radius = 0.25;
+    probe.half_height = 0.5;
+    probe.sensor = true;
+    probe.events = true;
+    const auto id = create(b, "Platform");
+    ok(b.execute(owner, b.revision(), SetRigidBody{id, body}));
+    ok(b.execute(owner, b.revision(), SetColliders{id, {floor, probe}}));
+    check(s.inspect(id)->components.body == body && s.inspect(id)->components.colliders == std::vector{floor, probe},
+          "Body and colliders stored");
+    int mirrored = 0;
+    s.ecs().native().each([&](const StableId &stable, const RigidBodyComponent &r) { mirrored += stable.value == id && r == body; });
+    check(mirrored == 1, "Rigid body mirrored into Flecs");
+    ok(b.execute(owner, b.revision(), SetColliders{id, {}}));
+    check(s.inspect(id)->components.colliders.empty(), "Empty list removes colliders");
+    ok(b.undo(owner, b.revision()));
+    check(s.inspect(id)->components.colliders.size() == 2, "Collider removal undoable");
+    // Text round trip, written as documented.
+    std::ostringstream out;
+    ok(write_scene(out, s.snapshot()));
+    check(out.str().find("BODY 1 kinematic 1 0.5 0 0 0 0 0 0.25 1 0 0\n") != std::string::npos &&
+              out.str().find("COLLIDER 1 box 0 0 0 0 0 0 1 5 0.5 5 0.5 0.5 1000 0.75 0 0 0\n") != std::string::npos &&
+              out.str().find("COLLIDER 1 capsule 0 1 0 0 0 0 1 0.5 0.5 0.5 0.25 0.5 1000 0.59999999999999998 0 1 1\n") != std::string::npos,
+          "Physics records not written as documented");
+    std::istringstream in(out.str());
+    auto loaded = read_scene(in);
+    ok(loaded);
+    check(loaded.value() == s.snapshot(), "Lossy physics serialization");
+    const std::string head = "ENGINE_SCENE 4 2 1 ENTITY 1 0 \"A\" 0 0 0 0 0 0 1 1 1 1 ";
+    const std::string ok_body = "BODY 1 dynamic 0 0 0 0 0 0 0 0 1 1 0";
+    const std::string ok_collider = "COLLIDER 1 sphere 0 0 0 0 0 0 1 0.5 0.5 0.5 0.5 0.5 1000 0.6 0 0 0";
+    for (const std::string &body_text : std::vector<std::string>
+         {"COMPONENTS 1 BODY 1 floating 0 0 0 0 0 0 0 0 1 1 0", "COMPONENTS 1 BODY 1 dynamic 0 0 0 0 0 0 -1 0 1 1 0",
+          "COMPONENTS 1 BODY 1 dynamic 0 0 0 0 0 0 0 0 1 2 0", "COMPONENTS 2 " + ok_body + " " + ok_body,
+          "COMPONENTS 1 COLLIDER 1 cone 0 0 0 0 0 0 1 0.5 0.5 0.5 0.5 0.5 1000 0.6 0 0 0",
+          "COMPONENTS 1 COLLIDER 1 sphere 0 0 0 0 0 0 1 0.5 0.5 0.5 0 0.5 1000 0.6 0 0 0",
+          "COMPONENTS 1 COLLIDER 1 sphere 0 0 0 0 0 0 0 0.5 0.5 0.5 0.5 0.5 1000 0.6 0 0 0",
+          "COMPONENTS 1 COLLIDER 1 sphere 0 0 0 0 0 0 1 0.5 0.5 0.5 0.5 0.5 1000 0.6 2 0 0",
+          "COMPONENTS 1 COLLIDER 1 sphere 0 0 0 0 0 0 1 0.5 0.5", "COMPONENTS 70"}) {
+        std::istringstream bad(head + body_text);
+        check(!read_scene(bad), "Malformed physics record accepted");
+    }
+    std::istringstream two(head + "COMPONENTS 3 " + ok_collider + " " + ok_body + " " + ok_collider);
+    auto parsed = read_scene(two);
+    ok(parsed);
+    check(parsed.value().entities[0].components.colliders.size() == 2 && parsed.value().entities[0].components.body,
+          "Several colliders and one body per entity");
+    // The example in docs/architecture/006-scene-format.md, verbatim: it loads and is what the writer emits.
+    const std::string documented = "ENGINE_SCENE 4 5 4\n"
+                                   "ENTITY 1 0 \"Ball\" 0 0.5 0 0 0 0 1 1 1 1\n"
+                                   "ENTITY 2 0 \"Sun\" 0 4 0 0 0 0 1 1 1 1\n"
+                                   "ENTITY 3 0 \"Camera\" 0 1.5 6 0 0 0 1 1 1 1\n"
+                                   "ENTITY 4 0 \"Floor\" 0 0 0 0 0 0 1 10 1 10\n"
+                                   "COMPONENTS 6\n"
+                                   "MESH 1 sphere 1 0.25 0.125 0.5 0\n"
+                                   "BODY 1 dynamic 0 0 0 0 0 0 0 0 1 1 0\n"
+                                   "COLLIDER 1 sphere 0 0 0 0 0 0 1 0.5 0.5 0.5 0.5 0.5 1000 0.75 0 0 0\n"
+                                   "LIGHT 2 directional 1 1 1 100000 10\n"
+                                   "CAMERA 3 60 0.10000000000000001 1000 1\n"
+                                   "COLLIDER 4 box 0 -0.5 0 0 0 0 1 0.5 0.5 0.5 0.5 0.5 1000 0.75 0 0 0\n";
+    std::istringstream example(documented);
+    auto example_scene = read_scene(example);
+    ok(example_scene);
+    std::ostringstream example_out;
+    ok(write_scene(example_out, example_scene.value()));
+    check(example_out.str() == documented, "Documented scene example differs from the writer's output");
+    // Physics records did not exist before version 4.
+    std::istringstream v3("ENGINE_SCENE 3 2 1 ENTITY 1 0 \"A\" 0 0 0 0 0 0 1 1 1 1 COMPONENTS 1 " + ok_body);
+    check(!read_scene(v3), "BODY accepted in a version 3 file");
 }
 void duplication() {
     Scene s;
@@ -287,7 +370,7 @@ void malformed_serialization() {
     for (const auto *text :
          {"WRONG 1 1 0", "ENGINE_SCENE 2 1 0", "ENGINE_SCENE 1 0 0", "ENGINE_SCENE 1 1 100001",
           "ENGINE_SCENE 1 1 0 trailing", "ENGINE_SCENE 1 2 1 ENTITY 1 0 \"x\" 0 0",
-          "ENGINE_SCENE 0 1 0", "ENGINE_SCENE 4 1 0 COMPONENTS 0", "ENGINE_SCENE 2 1 0 COMPONENTS",
+          "ENGINE_SCENE 0 1 0", "ENGINE_SCENE 5 1 0 COMPONENTS 0", "ENGINE_SCENE 2 1 0 COMPONENTS",
           "ENGINE_SCENE 2 1 0 COMPONENTS -1", "ENGINE_SCENE 2 1 0 COMPONENTS 1 MESH 1",
           "ENGINE_SCENE 2 1 0 COMPONENTS 0 trailing", "ENGINE_SCENE 1 1 0 COMPONENTS 0"}) {
         std::istringstream in(text);
@@ -559,6 +642,7 @@ int main() {
         {"serialization_roundtrip", serialization_roundtrip},
         {"components", components},
         {"duplication", duplication},
+        {"physics_components", physics_components},
         {"malformed_serialization", malformed_serialization},
         {"history_bound_and_noop", history_bound_and_noop},
         {"thread_boundary", thread_boundary},

@@ -13,6 +13,7 @@
 #include <glm/gtc/type_ptr.hpp>
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <chrono>
 #include <cstdio>
 #include <iostream>
@@ -70,6 +71,9 @@ struct EditorUI {
     Components components; // Draft of the selected entity's components, refreshed with the transform draft.
     int operation = 0, coordinates = 0;
     bool gizmo_active = false;
+    bool show_colliders = true;
+    std::set<std::string> reported_issues; // Physics issues already in the Console; re-reported if they return.
+    std::string reported_physics_error;
     EntityId gizmo_id = 0;
     float gizmo_matrix[16]{};
     renderer::Frame frame;
@@ -91,6 +95,19 @@ struct EditorUI {
         const glm::dquat q(glm::radians(glm::dvec3(pitch_degrees, yaw_degrees, 0)));
         return {position, {q.x, q.y, q.z, q.w}, {1,1,1}};
     }
+    // A collider matching a built-in mesh. The plane's is a thin box whose top face is the plane itself.
+    static ColliderComponent fitted_collider(BuiltinMesh mesh) {
+        ColliderComponent k;
+        if (mesh == BuiltinMesh::Sphere) k.shape = ColliderShape::Sphere;
+        if (mesh == BuiltinMesh::Plane) { k.half_extents = {0.5, 0.05, 0.5}; k.center = {0, -0.05, 0}; }
+        return k;
+    }
+    static Components physical(BuiltinMesh mesh) {
+        Components c{MeshComponent{mesh}, {}, {}};
+        c.body = RigidBodyComponent{};
+        c.colliders = {fitted_collider(mesh)};
+        return c;
+    }
     void create_menu() {
         if (!ImGui::BeginPopup("Create")) return;
         if (ImGui::MenuItem("Cube")) spawn("Cube", {MeshComponent{BuiltinMesh::Cube}, {}, {}});
@@ -103,6 +120,14 @@ struct EditorUI {
         // a few meters away; the Inspector shows the physical value.
         if (ImGui::MenuItem("Point Light")) spawn("Point Light", {{}, {}, LightComponent{LightType::Point, {1,1,1}, 1500000, 10}}, {{0,2,0}, {}, {1,1,1}});
         if (ImGui::MenuItem("Camera")) spawn("Camera", {{}, CameraComponent{}, {}}, aimed({0,1.5,6}, -8, 0));
+        ImGui::Separator();
+        if (ImGui::MenuItem("Falling Cube")) spawn("Falling Cube", physical(BuiltinMesh::Cube), {{0,3,0}, {}, {1,1,1}});
+        if (ImGui::MenuItem("Falling Sphere")) spawn("Falling Sphere", physical(BuiltinMesh::Sphere), {{0,3,0}, {}, {1,1,1}});
+        if (ImGui::MenuItem("Floor")) {
+            Components floor{MeshComponent{BuiltinMesh::Plane}, {}, {}};
+            floor.colliders = {fitted_collider(BuiltinMesh::Plane)};
+            spawn("Floor", std::move(floor), {{0,0,0}, {}, {10,1,10}});
+        }
         ImGui::EndPopup();
     }
     std::string title() const {
@@ -194,6 +219,7 @@ struct EditorUI {
         ImGui::SetNextItemWidth(490); ImGui::InputText("Scene file", scene_path.data(), scene_path.size());
         ImGui::SameLine(); ImGui::SetNextItemWidth(110); ImGui::Combo("##operation", &operation, "Move\0Rotate\0Scale\0");
         ImGui::SameLine(); ImGui::SetNextItemWidth(100); ImGui::Combo("##coordinates", &coordinates, "Local\0World\0");
+        ImGui::SameLine(); ImGui::Checkbox("Colliders", &show_colliders);
         ImGui::End();
     }
     // ---- Scene Hierarchy: a tree in stable-ID order. Drag a row onto another to parent it there, or onto the
@@ -247,9 +273,12 @@ struct EditorUI {
             ImGui::EndPopup();
         }
         const auto &c = e.components;
-        if (c.light || c.camera) {
-            ImGui::SameLine(); ImGui::TextDisabled("%s%s", c.light ? (c.light->type == LightType::Point ? " point light" : " directional light") : "",
-                                                   c.camera ? (c.camera->primary ? " camera (primary)" : " camera") : "");
+        if (c.light || c.camera || c.body || !c.colliders.empty()) {
+            ImGui::SameLine();
+            ImGui::TextDisabled("%s%s%s", c.light ? (c.light->type == LightType::Point ? " point light" : " directional light") : "",
+                                c.camera ? (c.camera->primary ? " camera (primary)" : " camera") : "",
+                                c.body ? (c.body->kind == BodyKind::Dynamic ? " dynamic" : c.body->kind == BodyKind::Kinematic ? " kinematic" : " static")
+                                       : !c.colliders.empty() ? " collider" : "");
         }
         if (open && !leaf) {
             for (const auto child : kids->second) tree_node(child, open_path);
@@ -280,7 +309,9 @@ struct EditorUI {
         ImGui::Begin("Inspector");
         const auto record = session.scene().inspect(session.selection());
         if (!record) { ImGui::TextWrapped("Select an entity in the hierarchy, or click an object or a light/camera marker in the viewport."); ImGui::End(); return; }
-        if (draft_id != record->id || draft_scene != session.scene_identity() || draft_revision != session.scene_revision()) {
+        // Physics changes the revision every tick in Play mode; a field being edited keeps its value until released.
+        if (draft_id != record->id || draft_scene != session.scene_identity() ||
+            (draft_revision != session.scene_revision() && !ImGui::IsAnyItemActive())) {
             draft_id = record->id; draft_scene = session.scene_identity(); draft_revision = session.scene_revision();
             std::snprintf(name.data(), name.size(), "%s", record->name.c_str());
             const auto &t = record->transform;
@@ -332,13 +363,20 @@ struct EditorUI {
     static bool color_edit(const char *label, Vec3 &c) {
         float v[3]{float(c.x), float(c.y), float(c.z)};
         const bool changed = ImGui::ColorEdit3(label, v, ImGuiColorEditFlags_Float);
-        c = {std::clamp(double(v[0]), 0.0, 1.0), std::clamp(double(v[1]), 0.0, 1.0), std::clamp(double(v[2]), 0.0, 1.0)};
+        if (changed) c = {std::clamp(double(v[0]), 0.0, 1.0), std::clamp(double(v[1]), 0.0, 1.0), std::clamp(double(v[2]), 0.0, 1.0)};
         return committed(changed);
     }
     static bool drag(const char *label, double &value, float speed, double low, double high, const char *format = "%.3f") {
         float v = float(value);
         const bool changed = ImGui::DragFloat(label, &v, speed, float(low), float(high), format, ImGuiSliderFlags_AlwaysClamp);
-        value = v;
+        if (changed) value = v;
+        return committed(changed);
+    }
+    // No clamp when low == high.
+    static bool drag3(const char *label, Vec3 &value, float speed, float low = 0, float high = 0) {
+        float v[3]{float(value.x), float(value.y), float(value.z)};
+        const bool changed = ImGui::DragFloat3(label, v, speed, low, high, "%.3f", low < high ? ImGuiSliderFlags_AlwaysClamp : ImGuiSliderFlags_None);
+        if (changed) value = {v[0], v[1], v[2]};
         return committed(changed);
     }
     // Runs a component command and re-reads the drafts, so a rejected edit does not linger in the Inspector.
@@ -382,13 +420,98 @@ struct EditorUI {
             if (commit) apply(commands::SetLight{record.id, l}, "Light changed");
             if (remove_button("light")) apply(commands::SetLight{record.id, std::nullopt}, "Light removed");
         }
+        physics_sections(record);
         ImGui::Spacing();
         if (ImGui::Button("Add Component")) ImGui::OpenPopup("Add Component");
         if (ImGui::BeginPopup("Add Component")) {
             if (ImGui::MenuItem("Mesh Renderer", nullptr, false, !c.mesh)) apply(commands::SetMesh{record.id, MeshComponent{}}, "Mesh renderer added");
             if (ImGui::MenuItem("Camera", nullptr, false, !c.camera)) apply(commands::SetCamera{record.id, CameraComponent{}}, "Camera added");
             if (ImGui::MenuItem("Light", nullptr, false, !c.light)) apply(commands::SetLight{record.id, LightComponent{}}, "Light added");
+            if (ImGui::MenuItem("Rigid Body", nullptr, false, !c.body)) apply(commands::SetRigidBody{record.id, RigidBodyComponent{}}, "Rigid body added");
+            if (ImGui::MenuItem("Collider (fitted to mesh)", nullptr, false, c.colliders.size() < max_colliders_per_entity)) {
+                auto list = c.colliders;
+                list.push_back(fitted_collider(c.mesh ? c.mesh->mesh : BuiltinMesh::Cube));
+                apply(commands::SetColliders{record.id, std::move(list)}, "Collider added");
+            }
             ImGui::EndPopup();
+        }
+    }
+    void physics_sections(const EntityRecord &record) {
+        auto &c = components;
+        if (c.body) {
+            ImGui::SeparatorText("Rigid Body");
+            auto &b = *c.body; bool commit = false;
+            int kind = int(b.kind) - 1;
+            if (ImGui::Combo("Body type", &kind, "Static\0Kinematic\0Dynamic\0")) { b.kind = BodyKind(kind + 1); commit = true; }
+            commit |= drag3("Initial velocity", b.linear_velocity, 0.05f);
+            commit |= drag3("Initial spin", b.angular_velocity, 0.05f);
+            commit |= drag("Linear damping", b.linear_damping, 0.01f, 0, 100);
+            commit |= drag("Angular damping", b.angular_damping, 0.01f, 0, 100);
+            commit |= drag("Gravity scale", b.gravity_scale, 0.01f, -100, 100);
+            commit |= ImGui::Checkbox("Can sleep", &b.enable_sleep);
+            commit |= ImGui::Checkbox("Continuous collision", &b.is_bullet);
+            if (commit) apply(commands::SetRigidBody{record.id, b}, "Rigid body changed");
+            if (c.colliders.empty()) ImGui::TextColored({0.95f, 0.75f, 0.3f, 1}, "No colliders: this body will not collide.");
+            if (playing())
+                if (const auto state = session.physics_bridge().body_state(record.id)) {
+                    const auto &v = state->linear_velocity;
+                    ImGui::TextDisabled("Speed %.2f m/s, mass %.1f kg, %s", std::sqrt(v.x * v.x + v.y * v.y + v.z * v.z), state->mass, state->awake ? "awake" : "asleep");
+                }
+            if (remove_button("body")) apply(commands::SetRigidBody{record.id, std::nullopt}, "Rigid body removed");
+        }
+        for (std::size_t i = 0; i < c.colliders.size(); ++i) {
+            ImGui::PushID(int(i));
+            ImGui::SeparatorText(("Collider " + std::to_string(i + 1) + (c.body ? "" : " (static)")).c_str());
+            auto &k = c.colliders[i]; bool commit = false;
+            int shape = int(k.shape) - 1;
+            if (ImGui::Combo("Shape", &shape, "Sphere\0Box\0Capsule\0")) { k.shape = ColliderShape(shape + 1); commit = true; }
+            commit |= drag3("Center", k.center, 0.01f);
+            if (k.shape == ColliderShape::Box) commit |= drag3("Half extents", k.half_extents, 0.01f, 0.001f, 10000);
+            else commit |= drag("Radius", k.radius, 0.01f, 0.001, 10000);
+            if (k.shape == ColliderShape::Capsule) commit |= drag("Half height", k.half_height, 0.01f, 0, 10000);
+            if (k.shape != ColliderShape::Sphere) {
+                const auto euler = glm::degrees(glm::eulerAngles(glm::dquat(k.rotation.w, k.rotation.x, k.rotation.y, k.rotation.z)));
+                float r[3]{float(euler.x), float(euler.y), float(euler.z)};
+                if (ImGui::DragFloat3("Local rotation", r, 0.5f)) {
+                    const glm::dquat q(glm::radians(glm::dvec3(r[0], r[1], r[2])));
+                    k.rotation = {q.x, q.y, q.z, q.w};
+                }
+                commit |= ImGui::IsItemDeactivatedAfterEdit();
+            }
+            commit |= drag("Density", k.density, 10.0f, 0, 100000, "%.0f kg/m3");
+            commit |= drag("Friction", k.friction, 0.01f, 0, 10);
+            commit |= drag("Restitution", k.restitution, 0.01f, 0, 1);
+            commit |= ImGui::Checkbox("Sensor", &k.sensor);
+            ImGui::SameLine(); commit |= ImGui::Checkbox("Report events", &k.events);
+            if (commit) apply(commands::SetColliders{record.id, c.colliders}, "Collider changed");
+            const bool removed = remove_button("collider");
+            ImGui::PopID();
+            if (removed) {
+                auto list = c.colliders;
+                list.erase(list.begin() + std::ptrdiff_t(i));
+                apply(commands::SetColliders{record.id, std::move(list)}, "Collider removed");
+                break;
+            }
+        }
+        for (const auto &issue : session.physics_bridge().diagnostics().issues)
+            if (issue.entity == record.id) {
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.45f, 0.35f, 1));
+                ImGui::TextWrapped("Physics: %s", issue.message.c_str());
+                ImGui::PopStyleColor();
+            }
+    }
+    // Puts physics problems in the Console once, when they appear.
+    void report_physics() {
+        std::set<std::string> current;
+        for (const auto &issue : session.physics_bridge().diagnostics().issues) {
+            const auto record = session.scene().inspect(issue.entity);
+            current.insert("Physics: " + (record ? record->name : std::to_string(issue.entity)) + ": " + issue.message);
+        }
+        for (const auto &message : current) if (!reported_issues.contains(message)) log(message);
+        reported_issues = std::move(current);
+        if (session.physics_error() != reported_physics_error) {
+            reported_physics_error = session.physics_error();
+            if (!reported_physics_error.empty()) log("Error: " + reported_physics_error);
         }
     }
     void viewport() {
@@ -431,6 +554,8 @@ struct EditorUI {
             }
             gizmo_active = using_now;
         } else gizmo_active = false;
+        if (show_colliders) collider_outlines(origin, size);
+        report_physics();
         const EntityId marker = markers(origin, size);
         if (hovered && ImGui::IsMouseClicked(0) && !ImGuizmo::IsOver() && !gizmo_active)
             session.select(marker ? marker : session.pick(*frame, (io.MousePos.x-origin.x) / size.x * 2-1, 1-(io.MousePos.y-origin.y) / size.y * 2));
@@ -450,14 +575,26 @@ struct EditorUI {
             draw->AddText({origin.x+12,origin.y+size.y-24}, IM_COL32(150,160,175,255), "No lights in the scene: editor lighting is used");
         ImGui::End();
     }
+    // Screen position of a world point in the current frame; empty behind the camera.
+    std::optional<ImVec2> project(glm::dvec3 p, ImVec2 origin, ImVec2 size) const {
+        const auto clip = glm::make_mat4(frame->camera.projection.matrix.data()) * glm::make_mat4(frame->camera.view.matrix.data()) * glm::dvec4(p, 1);
+        if (clip.w <= 1e-6) return std::nullopt;
+        return ImVec2(origin.x + float((clip.x / clip.w + 1) / 2) * size.x, origin.y + float((1 - clip.y / clip.w) / 2) * size.y);
+    }
+    // Collider wireframes from the physics bridge, drawn over the image without depth testing (contract C-4a).
+    // An edge with an end behind the camera is skipped rather than clipped.
+    void collider_outlines(ImVec2 origin, ImVec2 size) {
+        auto *draw = ImGui::GetWindowDrawList();
+        for (const auto &line : session.physics_bridge().debug_geometry().lines) {
+            const auto a = project({line.a.x, line.a.y, line.a.z}, origin, size), b = project({line.b.x, line.b.y, line.b.z}, origin, size);
+            if (!a || !b) continue;
+            const auto c = physics::default_color(line.category);
+            draw->AddLine(*a, *b, ImGui::ColorConvertFloat4ToU32({c[0], c[1], c[2], c[3]}));
+        }
+    }
     // Lights and cameras have no mesh, so they get clickable screen-space markers. Returns the hovered one.
     EntityId markers(ImVec2 origin, ImVec2 size) {
-        const auto view_projection = glm::make_mat4(frame->camera.projection.matrix.data()) * glm::make_mat4(frame->camera.view.matrix.data());
-        const auto project = [&](glm::dvec3 p) -> std::optional<ImVec2> {
-            const auto clip = view_projection * glm::dvec4(p, 1);
-            if (clip.w <= 1e-6) return std::nullopt;
-            return ImVec2(origin.x + float((clip.x / clip.w + 1) / 2) * size.x, origin.y + float((1 - clip.y / clip.w) / 2) * size.y);
-        };
+        const auto project = [&](glm::dvec3 p) { return this->project(p, origin, size); };
         auto *draw = ImGui::GetWindowDrawList();
         const auto mouse = ImGui::GetIO().MousePos;
         EntityId hovered = 0;

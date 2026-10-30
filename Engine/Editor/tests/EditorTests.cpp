@@ -155,6 +155,88 @@ void play_mode() {
     ok(s.stop());
     ok(s.undo()); check(s.scene().size() == 0, "editor history still works after Play");
 }
+// A dynamic crate dropped on a static floor in Play mode; Stop restores the editor scene exactly.
+void physics_play() {
+    EditorSession s;
+    Components floor; floor.mesh = MeshComponent{BuiltinMesh::Plane};
+    ColliderComponent slab; slab.half_extents = {0.5, 0.05, 0.5}; slab.center = {0, -0.05, 0};
+    floor.colliders = {slab};
+    ok(s.create("Floor", 0, floor)); const auto floor_id = s.selection();
+    Transform wide; wide.scale = {10, 1, 10}; ok(s.execute(commands::SetTransform{floor_id, wide}));
+    Components crate; crate.mesh = MeshComponent{}; crate.body = RigidBodyComponent{}; crate.colliders = {ColliderComponent{}};
+    ok(s.create("Crate", 0, crate)); const auto id = s.selection();
+    Transform high; high.position = {0, 3, 0}; ok(s.execute(commands::SetTransform{id, high}));
+    const auto y = [&] { return s.scene().world_transform(id)->matrix[13]; };
+    // The edit-mode bridge mirrors the scene but never steps it.
+    ok(s.frame(1));
+    auto d = s.physics_bridge().diagnostics();
+    check(d.active_bodies == 2 && !d.simulation_enabled && d.issues.empty(), "edit-mode bridge mirrors the scene");
+    check(s.physics_bridge().debug_geometry().lines.size() == 24, "collider outlines available while editing");
+    s.update(EditorSession::fixed_step * 3); ok(s.frame(1));
+    check(y() == 3 && s.physics_bridge().diagnostics().simulated_ticks == 0, "nothing simulates outside Play");
+    const auto before = s.editor_scene().snapshot(); const auto revision = s.commands().revision();
+    const auto history = s.commands().undo_size(); const auto was_dirty = s.dirty();
+    // Drop and land.
+    ok(s.play());
+    for (int i = 0; i < 240; ++i) s.update(EditorSession::fixed_step);
+    check(s.runtime_ticks() == 240 && s.physics_bridge().diagnostics().simulated_ticks == 240, "one physics step per tick");
+    check(std::abs(y() - 0.5) < 0.02, "crate rests on the floor");
+    check(s.physics_error().empty(), "no physics failure");
+    check(s.editor_scene().snapshot() == before && s.commands().revision() == revision, "editor scene untouched while simulating");
+    ok(s.stop());
+    check(s.scene().snapshot() == before && s.commands().revision() == revision && s.commands().undo_size() == history && s.dirty() == was_dirty,
+          "Stop restores the editor scene exactly");
+    check(!s.physics_bridge().diagnostics().simulation_enabled, "edit-mode bridge back in charge");
+    // A second Play restarts from the authored pose; Pause freezes it; Step advances one physics tick.
+    ok(s.play()); check(y() == 3, "Play restarts from the editor scene");
+    for (int i = 0; i < 30; ++i) s.update(EditorSession::fixed_step);
+    const auto falling = y(); check(falling < 2.5, "crate falls");
+    ok(s.pause());
+    s.update(EditorSession::fixed_step * 10); check(y() == falling, "paused physics does not move");
+    ok(s.step()); check(y() < falling, "Step advances physics");
+    check(s.physics_bridge().body_state(id)->linear_velocity.y < -1, "bridge reports the body's velocity");
+    ok(s.play());
+    // An edit during Play teleports the body and physics carries on from there.
+    auto lifted = s.scene().inspect(id)->transform; lifted.position.y = 10;
+    ok(s.execute(commands::SetTransform{id, lifted}));
+    s.update(EditorSession::fixed_step); check(y() > 9.5 && y() < 10, "runtime edit teleports the body");
+    ok(s.stop()); check(s.scene().snapshot() == before, "runtime edits discarded");
+    // Authored initial velocity applies when Play starts, and body edits are undoable.
+    RigidBodyComponent thrown; thrown.linear_velocity = {2, 0, 0};
+    ok(s.execute(commands::SetRigidBody{id, thrown}));
+    ok(s.play()); for (int i = 0; i < 30; ++i) s.update(EditorSession::fixed_step);
+    check(s.scene().world_transform(id)->matrix[12] > 0.9, "initial velocity applied");
+    ok(s.stop()); ok(s.undo());
+    check(s.scene().inspect(id)->components.body == RigidBodyComponent{}, "body edit undone");
+    // Unsupported setups are reported by both bridges rather than simulated.
+    ok(s.create("Nested", id, crate)); const auto nested = s.selection();
+    ok(s.frame(1));
+    d = s.physics_bridge().diagnostics();
+    check(d.issues.size() == 1 && d.issues[0].entity == nested, "edit-mode bridge reports the issue");
+    ok(s.play()); s.update(EditorSession::fixed_step);
+    d = s.physics_bridge().diagnostics();
+    check(d.issues.size() == 1 && d.issues[0].entity == nested && !s.physics_bridge().body_state(nested), "runtime bridge reports it too");
+    ok(s.stop()); ok(s.undo());
+    // A world-preserving reparent under a dynamic body is reported too, and clears when undone.
+    ok(s.create("Loose", 0, crate)); const auto loose = s.selection();
+    ok(s.frame(1)); check(s.physics_bridge().diagnostics().issues.empty(), "loose body is fine");
+    ok(s.reparent(loose, id)); ok(s.frame(1));
+    d = s.physics_bridge().diagnostics();
+    check(d.issues.size() == 1 && d.issues[0].entity == loose, "reparenting under a dynamic body is reported");
+    ok(s.undo()); ok(s.frame(1));
+    check(s.physics_bridge().diagnostics().issues.empty() && s.physics_bridge().body_state(loose), "undo clears the issue");
+    ok(s.undo());
+    // Physics components travel with duplicates and scene files.
+    const auto path = test_directory() / "physics.scene";
+    const auto saved = s.editor_scene().snapshot();
+    ok(s.save(path)); ok(s.new_scene()); ok(s.frame(1));
+    check(s.physics_bridge().diagnostics().authored_entities == 0, "New Scene drops the bodies");
+    ok(s.load(path)); ok(s.frame(1));
+    check(s.editor_scene().snapshot().entities == saved.entities && s.physics_bridge().diagnostics().active_bodies == 2, "physics saved and loaded");
+    std::filesystem::remove(path);
+    ok(s.duplicate(id)); ok(s.frame(1));
+    check(s.scene().inspect(s.selection())->components == crate && s.physics_bridge().diagnostics().active_bodies == 3, "duplicates keep physics");
+}
 // The Milestone 3 acceptance workflow, without a window: new scene, add a cube, move/rotate/scale it with
 // world-space (gizmo) edits, edit its local transform (Inspector), save, reopen in a new session, load,
 // compare, play, stop, compare.
@@ -346,8 +428,8 @@ void hierarchy_editing() {
 }
 }
 int main() {
-    try { editing(); persistence(); camera_and_picking(); world_edits(); documents(); play_mode(); components_and_rendering(); hierarchy_editing();
+    try { editing(); persistence(); camera_and_picking(); world_edits(); documents(); play_mode(); components_and_rendering(); hierarchy_editing(); physics_play();
         acceptance_workflow(); external_camera_validation();
-        std::cout << "10 editor acceptance groups passed\n"; return 0;
+        std::cout << "11 editor acceptance groups passed\n"; return 0;
     } catch (const std::exception &e) { std::cerr << e.what() << '\n'; return 1; }
 }

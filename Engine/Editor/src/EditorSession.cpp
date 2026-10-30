@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <cmath>
 #include <fstream>
+#include <stdexcept>
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/quaternion.hpp>
@@ -78,11 +79,24 @@ WorldTransform OrbitCamera::world() const {
 struct EditorSession::Runtime {
     Scene scene;
     commands::CommandBus bus{scene, 0}; // Runtime edits are discarded on stop, so they keep no history.
+    std::unique_ptr<physics::ScenePhysics> physics; // Destroyed before the bus and scene (C-3).
     bool paused = false;
     std::uint64_t ticks = 0;
     std::chrono::nanoseconds accumulated{0};
 };
-EditorSession::EditorSession() = default;
+namespace {
+std::unique_ptr<physics::ScenePhysics> make_physics(bool simulate) {
+    physics::WorldConfig config;
+    config.fixed_timestep = EditorSession::fixed_step;
+    auto created = physics::ScenePhysics::create(config);
+    if (!created) throw std::runtime_error("Physics world creation failed: " + created.error().message);
+    auto result = std::make_unique<physics::ScenePhysics>(std::move(created.value()));
+    result->set_simulation_enabled(simulate);
+    return result;
+}
+const commands::Context physics_context{"physics", 3};
+}
+EditorSession::EditorSession() : edit_physics_(make_physics(false)) {}
 EditorSession::~EditorSession() = default;
 const Scene &EditorSession::scene() const { return runtime_ ? runtime_->scene : scene_; }
 void EditorSession::reconcile() { if (!scene().inspect(selected_)) selected_ = 0; }
@@ -227,6 +241,7 @@ void EditorSession::focus() {
     }
 }
 Result<renderer::Frame> EditorSession::frame(double aspect) {
+    sync_physics();
     const auto &shown = scene();
     const auto entities = shown.snapshot().entities;
     std::vector<renderer::MeshBinding> meshes;
@@ -266,7 +281,9 @@ Result<void> EditorSession::play() {
     auto runtime = std::make_unique<Runtime>();
     auto copied = runtime->bus.execute(context_, 0, commands::ReplaceScene{scene_.snapshot()});
     if (!copied) return copied.error();
+    runtime->physics = make_physics(true);
     runtime_ = std::move(runtime);
+    physics_error_.clear();
     ++play_sessions_;
     reconcile();
     return {};
@@ -278,12 +295,14 @@ Result<void> EditorSession::pause() {
 }
 Result<void> EditorSession::step() {
     if (!runtime_ || !runtime_->paused) return fail(ErrorCode::InvalidState, "Step requires paused Play mode");
-    ++runtime_->ticks;
+    tick();
+    if (!physics_error_.empty()) return fail(ErrorCode::InvalidState, physics_error_);
     return {};
 }
 Result<void> EditorSession::stop() {
     if (!runtime_) return fail(ErrorCode::InvalidState, "Not in Play mode");
     runtime_.reset();
+    physics_error_.clear();
     reconcile();
     return {};
 }
@@ -291,13 +310,26 @@ void EditorSession::update(std::chrono::nanoseconds elapsed) {
     if (!runtime_ || runtime_->paused || elapsed.count() <= 0) return;
     auto &r = *runtime_;
     r.accumulated += elapsed;
-    // Runtime systems run once per fixed tick; none are connected to the runtime scene yet.
     int ticks = 0;
-    while (r.accumulated >= fixed_step && ticks < max_ticks_per_update) { r.accumulated -= fixed_step; ++r.ticks; ++ticks; }
+    while (r.accumulated >= fixed_step && ticks < max_ticks_per_update && !r.paused) { r.accumulated -= fixed_step; tick(); ++ticks; }
     // A long stall (breakpoint, window drag) drops the backlog instead of catching up in a burst.
     if (ticks == max_ticks_per_update) r.accumulated = std::min(r.accumulated, fixed_step);
 }
 std::uint64_t EditorSession::runtime_ticks() const { return runtime_ ? runtime_->ticks : 0; }
+// One fixed tick of the runtime scene: physics syncs, steps and publishes dynamic poses (C-3).
+void EditorSession::tick() {
+    auto &r = *runtime_;
+    ++r.ticks;
+    if (auto report = r.physics->fixed_update(fixed_step, r.scene, r.bus, physics_context); !report) {
+        physics_error_ = "Physics stopped: " + report.error().message;
+        r.paused = true;
+    }
+    reconcile();
+}
+void EditorSession::sync_physics() {
+    if (!runtime_) (void)edit_physics_->sync(scene_); // Only fails off the owner thread.
+}
+const physics::ScenePhysics &EditorSession::physics_bridge() const { return runtime_ ? *runtime_->physics : *edit_physics_; }
 EntityId EditorSession::pick(const renderer::FrameSnapshot &frame, double x, double y) const {
     const auto inv = glm::inverse(glm::make_mat4(frame.camera.projection.matrix.data()) * glm::make_mat4(frame.camera.view.matrix.data()));
     auto a = inv * glm::dvec4(x, y, -1, 1), b = inv * glm::dvec4(x, y, 1, 1);

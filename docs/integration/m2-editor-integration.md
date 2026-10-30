@@ -1,3 +1,7 @@
+> **Superseded in part (Milestone 3, slice S4).** Physics authoring now goes through scene commands
+> (`SetRigidBody`, `SetColliders`), not `ScenePhysics` setters, and `detached_entities` no longer exists. See
+> `docs/integration/m2-contracts.md`. The physics snippets below describe the Milestone 2 API.
+
 # Editor integration examples (physics and assets)
 
 Audience: Codex, for the ImGui editor host and panels. Contracts are in [m2-contracts.md](m2-contracts.md).

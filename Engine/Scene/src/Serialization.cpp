@@ -103,6 +103,28 @@ const char *mesh_token(BuiltinMesh mesh) {
         return "cube";
     }
 }
+const char *body_token(BodyKind kind) {
+    return kind == BodyKind::Static ? "static" : kind == BodyKind::Kinematic ? "kinematic" : "dynamic";
+}
+bool parse_body(const std::string &token, BodyKind &kind) {
+    for (auto candidate : {BodyKind::Static, BodyKind::Kinematic, BodyKind::Dynamic})
+        if (token == body_token(candidate)) {
+            kind = candidate;
+            return true;
+        }
+    return false;
+}
+const char *shape_token(ColliderShape shape) {
+    return shape == ColliderShape::Sphere ? "sphere" : shape == ColliderShape::Capsule ? "capsule" : "box";
+}
+bool parse_shape(const std::string &token, ColliderShape &shape) {
+    for (auto candidate : {ColliderShape::Sphere, ColliderShape::Box, ColliderShape::Capsule})
+        if (token == shape_token(candidate)) {
+            shape = candidate;
+            return true;
+        }
+    return false;
+}
 bool parse_mesh(const std::string &token, BuiltinMesh &mesh) {
     for (auto candidate : {BuiltinMesh::Cube, BuiltinMesh::Sphere, BuiltinMesh::Plane})
         if (token == mesh_token(candidate)) {
@@ -129,11 +151,13 @@ Result<void> write_scene(std::ostream &out, const SceneSnapshot &s) {
                 << ' ' << t.rotation.y << ' ' << t.rotation.z << ' ' << t.rotation.w << ' '
                 << t.scale.x << ' ' << t.scale.y << ' ' << t.scale.z << '\n';
         }
-        // docs/architecture/006-scene-format.md. Sorted by entity, then MESH, CAMERA, LIGHT.
+        // docs/architecture/006-scene-format.md. Sorted by entity, then MESH, CAMERA, LIGHT, BODY,
+        // COLLIDER (colliders in list order).
         std::size_t components = 0;
         for (const auto &e : s.entities)
             components += e.components.mesh.has_value() + e.components.camera.has_value() +
-                          e.components.light.has_value();
+                          e.components.light.has_value() + e.components.body.has_value() +
+                          e.components.colliders.size();
         out << "COMPONENTS " << components << '\n';
         for (const auto &e : s.entities) {
             if (const auto &m = e.components.mesh)
@@ -148,6 +172,20 @@ Result<void> write_scene(std::ostream &out, const SceneSnapshot &s) {
                     << (l->type == LightType::Point ? "point" : "directional") << ' ' << l->color.x
                     << ' ' << l->color.y << ' ' << l->color.z << ' ' << l->intensity << ' '
                     << l->range << '\n';
+            if (const auto &b = e.components.body)
+                out << "BODY " << e.id << ' ' << body_token(b->kind) << ' ' << b->linear_velocity.x
+                    << ' ' << b->linear_velocity.y << ' ' << b->linear_velocity.z << ' '
+                    << b->angular_velocity.x << ' ' << b->angular_velocity.y << ' '
+                    << b->angular_velocity.z << ' ' << b->linear_damping << ' ' << b->angular_damping
+                    << ' ' << b->gravity_scale << ' ' << (b->enable_sleep ? 1 : 0) << ' '
+                    << (b->is_bullet ? 1 : 0) << '\n';
+            for (const auto &k : e.components.colliders)
+                out << "COLLIDER " << e.id << ' ' << shape_token(k.shape) << ' ' << k.center.x << ' '
+                    << k.center.y << ' ' << k.center.z << ' ' << k.rotation.x << ' ' << k.rotation.y
+                    << ' ' << k.rotation.z << ' ' << k.rotation.w << ' ' << k.half_extents.x << ' '
+                    << k.half_extents.y << ' ' << k.half_extents.z << ' ' << k.radius << ' '
+                    << k.half_height << ' ' << k.density << ' ' << k.friction << ' ' << k.restitution
+                    << ' ' << (k.sensor ? 1 : 0) << ' ' << (k.events ? 1 : 0) << '\n';
         }
         if (!out)
             return fail(ErrorCode::ParseError, "Scene output stream failed");
@@ -188,8 +226,10 @@ Result<SceneSnapshot> read_scene(std::istream &in) {
             std::size_t components = 0;
             if (!reader.token(word, 10) || word != "COMPONENTS" || !reader.number(components))
                 return fail(ErrorCode::ParseError, "Missing or malformed COMPONENTS section");
-            // Version 2 defined no component kinds; version 3 allows one of each kind per entity.
-            if (components > (version >= 3 ? 3 * s.entities.size() : 0))
+            // Version 2 defined no component kinds; version 3 allows one MESH, CAMERA and LIGHT per entity;
+            // version 4 adds one BODY and up to max_colliders_per_entity COLLIDER records.
+            const std::size_t per_entity = version >= 4 ? 4 + max_colliders_per_entity : version >= 3 ? 3 : 0;
+            if (components > per_entity * s.entities.size())
                 return fail(ErrorCode::ParseError, "Too many component records");
             std::map<EntityId, std::size_t> index;
             for (std::size_t i = 0; i < s.entities.size(); ++i)
@@ -199,7 +239,8 @@ Result<SceneSnapshot> read_scene(std::istream &in) {
                 if (!reader.token(word, 16))
                     return fail(ErrorCode::ParseError, "Malformed component record");
                 const std::string kind = word;
-                if (kind != "MESH" && kind != "CAMERA" && kind != "LIGHT")
+                const bool physics = kind == "BODY" || kind == "COLLIDER";
+                if ((kind != "MESH" && kind != "CAMERA" && kind != "LIGHT" && !physics) || (physics && version < 4))
                     return fail(ErrorCode::ParseError, "Unsupported component kind '" + kind + "'");
                 if (!reader.number(id) || !index.contains(id))
                     return fail(ErrorCode::ParseError, kind + " record names a missing entity");
@@ -222,6 +263,37 @@ Result<SceneSnapshot> read_scene(std::istream &in) {
                              (primary == 0 || primary == 1);
                     cam.primary = primary == 1;
                     c.camera = cam;
+                } else if (kind == "BODY") {
+                    RigidBodyComponent b;
+                    int sleep = -1, bullet = -1;
+                    duplicate = c.body.has_value();
+                    parsed = reader.token(word, 16) && parse_body(word, b.kind) &&
+                             reader.number(b.linear_velocity.x) && reader.number(b.linear_velocity.y) &&
+                             reader.number(b.linear_velocity.z) && reader.number(b.angular_velocity.x) &&
+                             reader.number(b.angular_velocity.y) && reader.number(b.angular_velocity.z) &&
+                             reader.number(b.linear_damping) && reader.number(b.angular_damping) &&
+                             reader.number(b.gravity_scale) && reader.number(sleep) && reader.number(bullet) &&
+                             (sleep == 0 || sleep == 1) && (bullet == 0 || bullet == 1);
+                    b.enable_sleep = sleep == 1;
+                    b.is_bullet = bullet == 1;
+                    c.body = b;
+                } else if (kind == "COLLIDER") {
+                    ColliderComponent k;
+                    int sensor = -1, events = -1;
+                    duplicate = c.colliders.size() >= max_colliders_per_entity;
+                    parsed = reader.token(word, 16) && parse_shape(word, k.shape) && reader.number(k.center.x) &&
+                             reader.number(k.center.y) && reader.number(k.center.z) &&
+                             reader.number(k.rotation.x) && reader.number(k.rotation.y) &&
+                             reader.number(k.rotation.z) && reader.number(k.rotation.w) &&
+                             reader.number(k.half_extents.x) && reader.number(k.half_extents.y) &&
+                             reader.number(k.half_extents.z) && reader.number(k.radius) &&
+                             reader.number(k.half_height) && reader.number(k.density) &&
+                             reader.number(k.friction) && reader.number(k.restitution) &&
+                             reader.number(sensor) && reader.number(events) && (sensor == 0 || sensor == 1) &&
+                             (events == 0 || events == 1);
+                    k.sensor = sensor == 1;
+                    k.events = events == 1;
+                    c.colliders.push_back(k);
                 } else {
                     LightComponent l;
                     duplicate = c.light.has_value();
@@ -233,7 +305,8 @@ Result<SceneSnapshot> read_scene(std::istream &in) {
                     c.light = l;
                 }
                 if (duplicate)
-                    return fail(ErrorCode::ParseError, "Duplicate " + kind + " record for one entity");
+                    return fail(ErrorCode::ParseError, kind == "COLLIDER" ? "Too many COLLIDER records for one entity"
+                                                                         : "Duplicate " + kind + " record for one entity");
                 if (!parsed)
                     return fail(ErrorCode::ParseError, "Malformed " + kind + " record");
             }

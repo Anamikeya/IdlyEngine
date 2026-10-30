@@ -11,7 +11,6 @@ namespace {
 
 using SceneVec3 = ::engine::Vec3;
 
-constexpr std::size_t max_colliders_per_entity = 64;
 // Relative tolerance for treating a world scale as uniform and for detecting a scale change.
 constexpr double scale_tolerance = 1.0e-6;
 // Maximum |dot| between normalized basis columns before a matrix counts as sheared.
@@ -65,6 +64,8 @@ Vec3 rotate(Quat q, Vec3 v) noexcept
 }
 
 Vec3 add(Vec3 a, Vec3 b) noexcept { return {a.x + b.x, a.y + b.y, a.z + b.z}; }
+Vec3 sub(Vec3 a, Vec3 b) noexcept { return {a.x - b.x, a.y - b.y, a.z - b.z}; }
+Vec3 to_float(const SceneVec3& v) noexcept { return {static_cast<float>(v.x), static_cast<float>(v.y), static_cast<float>(v.z)}; }
 Vec3 scale(Vec3 v, float s) noexcept { return {v.x * s, v.y * s, v.z * s}; }
 
 Vec3 transform_point(const Pose& pose, Vec3 local) noexcept
@@ -219,11 +220,17 @@ std::array<float, 4> default_color(DebugCategory category) noexcept
 
 struct ScenePhysics::Impl {
 	struct Entry {
+		// Scene components the body was converted from; a difference at sync marks the entry dirty.
+		std::optional<RigidBodyComponent> body_source;
+		std::vector<ColliderComponent> collider_source;
 		RigidBody body;
 		std::vector<Collider> colliders;
 		// Authoring changed since the body was built.
 		bool dirty = true;
-		bool detached = false;
+		// Set when converted values are not accepted by the physics layer.
+		std::string authoring_issue;
+		// The body is withheld because of its place in the hierarchy; rebuilt once that is resolved.
+		bool hierarchy_issue = false;
 		// A kinematic target was set this tick; its velocity must be cleared once the scene stops moving it.
 		bool kinematic_target = false;
 		BodyHandle handle;
@@ -348,15 +355,30 @@ struct ScenePhysics::Impl {
 		const auto record = scene.inspect(id);
 		if (!record) {
 			destroy_body(e);
-			e.detached = true;
-			e.issue.clear();
 			return;
 		}
-		e.detached = false;
+		if (!e.authoring_issue.empty()) {
+			fail(e, e.authoring_issue);
+			return;
+		}
 		const auto scene_world = scene.world_transform(id);
 		if (!scene_world) {
 			fail(e, "entity has no world transform");
 			return;
+		}
+		// Checked on every sync: a reparent that keeps the world transform, or a parent's body changing,
+		// alters this verdict without changing the entity's own world matrix.
+		if (e.body.type == BodyType::Dynamic) {
+			if (auto error = check_dynamic_hierarchy(scene, record->parent)) {
+				fail(e, *error);
+				e.synced_world = *scene_world;
+				e.hierarchy_issue = true;
+				return;
+			}
+		}
+		if (e.hierarchy_issue) {
+			e.hierarchy_issue = false;
+			e.dirty = true;
 		}
 		const bool has_body = world.is_valid(e.handle);
 		if (!e.dirty && has_body && e.synced_world && e.synced_world->matrix == scene_world->matrix) {
@@ -378,13 +400,6 @@ struct ScenePhysics::Impl {
 			fail(e, "world transform has shear, reflection or zero scale");
 			e.synced_world = *scene_world;
 			return;
-		}
-		if (e.body.type == BodyType::Dynamic) {
-			if (auto error = check_dynamic_hierarchy(scene, record->parent)) {
-				fail(e, *error);
-				e.synced_world = *scene_world;
-				return;
-			}
 		}
 
 		if (e.dirty || !has_body || !same_scale(d->scale, e.built_scale)) {
@@ -450,83 +465,52 @@ Result<ScenePhysics> ScenePhysics::create(const WorldConfig& config)
 	return ScenePhysics(std::move(impl));
 }
 
-Result<void> ScenePhysics::set_rigid_body(const Scene& scene, EntityId entity, const RigidBody& body)
+RigidBody to_rigid_body(const std::optional<RigidBodyComponent>& body) noexcept
 {
-	if (!scene.on_owner_thread()) {
-		return fail(ErrorCode::WrongThread, "Physics authoring requires the scene owner thread");
+	RigidBody out;
+	if (!body) {
+		out.type = BodyType::Static;
+		return out;
 	}
-	if (!scene.inspect(entity)) {
-		return fail(ErrorCode::NotFound, "Entity does not exist");
-	}
-	if (!valid_body(body)) {
-		return fail(ErrorCode::InvalidArgument, "Rigid body values must be finite; damping must be non-negative");
-	}
-	auto& e = impl_->entries[entity];
-	if (e.body != body || e.dirty) {
-		e.body = body;
-		e.dirty = true;
-	}
-	return {};
+	out.type = body->kind == BodyKind::Static ? BodyType::Static : body->kind == BodyKind::Kinematic ? BodyType::Kinematic : BodyType::Dynamic;
+	out.linear_velocity = to_float(body->linear_velocity);
+	out.angular_velocity = to_float(body->angular_velocity);
+	out.linear_damping = static_cast<float>(body->linear_damping);
+	out.angular_damping = static_cast<float>(body->angular_damping);
+	out.gravity_scale = static_cast<float>(body->gravity_scale);
+	out.enable_sleep = body->enable_sleep;
+	out.is_bullet = body->is_bullet;
+	return out;
 }
 
-Result<void> ScenePhysics::remove_rigid_body(EntityId entity)
+Collider to_collider(const ColliderComponent& collider) noexcept
 {
-	auto it = impl_->entries.find(entity);
-	if (it == impl_->entries.end()) {
-		return fail(ErrorCode::NotFound, "Entity has no rigid body");
+	Collider out;
+	const Vec3 center = to_float(collider.center);
+	const Quat rotation{static_cast<float>(collider.rotation.x), static_cast<float>(collider.rotation.y),
+		static_cast<float>(collider.rotation.z), static_cast<float>(collider.rotation.w)};
+	const auto radius = static_cast<float>(collider.radius);
+	switch (collider.shape) {
+	case ColliderShape::Sphere:
+		out.shape = SphereShape{radius, center};
+		break;
+	case ColliderShape::Capsule: {
+		const Vec3 axis = rotate(rotation, Vec3{0.0f, static_cast<float>(collider.half_height), 0.0f});
+		out.shape = CapsuleShape{sub(center, axis), add(center, axis), radius};
+		break;
 	}
-	impl_->destroy_body(it->second);
-	impl_->entries.erase(it);
-	std::erase_if(impl_->pending, [entity](const auto& p) { return p.first == entity; });
-	return {};
-}
-
-Result<std::size_t> ScenePhysics::add_collider(EntityId entity, const Collider& collider)
-{
-	auto* e = impl_->find(entity);
-	if (!e) {
-		return fail(ErrorCode::NotFound, "Entity has no rigid body");
+	default:
+		out.shape = BoxShape{to_float(collider.half_extents), Pose{center, rotation}};
+		break;
 	}
-	if (!is_valid(collider)) {
-		return fail(ErrorCode::InvalidArgument, "Collider shape or material is invalid");
-	}
-	if (e->colliders.size() >= max_colliders_per_entity) {
-		return fail(ErrorCode::InvalidArgument, "Collider limit per entity reached");
-	}
-	e->colliders.push_back(collider);
-	e->dirty = true;
-	return e->colliders.size() - 1;
-}
-
-Result<void> ScenePhysics::set_collider(EntityId entity, std::size_t index, const Collider& collider)
-{
-	auto* e = impl_->find(entity);
-	if (!e) {
-		return fail(ErrorCode::NotFound, "Entity has no rigid body");
-	}
-	if (index >= e->colliders.size()) {
-		return fail(ErrorCode::NotFound, "Collider index out of range");
-	}
-	if (!is_valid(collider)) {
-		return fail(ErrorCode::InvalidArgument, "Collider shape or material is invalid");
-	}
-	e->colliders[index] = collider;
-	e->dirty = true;
-	return {};
-}
-
-Result<void> ScenePhysics::remove_collider(EntityId entity, std::size_t index)
-{
-	auto* e = impl_->find(entity);
-	if (!e) {
-		return fail(ErrorCode::NotFound, "Entity has no rigid body");
-	}
-	if (index >= e->colliders.size()) {
-		return fail(ErrorCode::NotFound, "Collider index out of range");
-	}
-	e->colliders.erase(e->colliders.begin() + static_cast<std::ptrdiff_t>(index));
-	e->dirty = true;
-	return {};
+	out.density = static_cast<float>(collider.density);
+	out.friction = static_cast<float>(collider.friction);
+	out.restitution = static_cast<float>(collider.restitution);
+	out.is_sensor = collider.sensor;
+	// Box3D needs the sensor-event flag on both the sensor and its visitors.
+	out.enable_sensor_events = collider.events;
+	out.enable_contact_events = collider.events;
+	return out;
 }
 
 std::optional<RigidBody> ScenePhysics::rigid_body(EntityId entity) const
@@ -550,21 +534,6 @@ std::vector<EntityId> ScenePhysics::authored_entities() const
 		ids.push_back(id);
 	}
 	return ids;
-}
-
-std::size_t ScenePhysics::purge_detached(const Scene& scene)
-{
-	std::size_t removed = 0;
-	for (auto it = impl_->entries.begin(); it != impl_->entries.end();) {
-		if (!scene.inspect(it->first)) {
-			impl_->destroy_body(it->second);
-			it = impl_->entries.erase(it);
-			++removed;
-		} else {
-			++it;
-		}
-	}
-	return removed;
 }
 
 void ScenePhysics::set_simulation_enabled(bool enabled) noexcept
@@ -596,7 +565,42 @@ Result<void> ScenePhysics::sync(const Scene& scene)
 	if (!scene.on_owner_thread()) {
 		return fail(ErrorCode::WrongThread, "Physics sync requires the scene owner thread");
 	}
-	for (auto& [id, e] : impl_->entries) {
+	// Mirror the scene's physics components: add or update entries, then drop entities that lost them.
+	auto& entries = impl_->entries;
+	std::vector<EntityId> authored;
+	for (const EntityRecord& record : scene.snapshot().entities) {
+		const Components& c = record.components;
+		if (!c.body && c.colliders.empty()) {
+			continue;
+		}
+		authored.push_back(record.id);
+		auto [it, created] = entries.try_emplace(record.id);
+		Impl::Entry& e = it->second;
+		if (created || e.body_source != c.body || e.collider_source != c.colliders) {
+			e.body_source = c.body;
+			e.collider_source = c.colliders;
+			e.body = to_rigid_body(c.body);
+			e.colliders.clear();
+			for (const ColliderComponent& collider : c.colliders) {
+				e.colliders.push_back(to_collider(collider));
+			}
+			e.authoring_issue.clear();
+			if (!valid_body(e.body) || !std::all_of(e.colliders.begin(), e.colliders.end(), [](const Collider& k) { return is_valid(k); })) {
+				e.authoring_issue = "rigid body or collider values are not accepted by the physics world";
+			}
+			e.dirty = true;
+		}
+	}
+	for (auto it = entries.begin(); it != entries.end();) {
+		if (!std::binary_search(authored.begin(), authored.end(), it->first)) {
+			impl_->destroy_body(it->second);
+			std::erase_if(impl_->pending, [id = it->first](const auto& p) { return p.first == id; });
+			it = entries.erase(it);
+		} else {
+			++it;
+		}
+	}
+	for (auto& [id, e] : entries) {
 		impl_->sync_entry(scene, id, e);
 	}
 	return {};
@@ -737,9 +741,6 @@ PhysicsDiagnostics ScenePhysics::diagnostics() const
 	for (const auto& [id, e] : impl_->entries) {
 		if (impl_->world.is_valid(e.handle)) {
 			++d.active_bodies;
-		}
-		if (e.detached) {
-			++d.detached_entities;
 		}
 		if (!e.issue.empty()) {
 			d.issues.push_back({id, e.issue});

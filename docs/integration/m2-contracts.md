@@ -1,5 +1,12 @@
 # Milestone 2 integration contracts (Claude systems ↔ Codex editor/renderer)
 
+> **Status update (Milestone 3, slice S4).** Resolved in `agent/claude-milestone-3`:
+> **C-1a**: each play session has its own scene and history-free bus, so two buses on one scene are no longer
+> needed in the editor. **C-2a**: physics authoring moved into the scene (`RigidBodyComponent`,
+> `ColliderComponent`, commands `SetRigidBody`/`SetColliders`, scene format v4); the bridge's authoring setters and
+> "detached" bookkeeping are gone. **C-4a**: colliders are drawn as an ImGui viewport overlay from `debug_geometry()`.
+> C-5a and C-5b remain open for slice S5. Sections below are updated where the API changed.
+
 Status: **proposed by Claude, awaiting Codex confirmation.** Written 2026-10-28 on
 `agent/claude-systems-m2`, branched from `main` at `d876e42` (the M1 integration).
 Everything below is implemented against committed `main` headers only. Nothing here
@@ -72,19 +79,14 @@ Hierarchy rules:
 
 ## C-2 Physics authoring data and entity lifetime
 
-- `RigidBody` and `Collider` (= `ColliderDesc`) are **value types stored inside
-  `ScenePhysics`, keyed by stable `EntityId`**. They are not Flecs components, because:
-  - a Flecs entity is destroyed on `DeleteEntity`, and undo would recreate it *without*
-    runtime components, so physics authoring would be silently lost;
-  - Codex's contract forbids mutating managed components directly, and Flecs observers must
-    not cause external effects during a commit.
-- Entity deleted (or absent after `ReplaceScene`): the body is destroyed on the next sync.
-  The authoring data is kept as *detached*, so undoing the delete restores physics exactly.
-  `purge_detached(scene)` drops it; the host calls it after loading a different scene.
-- Physics authoring is not yet serialized in `SceneSnapshot` and is not undoable.
-  **Ask for Codex (C-2a):** either extend the scene format and command registry with
-  `physics.body.set` / `physics.collider.set`, or agree that Claude adds a sidecar
-  serializer keyed by `EntityId`.
+- `RigidBodyComponent` and `ColliderComponent` are part of each `EntityRecord`, so commands,
+  undo/redo, play-mode copies and scene files carry them like the transform. `ScenePhysics::sync`
+  converts them to `RigidBody` and `Collider` (`to_rigid_body`, `to_collider`) and builds bodies.
+  An entity with colliders but no body is a static collider.
+- Entity deleted, components removed, or entity absent after `ReplaceScene`: the body is destroyed
+  on the next sync. Undo restores the record, and the next sync rebuilds the body.
+- The dynamic-hierarchy rule is checked on every sync, because a reparent that keeps the world
+  transform changes the verdict without changing the entity's world matrix.
 - Body `user_key` is the `EntityId`. Collision events report `EntityId`s, never Box3D handles.
 
 ## C-3 Simulation stepping
@@ -110,8 +112,8 @@ All calls happen on the scene owner thread. None of them takes ImGui types.
 |---|---|
 | Play / pause | `set_simulation_enabled(bool)`, `simulation_enabled()` |
 | Restart from authored state | `reset_simulation(scene)` |
-| Add/replace/remove a body | `set_rigid_body(id, RigidBody)`, `remove_rigid_body(id)` |
-| Edit colliders | `add_collider`, `set_collider(id, index, Collider)`, `remove_collider`, `colliders(id)` |
+| Add/replace/remove a body | `commands::SetRigidBody{id, body}`; an empty optional removes it |
+| Edit colliders | `commands::SetColliders{id, list}` replaces the whole list; `colliders(id)` reads what was last synced |
 | Inspector read-out | `body_state(id)`: pose, velocities, mass, awake, type |
 | Diagnostics panel | `diagnostics()`: counts, tick counters, teleports/publishes last tick, `issues` |
 | Collision log | `events()`: valid until the next `fixed_update`/`step` |

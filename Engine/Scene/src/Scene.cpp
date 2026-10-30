@@ -31,6 +31,30 @@ Result<void> validate_components(const Components &c) {
             l->range <= 0)
             return fail(ErrorCode::InvalidArgument, "Light color must be within [0, 1], intensity >= 0 and range > 0");
     }
+    const auto finite = [](const Vec3 &v) { return std::isfinite(v.x) && std::isfinite(v.y) && std::isfinite(v.z); };
+    const auto nonnegative = [](double v) { return std::isfinite(v) && v >= 0; };
+    if (const auto &b = c.body) {
+        if (b->kind != BodyKind::Static && b->kind != BodyKind::Kinematic && b->kind != BodyKind::Dynamic)
+            return fail(ErrorCode::InvalidArgument, "Unknown rigid body kind");
+        if (!finite(b->linear_velocity) || !finite(b->angular_velocity) || !nonnegative(b->linear_damping) ||
+            !nonnegative(b->angular_damping) || !std::isfinite(b->gravity_scale))
+            return fail(ErrorCode::InvalidArgument, "Rigid body values must be finite and damping >= 0");
+    }
+    if (c.colliders.size() > max_colliders_per_entity)
+        return fail(ErrorCode::InvalidArgument, "Too many colliders on one entity");
+    for (const auto &k : c.colliders) {
+        const auto &q = k.rotation;
+        if (k.shape != ColliderShape::Sphere && k.shape != ColliderShape::Box && k.shape != ColliderShape::Capsule)
+            return fail(ErrorCode::InvalidArgument, "Unknown collider shape");
+        if (!finite(k.center) || !std::isfinite(q.x) || !std::isfinite(q.y) || !std::isfinite(q.z) || !std::isfinite(q.w) ||
+            std::abs(q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w - 1) > 1e-6)
+            return fail(ErrorCode::InvalidArgument, "Collider placement must be finite with a unit-length rotation");
+        if (!(k.half_extents.x > 0) || !(k.half_extents.y > 0) || !(k.half_extents.z > 0) || !finite(k.half_extents) ||
+            !(k.radius > 0) || !std::isfinite(k.radius) || !nonnegative(k.half_height))
+            return fail(ErrorCode::InvalidArgument, "Collider sizes must be positive (half height >= 0)");
+        if (!nonnegative(k.density) || !nonnegative(k.friction) || !unit(k.restitution))
+            return fail(ErrorCode::InvalidArgument, "Collider density and friction must be >= 0, restitution within [0, 1]");
+    }
     return {};
 }
 template <class T> void mirror(flecs::entity e, const std::optional<T> &value) {
@@ -44,6 +68,17 @@ template <class T> std::optional<T> read(flecs::entity e) {
     if (!e.has<T>())
         return std::nullopt;
     return e.get<T>();
+}
+// Flecs component holding an entity's collider list; absent when the list is empty.
+struct ColliderList {
+    std::vector<ColliderComponent> items;
+    bool operator==(const ColliderList &) const = default;
+};
+void mirror(flecs::entity e, const std::vector<ColliderComponent> &colliders) {
+    mirror(e, colliders.empty() ? std::nullopt : std::optional<ColliderList>(ColliderList{colliders}));
+}
+std::vector<ColliderComponent> read_colliders(flecs::entity e) {
+    return e.has<ColliderList>() ? e.get<ColliderList>().items : std::vector<ColliderComponent>{};
 }
 Result<std::map<EntityId, WorldTransform>> matrices(const SceneSnapshot &s) {
     if (s.entities.size() > Scene::max_entities)
@@ -117,6 +152,8 @@ Scene::Scene() {
     w.component<MeshComponent>();
     w.component<CameraComponent>();
     w.component<LightComponent>();
+    w.component<RigidBodyComponent>();
+    w.component<ColliderList>();
 }
 std::optional<EntityRecord> Scene::inspect(EntityId id) const {
     if (!on_owner_thread())
@@ -126,7 +163,8 @@ std::optional<EntityRecord> Scene::inspect(EntityId id) const {
         return std::nullopt;
     const auto e = world_.native().entity(it->second);
     return EntityRecord{id, e.get<Name>().value, e.get<Parent>().value, e.get<Transform>(),
-                        {read<MeshComponent>(e), read<CameraComponent>(e), read<LightComponent>(e)}};
+                        {read<MeshComponent>(e), read<CameraComponent>(e), read<LightComponent>(e),
+                         read<RigidBodyComponent>(e), read_colliders(e)}};
 }
 SceneSnapshot Scene::snapshot() const {
     if (!on_owner_thread())
@@ -195,6 +233,8 @@ Result<void> Scene::commit(const SceneSnapshot &s) {
         mirror(e, record.components.mesh);
         mirror(e, record.components.camera);
         mirror(e, record.components.light);
+        mirror(e, record.components.body);
+        mirror(e, record.components.colliders);
         const auto &desired_transform = transforms.value().at(record.id);
         if (!e.has<WorldTransform>() || e.get<WorldTransform>().matrix != desired_transform.matrix)
             e.set<WorldTransform>(desired_transform);

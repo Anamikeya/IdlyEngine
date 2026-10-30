@@ -58,8 +58,18 @@ struct DuplicateEntity {
     EntityId id;
     std::string name;
 };
+struct SetRigidBody {
+    EntityId id;
+    std::optional<RigidBodyComponent> body;
+};
+// Replaces the entity's whole collider list; an empty list removes all colliders.
+struct SetColliders {
+    EntityId id;
+    std::vector<ColliderComponent> colliders;
+};
 using Command = std::variant<CreateEntity, DeleteEntity, RenameEntity, SetTransform, SetParent,
-                             ReplaceScene, SetMesh, SetCamera, SetLight, DuplicateEntity>;
+                             ReplaceScene, SetMesh, SetCamera, SetLight, DuplicateEntity,
+                             SetRigidBody, SetColliders>;
 struct CommandDescriptor {
     std::string_view name;
     Capability permission;

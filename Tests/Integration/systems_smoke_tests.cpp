@@ -51,26 +51,28 @@ ENGINE_TEST(asset_physics_and_render_snapshot_work_together)
 	ENGINE_REQUIRE(static_cast<bool>(physics_result));
 	physics::ScenePhysics& world = physics_result.value();
 
-	const auto create = [&](const char* name, engine::Transform t) {
-		auto receipt = editor.execute(editor_ctx, editor.revision(), commands::CreateEntity{name, t, 0, 0});
+	const auto create = [&](const char* name, engine::Transform t, engine::Components components = {}) {
+		auto receipt = editor.execute(editor_ctx, editor.revision(), commands::CreateEntity{name, t, 0, 0, std::move(components)});
 		ENGINE_REQUIRE(static_cast<bool>(receipt));
 		return receipt.value().created.front();
 	};
 	const engine::EntityId camera = create("camera", at(0, 2, 10));
-	const engine::EntityId ground = create("ground", at(0, -0.5, 0));
-	const engine::EntityId crate = create("crate", at(0, 3, 0));
 
-	ENGINE_REQUIRE(static_cast<bool>(world.set_rigid_body(scene, ground, {physics::BodyType::Static})));
-	physics::Collider floor;
-	floor.shape = physics::BoxShape{{20.0f, 0.5f, 20.0f}, {}};
-	ENGINE_REQUIRE(static_cast<bool>(world.add_collider(ground, floor)));
+	// Physics authoring is part of the scene: a static floor (colliders, no body) and a dynamic crate.
+	engine::ColliderComponent floor;
+	floor.half_extents = {20.0, 0.5, 20.0};
+	engine::Components ground_components;
+	ground_components.colliders = {floor};
+	create("ground", at(0, -0.5, 0), ground_components);
 
 	// Box collider fitted to the mesh's bounds: assets feed physics without either knowing the other.
 	const assets::Bounds& b = cube.value().data->bounds;
-	physics::Collider crate_box;
-	crate_box.shape = physics::BoxShape{{(b.max[0] - b.min[0]) * 0.5f, (b.max[1] - b.min[1]) * 0.5f, (b.max[2] - b.min[2]) * 0.5f}, {}};
-	ENGINE_REQUIRE(static_cast<bool>(world.set_rigid_body(scene, crate, {})));
-	ENGINE_REQUIRE(static_cast<bool>(world.add_collider(crate, crate_box)));
+	engine::ColliderComponent crate_box;
+	crate_box.half_extents = {(b.max[0] - b.min[0]) * 0.5, (b.max[1] - b.min[1]) * 0.5, (b.max[2] - b.min[2]) * 0.5};
+	engine::Components crate_components;
+	crate_components.body = engine::RigidBodyComponent{};
+	crate_components.colliders = {crate_box};
+	const engine::EntityId crate = create("crate", at(0, 3, 0), crate_components);
 
 	world.set_simulation_enabled(true);
 	for (int i = 0; i < 180; ++i) {

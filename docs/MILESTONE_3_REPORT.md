@@ -3,8 +3,75 @@
 Branch `agent/claude-milestone-3`, worktree `D:\AI\GameEngine-Integration`. Plan: `docs/MILESTONE_3_PLAN.md`
 (approved 2026-10-29).
 
-**Status: in progress. Slices S1–S3 are complete and verified; S4–S6 are not started.** Milestone 3 is not
-complete: physics in Play mode and imported assets are still missing.
+**Status: in progress. Slices S1–S4 are complete and verified; S5 and S6 are not started.** Milestone 3 is not
+complete: imported assets (GLB, textures) are still missing.
+
+## S4: physics (2026-10-30)
+
+### Delivered
+
+| Feature | Implementation |
+|---|---|
+| Physics in the scene (closes C-2a) | `RigidBodyComponent` (kind, initial velocity and spin, damping, gravity scale, can sleep, continuous) and a list of up to 64 `ColliderComponent`s (sphere, box or capsule, with local center and rotation, density, friction, restitution, sensor, events) are part of each entity record, validated and mirrored into Flecs. Commands `SetRigidBody` and `SetColliders`; registry: 12 commands. Colliders without a body form a static collider |
+| Scene format v4 | `BODY` and `COLLIDER` records, documented in `docs/architecture/006-scene-format.md`. Earlier versions still load; v3 rejects the new records |
+| Bridge reads the scene | `ScenePhysics::sync` converts the components and builds bodies. Its setters, `purge_detached` and the "detached" bookkeeping are removed, because undo now restores the whole record |
+| Play-mode simulation (C-1a, C-3) | Each play session has its own bridge stepping once per fixed tick (including Step) and publishing dynamic poses into the runtime copy through its history-free bus. A physics failure pauses Play and is reported |
+| Edit-mode bridge | A second bridge mirrors the editor scene without stepping, so collider outlines and issues are available while editing |
+| Inspector | Rigid Body and Collider sections, a warning for a body with no colliders, a live speed/mass/sleep readout in Play, and the entity's physics issues. Add Component offers Rigid Body and a collider fitted to the mesh |
+| Create menu | Falling Cube, Falling Sphere, Floor (a plane with a thin box collider whose top face is the plane) |
+| Viewport and Console (C-4a) | **Colliders** toggle draws `debug_geometry()` as an ImGui overlay, colored by category (static, kinematic, awake, asleep, sensor). Issues appear in the Console once, when they arise |
+| Inspector drafts | A field being edited keeps its value until released, since moving bodies change the revision every tick |
+
+### Tests
+
+| Suite | New or changed coverage |
+|---|---|
+| `physics_scene_tests` | All 24 cases migrated to author through scene commands; assertions kept, except where the API they tested no longer exists: `purge_detached` became `entities_that_lose_physics_components_are_dropped` (also covers component removal, undo and `ReplaceScene`), `authoring_api_validates_input` became `physics_components_are_validated_by_the_scene`, and the `detached_entities` checks became `authored_entities` checks. New: `scene_components_convert_to_physics_descriptions`, `hierarchy_issues_follow_changes_that_keep_the_world_transform` |
+| `systems_smoke_tests` | Authors the floor and crate through scene components; same assertions |
+| `engine.core.acceptance` | New `physics_components`: storage, Flecs mirroring, undo, documented record text, exact round trip, 10 malformed inputs, several colliders per entity, v3 rejecting `BODY`. Core: 22/22 |
+| `engine.editor.acceptance`, 10 → 11 groups | New `physics_play`: edit-mode bridge never steps; a crate dropped on a floor rests at y = 0.5 within 0.02 after 240 ticks; editor scene, revision and history untouched; Stop restores the snapshot exactly; second Play restarts; Pause, Step, teleport by runtime edit; initial velocity; body edit undo; issues from both bridges, including a world-preserving reparent; save/load; duplicates keep physics |
+
+Results: `windows-msvc-release` and `windows-msvc-ci` build with no warnings outside `resources/filament` and
+pass 134/134 CTest entries. GPU smoke exits 0.
+
+### Real-input verification
+
+Same driver as S2 and S3, on the Release preset editor. The driver reported no cursor interference in this run.
+
+| Check | Observed | Result |
+|---|---|---|
+| Create menu and overlay | Floor and Falling Cube created; hierarchy tags "collider" and "dynamic"; outlines green (static) and orange (awake) | Pass |
+| Drop and land | Tick 32: y = 1.594, 5.23 m/s, mass 1000 kg, awake (free fall predicts about 5.2 m/s). After landing: y = 0.500, 0 m/s, asleep | Pass |
+| Pause and Stop | Pause holds the pose; Stop returns to y = 3 at the same revision | Pass |
+| Initial velocity and undo | X velocity 2 m/s: lands 1.44 m away; Ctrl+Z restores 0 | Pass |
+| Restitution | 0.8: rebounds to y = 2.06 at tick 83 (about 2.1 predicted) | Pass |
+| Collider shape and toggle | Box → Sphere changes the outline; unticking **Colliders** hides all outlines | Pass |
+| Nested dynamic body | Dragging one dynamic body under another: Console and Inspector report it, the body's outline disappears; undo restores it. This check found the defect below | Pass after fix |
+| Two bodies | Cube and sphere land side by side; sphere mass 523.6 kg (1000 kg/m³ × volume) | Pass |
+| Save / New / Load / Play | File has `ENGINE_SCENE 4` with `BODY` and `COLLIDER` records; New empties; Load restores; Play simulates the loaded scene; re-saving after Stop is byte-identical | Pass |
+| Add Component | On a plain sphere: warning until a collider exists, Rigid Body greyed out once present, fitted collider is a sphere | Pass |
+| Static body | Combo → Static: tag "static", mass 0, stays put while the falling cube lands on it | Pass |
+| Close | Unsaved-changes prompt, Discard, "Editor stopped cleanly." | Pass |
+
+Not exercised with real input: Kinematic bodies, capsule colliders, Sensor and Report events, collider local
+rotation, primary camera combined with physics. The first four are covered by `physics_scene_tests` at the bridge
+level; none of them has been clicked through in the Inspector.
+
+### Defect found and fixed
+
+**A body reparented under a dynamic body was not reported.** The hierarchy check in `sync_entry` ran only when the
+entity's world matrix changed, and since S3 a reparent keeps the world matrix. The same early return would have left
+a stale issue after moving a body back out, and would have missed a parent becoming dynamic. The check now runs on
+every sync. The two new tests failed before the fix and pass after it.
+
+### Limitations
+
+- Collider outlines have no depth testing, and an edge with an end behind the camera is skipped rather than clipped.
+- The Console still does not auto-scroll (planned for S6), so a new physics issue can be below the visible area.
+- A runtime edit to a dynamic body teleports it; there is no drag-with-force interaction.
+- A flat landing can leave a few millimeters of sideways drift (x = -0.003, z = 0.004 in one run). Simulation is
+  deterministic for identical inputs, but the Play tick timing follows wall-clock frames.
+- `docs/integration/m2-integration-report.md` is a Milestone 2 record and still describes the old API.
 
 ## S3: hierarchy and duplication (2026-10-29)
 

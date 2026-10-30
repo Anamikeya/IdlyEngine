@@ -1,5 +1,6 @@
 #pragma once
 #include <engine/commands/CommandBus.hpp>
+#include <engine/physics/scene_physics.h>
 #include <engine/renderer/RenderSnapshot.hpp>
 #include <chrono>
 #include <filesystem>
@@ -22,12 +23,18 @@ enum class PlayState { Editing, Playing, Paused };
 // Play mode copies the editor scene into an isolated runtime scene with its own history-free command bus.
 // While playing, scene(), execute(), set_world() and frame() act on the runtime copy; the editor scene, its
 // revision and its undo history are untouched, and stop() discards the runtime copy.
+//
+// Physics: an edit-mode bridge mirrors the editor scene's bodies and colliders without stepping (outlines,
+// issues). Each play session gets its own bridge that steps once per fixed tick and publishes dynamic
+// poses into the runtime copy through its history-free bus (contracts C-1, C-3).
 class EditorSession {
     struct Runtime;
     Scene scene_;
     commands::CommandBus bus_{scene_};
     commands::Context context_{"local-editor", 3};
+    std::unique_ptr<physics::ScenePhysics> edit_physics_;
     std::unique_ptr<Runtime> runtime_;
+    std::string physics_error_; // Last runtime physics failure; Play is paused when one occurs.
     std::uint64_t play_sessions_ = 0;
     EntityId selected_ = 0;
     std::uint64_t frame_ = 0;
@@ -100,7 +107,17 @@ public:
     // Discards the runtime scene and returns to the editor scene.
     Result<void> stop();
     // Advances runtime time while playing: whole fixed_step ticks, at most max_ticks_per_update per call.
+    // Each tick steps the runtime physics.
     void update(std::chrono::nanoseconds elapsed);
     std::uint64_t runtime_ticks() const;
+
+    // ---- Physics of the shown scene (edit-mode bridge, or the play session's) ----
+    // Brings the edit-mode bridge in line with the editor scene; frame() calls it. Never writes the scene.
+    void sync_physics();
+    const physics::ScenePhysics &physics_bridge() const;
+    // A runtime physics failure that paused Play mode; empty otherwise.
+    const std::string &physics_error() const { return physics_error_; }
+private:
+    void tick();
 };
 } // namespace engine::editor

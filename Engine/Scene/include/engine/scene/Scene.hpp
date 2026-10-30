@@ -64,10 +64,36 @@ struct LightComponent {
     double range = 10;         // Point light falloff radius in meters.
     bool operator==(const LightComponent &) const = default;
 };
+// Physics body simulated in Play mode. An entity with colliders but no body is a static collider.
+enum class BodyKind : std::uint8_t { Static = 1, Kinematic = 2, Dynamic = 3 };
+struct RigidBodyComponent {
+    BodyKind kind = BodyKind::Dynamic;
+    Vec3 linear_velocity, angular_velocity; // Initial world-space velocities (m/s, rad/s) when Play starts.
+    double linear_damping = 0, angular_damping = 0, gravity_scale = 1;
+    bool enable_sleep = true, is_bullet = false;
+    bool operator==(const RigidBodyComponent &) const = default;
+};
+// Collision shape placed in the entity's unscaled local frame; the physics bridge applies world scale.
+// Box uses half_extents; sphere uses radius; capsule uses radius and half_height (segment along local Y).
+enum class ColliderShape : std::uint8_t { Sphere = 1, Box = 2, Capsule = 3 };
+struct ColliderComponent {
+    ColliderShape shape = ColliderShape::Box;
+    Vec3 center;
+    Quaternion rotation;
+    Vec3 half_extents{0.5, 0.5, 0.5};
+    double radius = 0.5, half_height = 0.5;
+    double density = 1000, friction = 0.6, restitution = 0; // kg/m^3; restitution in [0, 1].
+    bool sensor = false; // Detects overlaps without colliding.
+    bool events = false; // Reports contact and sensor events for this collider.
+    bool operator==(const ColliderComponent &) const = default;
+};
+inline constexpr std::size_t max_colliders_per_entity = 64;
 struct Components {
     std::optional<MeshComponent> mesh;
     std::optional<CameraComponent> camera;
     std::optional<LightComponent> light;
+    std::optional<RigidBodyComponent> body;
+    std::vector<ColliderComponent> colliders;
     bool operator==(const Components &) const = default;
 };
 struct EntityRecord {
@@ -110,7 +136,7 @@ class Scene final {
     static Result<void> validate(const SceneSnapshot &);
 };
 // Text scene format, docs/architecture/006-scene-format.md. Writes the current version; reads 1..current.
-inline constexpr unsigned scene_format_version = 3;
+inline constexpr unsigned scene_format_version = 4;
 Result<void> write_scene(std::ostream &, const SceneSnapshot &);
 Result<SceneSnapshot> read_scene(std::istream &);
 } // namespace engine
