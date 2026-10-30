@@ -2,7 +2,8 @@
 
 namespace engine::editor {
 void EditorUI::lighting() {
-    begin_panel("Lighting", "Lighting", context::details);
+    if (!show_lighting) return;
+    if (!begin_panel("Lighting", "Lighting", context::details, &show_lighting)) { ImGui::End(); return; }
     auto e = session.environment();
     const auto owner = session.environment_entity();
     if (owner) ImGui::TextDisabled("On entity '%s'", session.scene().inspect(owner)->name.c_str());

@@ -137,15 +137,21 @@ void EditorUI::confirm() {
 void EditorUI::docking() {
     const ImGuiID dock = ImGui::DockSpaceOverViewport(0, ImGui::GetMainViewport());
     auto *node = ImGui::DockBuilderGetNode(dock);
+    if (std::exchange(layout_reset_requested, false)) {
+        // Starts over: every window leaves its dock, and the code below docks it again.
+        ImGui::DockBuilderRemoveNode(dock);
+        ImGui::DockBuilderAddNode(dock, ImGuiDockNodeFlags_DockSpace);
+        node = ImGui::DockBuilderGetNode(dock);
+    }
     if (node && !node->IsSplitNode() && node->Windows.empty()) {
         ImGuiID center = dock, left = 0, right = 0, bottom = 0, top = 0;
         ImGui::DockBuilderSetNodeSize(dock, ImGui::GetMainViewport()->Size);
         ImGui::DockBuilderSplitNode(center, ImGuiDir_Up, 0.12f, &top, &center);
         ImGui::DockBuilderSplitNode(center, ImGuiDir_Left, 0.19f, &left, &center);
         ImGui::DockBuilderSplitNode(center, ImGuiDir_Right, 0.28f, &right, &center);
-        ImGui::DockBuilderSplitNode(center, ImGuiDir_Down, 0.25f, &bottom, &center);
+        ImGui::DockBuilderSplitNode(center, ImGuiDir_Down, 0.34f, &bottom, &center);
         ImGuiID assets = 0, console = 0;
-        ImGui::DockBuilderSplitNode(bottom, ImGuiDir_Left, 0.45f, &assets, &console);
+        ImGui::DockBuilderSplitNode(bottom, ImGuiDir_Left, 0.68f, &assets, &console);
         ImGui::DockBuilderDockWindow("Toolbar", top);
         ImGui::DockBuilderDockWindow("Scene Hierarchy", left);
         ImGui::DockBuilderDockWindow("Inspector", right);
@@ -158,7 +164,8 @@ void EditorUI::docking() {
     }
 }
 void EditorUI::toolbar() {
-    begin_panel("Toolbar", "Toolbar", context::global);
+    if (!show_toolbar) return;
+    if (!begin_panel("Toolbar", "Toolbar", context::global, &show_toolbar)) { ImGui::End(); return; }
     const auto state = session.play_state();
     command_button("File.NewScene", "New");
     ImGui::SameLine(); command_button("Create.Cube", "+ Cube");
@@ -213,15 +220,18 @@ void EditorUI::draw() {
     main_menu();
     // Before the viewport: it extracts the frame, whose handles must be those of the latest import or reload.
     docking(); toolbar(); hierarchy(); lighting(); material_editor(); inspector(); assets(); viewport();
-    begin_panel("Console", "Console", context::global);
-    for (const auto &m : messages) ImGui::TextWrapped("%s", m.c_str());
-    // The newest message, such as an import error, is what the user needs to see.
-    if (std::exchange(scroll_console, false)) ImGui::SetScrollHereY(1);
-    ImGui::End();
+    if (show_console) {
+        begin_panel("Console", "Console", context::global, &show_console);
+        for (const auto &m : messages) ImGui::TextWrapped("%s", m.c_str());
+        // The newest message, such as an import error, is what the user needs to see.
+        if (std::exchange(scroll_console, false)) ImGui::SetScrollHereY(1);
+        ImGui::End();
+    }
     history_panel();
     shortcuts_panel();
     confirm();
     project_dialog();
+    layout_dialog();
     route_shortcuts(rebinding_at_frame_start);
     ui_map.flush();
 }

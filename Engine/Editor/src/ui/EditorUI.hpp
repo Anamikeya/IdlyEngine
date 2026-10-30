@@ -17,6 +17,7 @@
 #include <cmath>
 #include <cstdio>
 #include <filesystem>
+#include <functional>
 #include <map>
 #include <optional>
 #include <set>
@@ -96,11 +97,7 @@ struct EditorUI {
     std::vector<std::string> messages{"Filament OpenGL initialized. All scene edits use typed commands."};
     Pending pending = Pending::None;
     bool confirm_requested = false, quit = false;
-    EntityId draft_id = 0;
-    uint64_t draft_scene = 0, draft_revision = ~uint64_t(0);
-    std::array<char, 257> name{};
-    float position[3]{}, rotation[3]{}, scale[3]{1,1,1};
-    Components components; // Draft of the selected entity's components, refreshed with the transform draft.
+    std::array<char, 257> name{}; // The Details panel's name field.
     int operation = 0, coordinates = 0;
     bool gizmo_active = false;
     bool show_colliders = true;
@@ -221,30 +218,48 @@ struct EditorUI {
     std::map<EntityId, EntityRecord> records;
     std::map<EntityId, std::vector<EntityId>> children;
     EntityId revealed = 0; // Selection whose ancestors were last opened, so viewport picks show up in the tree.
+    static constexpr const char *folder_payload = "ENGINE_FOLDER";
     std::vector<EntityId> visible_rows, shown_rows; // Rows of the tree in draw order, this frame and last: Shift+click ranges over them.
-    EntityId selection_anchor = 0, click_on_release = 0;
+    EntityId selection_anchor = 0, click_row_on_release = 0;
+    std::uint64_t selected_folder = 0;
+    std::array<char, 128> outliner_search{};
+    bool outliner_show_mesh = false, outliner_show_light = false, outliner_show_camera = false, outliner_show_physics = false;
+    EntityId rename_entity = 0;
+    std::uint64_t rename_folder_id = 0;
+    bool rename_focus = false;
+    std::array<char, 257> rename_text{};
     void click_row(EntityId id);
     void drop_onto(EntityId parent);
+    bool entity_shown(const EntityRecord &e) const;
+    void folder_node(const SceneFolder &folder, const std::set<EntityId> &open_path, const std::set<EntityId> &passes);
     void duplicate_selection();
     void delete_selection();
-    void tree_node(EntityId id, const std::set<EntityId> &open_path);
+    // `passes`: when filtering, the rows to show. Empty: all of them.
+    void tree_node(EntityId id, const std::set<EntityId> &open_path, const std::set<EntityId> &passes);
     void hierarchy();
+    // ---- Details panel, generated from the property tables ----
+    std::vector<EntityRecord> details_targets; // This frame's, the primary one last.
+    std::vector<EntityId> details_pinned;
+    bool details_locked = false, details_only_modified = false;
+    std::array<char, 128> details_search{};
+    bool details_transaction = false; // A drag or typing in a field is open as one undo step.
+    std::string details_error;
+    EntityId details_name_id = 0;
+    std::string details_euler_key;
+    std::array<double, 3> details_euler{};
     void inspector();
-    // Commit helpers: drags commit on release (one undo step); combos, checkboxes and picker changes at once.
+    void details_apply(std::string label, std::vector<commands::Command> edits);
+    void details_add(const char *what, const std::function<std::optional<commands::Command>(const EntityRecord &)> &make);
+    void finish_details_edit();
+    void behavior_sections();
+    // Field helpers the Lighting panel also uses: drags commit on release; combos and checkboxes at once.
     static bool committed(bool changed);
     static bool color_edit(const char *label, Vec3 &c);
     static bool drag(const char *label, double &value, float speed, double low, double high, const char *format = "%.3f");
-    // No clamp when low == high.
-    static bool drag3(const char *label, Vec3 &value, float speed, float low = 0, float high = 0);
-    // Runs a component command and re-reads the drafts, so a rejected edit does not linger in the Inspector.
-    void apply(commands::Command command, const char *success);
     // Lists the project's assets of one type. True when the reference changed.
-    bool asset_combo(const char *label, AssetRef &ref, assets::AssetType type, const char *none, bool whiten = true);
-    bool remove_button(const char *id);
-    void component_sections(const EntityRecord &record);
-    void physics_sections(const EntityRecord &record);
-    // Named numbers read by runtime systems when Play starts; the scene gives them no meaning, so they edit generically.
-    void behavior_sections(const EntityRecord &record);
+    bool asset_combo(const char *label, AssetRef &ref, assets::AssetType type, const char *none);
+    // The field of an asset reference: a picture, a searchable list, use-selected and find buttons, and a drop target.
+    bool asset_field(std::string_view type_name, AssetRef &ref, bool mixed);
     void lighting();
     // One texture slot of the material: a combo of the project's textures. True when it changed.
     bool texture_slot(const char *label, assets::MaterialTexture &slot);
@@ -272,7 +287,48 @@ struct EditorUI {
     // A box around each selected entity, so a multi-selection shows without a gizmo on each.
     void selection_outlines(ImVec2 origin, ImVec2 size);
     void gizmo(ImVec2 origin, ImVec2 size);
+    // ---- Asset Browser ----
+    enum class AssetSource { All, Favorites, Folder, Builtin, Scenes };
+    AssetSource asset_source = AssetSource::All;
+    std::string asset_folder;
+    std::array<char, 128> asset_search{}, asset_field_search{};
+    std::array<bool, 4> asset_chips{};
+    bool asset_list_view = false;
+    assets::AssetId asset_scroll_to;
+    bool asset_drawer_open = false, asset_drawer_focus = false;
+    float asset_drawer_amount = 0;
+    bool rename_asset_prompt = false;
+    std::array<char, 1024> rename_asset_path{};
+    struct AssetThumbnail {
+        bool requested = false, failed = false;
+        renderer::MaterialHandle material;
+        std::uint32_t width = 0, height = 0;
+        std::size_t vertices = 0, triangles = 0;
+    };
+    std::map<assets::AssetId, AssetThumbnail> thumbnails;
+    int thumbnail_cooldown = 0;
+    void update_thumbnails();
+    void want_thumbnail(const assets::AssetMetadata &meta);
+    void draw_asset_picture(const assets::AssetMetadata &meta, ImVec2 at, float size);
+    void asset_tooltip(const assets::AssetMetadata &meta);
+    bool asset_is_favorite(assets::AssetId id) const;
+    void asset_menu(const assets::AssetMetadata &meta);
+    void asset_item_input(const assets::AssetMetadata &meta);
+    void reveal_asset(assets::AssetId id);
+    void asset_folder_tree(const std::map<std::string, std::vector<std::string>> &tree, const std::string &folder);
+    void asset_browser_contents();
+    void rename_asset_dialog();
     void assets();
+    // ---- Panels and layouts ----
+    bool show_toolbar = true, show_hierarchy = true, show_inspector = true, show_lighting = true, show_material = true, show_assets = true, show_console = true;
+    bool layout_reset_requested = false, layout_prompt = false;
+    std::array<char, 128> layout_name{};
+    std::string pending_layout; // ImGui settings to load before the next frame.
+    std::string saved_panels;   // Which panels were open when settings were last saved.
+    std::array<bool *, 7> panel_flags();
+    void layout_dialog();
+    std::vector<std::string> saved_layouts() const;
+    void apply_pending_layout();
     void draw();
 };
 } // namespace engine::editor

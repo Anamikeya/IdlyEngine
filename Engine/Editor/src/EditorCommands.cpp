@@ -215,6 +215,10 @@ std::vector<CommandInfo> default_command_table() {
         {"Edit.Undo", "Undo", "Undo the latest edit.", "Edit", global, {chord(Key::Z, ctrl)}, true},
         {"Edit.Redo", "Redo", "Redo the edit just undone.", "Edit", global, {chord(Key::Y, ctrl), chord(Key::Z, ctrl | shift)}, true},
         {"Edit.Duplicate", "Duplicate", "Copy the selection and its children.", "Edit", global, {chord(Key::D, ctrl)}},
+        {"Edit.Copy", "Copy", "Copy the selection and its children to the clipboard.", "Edit", global, {chord(Key::C, ctrl)}},
+        {"Edit.Paste", "Paste", "Add what was copied, at the root.", "Edit", global, {chord(Key::V, ctrl)}},
+        {"Edit.Group", "Group", "Put the selection under a new empty entity.", "Edit", global, {chord(Key::G, ctrl)}},
+        {"Edit.Rename", "Rename", "Rename the selected entity or folder in the hierarchy.", "Edit", global, {chord(Key::F2)}},
         {"Edit.Delete", "Delete", "Delete the selection and its children.", "Edit", global, {chord(Key::Delete)}},
         {"Edit.MoveToRoot", "Move to Root", "Take the selection out of its parent, keeping its place in the world.", "Edit", global, {}},
         {"Edit.SelectAll", "Select All", "Select every entity.", "Edit", global, {chord(Key::A, ctrl)}},
@@ -222,6 +226,19 @@ std::vector<CommandInfo> default_command_table() {
         {"Edit.SnapToFloor", "Snap to Floor", "Drop the selection onto the surface below it.", "Edit", global, {chord(Key::End)}},
         {"Edit.Hide", "Hide Selected", "Hide the selection in the editor. Play mode and saved content are not affected.", "Edit", global, {chord(Key::H)}},
         {"Edit.UnhideAll", "Unhide All", "Show everything hidden in the editor.", "Edit", global, {chord(Key::H, ctrl)}},
+
+        {"Outliner.NewFolder", "New Folder", "Add a folder to the hierarchy. Folders only organize the editor's view.", "Edit", global, {}},
+
+        {"Assets.ToggleDrawer", "Asset Drawer", "Slide the Asset Browser up over the editor, or away again.", "Assets", global, {chord(Key::Space, ctrl)}},
+        {"Assets.CloseDrawer", "Close Asset Drawer", "Slide the drawer away.", "Assets", std::string(context::asset_browser), {chord(Key::Escape)}},
+        {"Assets.FindInBrowser", "Find in Asset Browser", "Show the selected entity's asset.", "Assets", global, {chord(Key::B, ctrl)}},
+        {"Assets.EditAsset", "Edit Asset", "Open the selected entity's material in the Material Editor.", "Assets", global, {chord(Key::E, ctrl)}},
+        {"Asset.Assign", "Assign to Selection", "Give the selected asset to the selected entity.", "Assets", std::string(context::asset_browser), {}},
+        {"Asset.AddToScene", "Add to Scene", "Place the selected model in the scene.", "Assets", std::string(context::asset_browser), {}},
+        {"Asset.Edit", "Edit", "Open the selected material in the Material Editor.", "Assets", std::string(context::asset_browser), {}},
+        {"Asset.Reload", "Reload", "Read the selected asset from disk again.", "Assets", std::string(context::asset_browser), {}},
+        {"Asset.Rename", "Rename or Move", "Change the selected asset's path, keeping its references.", "Assets", std::string(context::asset_browser), {chord(Key::F2)}},
+        {"Asset.ToggleFavorite", "Favorite", "Keep the selected asset in Favorites.", "Assets", std::string(context::asset_browser), {}},
 
         {"Create.Cube", "Cube", "Add a cube.", "Create", global, {}},
         {"Create.Sphere", "Sphere", "Add a sphere.", "Create", global, {}},
@@ -285,6 +302,15 @@ std::vector<CommandInfo> default_command_table() {
 
         {"Window.UndoHistory", "Undo History", "Show every edit and jump to any of them.", "Window", global, {}},
         {"Window.KeyboardShortcuts", "Keyboard Shortcuts", "Search and change every shortcut.", "Window", global, {}},
+        {"Window.Toolbar", "Toolbar", "Show or hide this panel.", "Window", global, {}},
+        {"Window.Hierarchy", "Scene Hierarchy", "Show or hide this panel.", "Window", global, {}},
+        {"Window.Inspector", "Inspector", "Show or hide this panel.", "Window", global, {}},
+        {"Window.Lighting", "Lighting", "Show or hide this panel.", "Window", global, {}},
+        {"Window.MaterialEditor", "Material Editor", "Show or hide this panel.", "Window", global, {}},
+        {"Window.AssetBrowser", "Asset Browser", "Show or hide this panel.", "Window", global, {}},
+        {"Window.Console", "Console", "Show or hide this panel.", "Window", global, {}},
+        {"Window.SaveLayout", "Save Layout...", "Keep the arrangement of panels under a name.", "Window", global, {}},
+        {"Window.ResetLayout", "Reset Layout", "Put every panel back where it starts.", "Window", global, {}},
     };
     for (int slot = 0; slot < 10; ++slot) {
         const auto number = std::to_string(slot);

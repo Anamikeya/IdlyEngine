@@ -52,6 +52,11 @@ if(TARGET engine_editor_session)
 		SOURCES Editor/editor_viewport_tests.cpp
 		LIBRARIES engine_editor_session)
 	target_compile_definitions(editor_viewport_tests PRIVATE "GAMEENGINE_TEST_ASSETS_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/Assets\"")
+	gameengine_add_test_executable(editor_panels_tests
+		LABELS editor unit
+		SOURCES Editor/editor_panels_tests.cpp
+		LIBRARIES engine_editor_session)
+	target_compile_definitions(editor_panels_tests PRIVATE "GAMEENGINE_TEST_ASSETS_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/Assets\"")
 endif()
 
 if(TARGET engine::online_services)

@@ -13,7 +13,8 @@ bool EditorUI::texture_slot(const char *label, assets::MaterialTexture &slot) {
     return changed;
 }
 void EditorUI::material_editor() {
-    const bool open = begin_panel("Material Editor", "Material Editor", context::details);
+    if (!show_material) { renderer.set_material_preview({}); return; }
+    const bool open = begin_panel("Material Editor", "Material Editor", context::details, &show_material);
     const auto catalogue = session.assets();
     const auto chosen = std::find_if(catalogue.begin(), catalogue.end(), [&](const assets::AssetMetadata &a) { return a.id == selected_asset && a.type == assets::AssetType::Material; });
     if (chosen == catalogue.end() || !open) {

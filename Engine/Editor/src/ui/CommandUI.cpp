@@ -2,6 +2,7 @@
 #include "FileDialog.hpp"
 #include <engine/editor/EditorPrefs.hpp>
 #include <glm/gtc/quaternion.hpp>
+#include <algorithm>
 #include <array>
 #include <fstream>
 #include <stdexcept>
@@ -116,7 +117,80 @@ void EditorUI::bind_commands() {
     bind("Edit.Undo", [this] { report(session.undo(), "Undo"); }, [this] { return !playing() && session.can_undo() && !session.in_transaction(); });
     bind("Edit.Redo", [this] { report(session.redo(), "Redo"); }, [this] { return !playing() && session.can_redo() && !session.in_transaction(); });
     bind("Edit.Duplicate", [this] { duplicate_selection(); }, selected);
-    bind("Edit.Delete", [this] { delete_selection(); }, selected);
+    bind("Edit.Delete", [this] {
+        // A selected entity goes first: picking one in the viewport leaves the folder highlighted.
+        if (session.selection()) delete_selection();
+        else if (selected_folder) { report(session.delete_folder(selected_folder), "Folder deleted; what it held moved up"); selected_folder = 0; }
+    }, [this] { return session.selection() != 0 || selected_folder != 0; });
+    bind("Edit.Copy", [this] {
+        const auto text = session.copy_selection();
+        if (report(text, "Copied")) ImGui::SetClipboardText(text.value().c_str());
+    }, selected);
+    bind("Edit.Paste", [this] {
+        const auto *text = ImGui::GetClipboardText();
+        report(session.paste(text ? text : ""), "Pasted");
+    });
+    bind("Edit.Group", [this] { report(session.group_selection(), "Grouped"); }, selected);
+    bind("Edit.Rename", [this] {
+        if (const auto record = session.scene().inspect(session.selection())) {
+            std::snprintf(rename_text.data(), rename_text.size(), "%s", record->name.c_str());
+            rename_entity = record->id; rename_focus = true;
+            show_hierarchy = true;
+        } else if (const auto *folder = session.view_state().folders.find(selected_folder)) {
+            std::snprintf(rename_text.data(), rename_text.size(), "%s", folder->name.c_str());
+            rename_folder_id = selected_folder; rename_focus = true;
+        }
+    }, [this] { return session.selection() != 0 || selected_folder != 0; });
+    bind("Outliner.NewFolder", [this] {
+        const auto made = session.create_folder("New Folder", selected_folder);
+        if (report(made, "Folder created")) {
+            selected_folder = made.value(); session.select(0);
+            std::snprintf(rename_text.data(), rename_text.size(), "%s", "New Folder");
+            rename_folder_id = made.value(); rename_focus = true;
+        }
+    }, editing);
+    // ---- Assets ----
+    const auto selected_asset_meta = [this]() -> std::optional<assets::AssetMetadata> {
+        for (auto &meta : session.assets()) if (meta.id == selected_asset) return meta;
+        return std::nullopt;
+    };
+    const auto entity_asset = [this]() -> AssetRef {
+        const auto record = session.scene().inspect(session.selection());
+        if (!record || !record->components.mesh) return {};
+        const auto &mesh = *record->components.mesh;
+        return !mesh.mesh_asset.empty() ? mesh.mesh_asset : !mesh.material.empty() ? mesh.material : mesh.texture;
+    };
+    bind("Assets.ToggleDrawer", [this] { asset_drawer_open = !asset_drawer_open; asset_drawer_focus = asset_drawer_open; });
+    bind("Assets.CloseDrawer", [this] { asset_drawer_open = false; }, [this] { return asset_drawer_open; });
+    bind("Assets.FindInBrowser", [this, entity_asset] { reveal_asset(assets::AssetId{entity_asset().id}); }, [entity_asset] { return !entity_asset().empty(); });
+    const auto entity_material = [this]() -> AssetRef {
+        const auto record = session.scene().inspect(session.selection());
+        return record && record->components.mesh ? record->components.mesh->material : AssetRef{};
+    };
+    bind("Assets.EditAsset", [this, entity_material] {
+        selected_asset = assets::AssetId{entity_material().id};
+        show_material = true;
+        ImGui::SetWindowFocus("Material Editor");
+    }, [entity_material] { return !entity_material().empty(); });
+    bind("Asset.Assign", [this, selected_asset_meta] {
+        const auto meta = selected_asset_meta();
+        report(meta->type == assets::AssetType::Material ? session.assign_material(session.selection(), selected_asset) : session.assign_asset(session.selection(), selected_asset), "Asset assigned to the selected entity");
+    }, [this, selected_asset_meta] { const auto meta = selected_asset_meta(); return meta && session.selection() && meta->type != assets::AssetType::Environment; });
+    bind("Asset.AddToScene", [this] { report(session.place_asset(selected_asset), "Model added to the scene"); }, [selected_asset_meta] { const auto meta = selected_asset_meta(); return meta && meta->type == assets::AssetType::Mesh; });
+    bind("Asset.Edit", [this] { show_material = true; ImGui::SetWindowFocus("Material Editor"); }, [selected_asset_meta] { const auto meta = selected_asset_meta(); return meta && meta->type == assets::AssetType::Material; });
+    bind("Asset.Reload", [this] {
+        report(session.reload_asset(selected_asset), "Asset re-imported from disk");
+        thumbnails.erase(selected_asset);
+        renderer.forget_thumbnail(selected_asset.value);
+    }, [selected_asset_meta] { return selected_asset_meta().has_value(); });
+    bind("Asset.Rename", [this, selected_asset_meta] {
+        std::snprintf(rename_asset_path.data(), rename_asset_path.size(), "%s", selected_asset_meta()->path.c_str());
+        rename_asset_prompt = true;
+    }, [this, selected_asset_meta] { return !playing() && selected_asset_meta().has_value(); });
+    bind("Asset.ToggleFavorite", [this] {
+        settings.set("asset.favorite." + assets::to_string(selected_asset), !asset_is_favorite(selected_asset));
+        save_settings();
+    }, [selected_asset_meta] { return selected_asset_meta().has_value(); }, [this] { return asset_is_favorite(selected_asset); });
     bind("Edit.MoveToRoot", [this] { move_selection_to_root(); }, [this] {
         return std::ranges::any_of(session.selection_roots(), [this](EntityId id) { return session.scene().inspect(id)->parent != 0; });
     });
@@ -194,6 +268,19 @@ void EditorUI::bind_commands() {
     // ---- Window ----
     bind("Window.UndoHistory", [this] { show_history = !show_history; }, {}, [this] { return show_history; });
     bind("Window.KeyboardShortcuts", [this] { show_shortcuts = !show_shortcuts; }, {}, [this] { return show_shortcuts; });
+    const auto panel = [&bind](const char *id, bool &flag) { bind(id, [&flag] { flag = !flag; }, {}, [&flag] { return flag; }); };
+    panel("Window.Toolbar", show_toolbar);
+    panel("Window.Hierarchy", show_hierarchy);
+    panel("Window.Inspector", show_inspector);
+    panel("Window.Lighting", show_lighting);
+    panel("Window.MaterialEditor", show_material);
+    panel("Window.AssetBrowser", show_assets);
+    panel("Window.Console", show_console);
+    bind("Window.SaveLayout", [this] { layout_prompt = true; }, [this] { return !config_folder.empty(); });
+    bind("Window.ResetLayout", [this] {
+        show_toolbar = show_hierarchy = show_inspector = show_lighting = show_material = show_assets = show_console = true;
+        layout_reset_requested = true;
+    });
 }
 void EditorUI::load_keymap() {
     if (config_folder.empty()) return;
@@ -211,6 +298,10 @@ void EditorUI::save_keymap() {
     if (const auto saved = write_text_file(config_folder / "keymap.ini", registry.save_keymap()); !saved) log("Error: " + saved.error().message);
 }
 void EditorUI::route_shortcuts(bool rebinding_at_frame_start) {
+    // A panel's own close button sets its flag directly, so changes are noticed here.
+    std::string panels;
+    for (const bool *flag : panel_flags()) panels += *flag ? '1' : '0';
+    if (panels != saved_panels) save_settings();
     const auto &io = ImGui::GetIO();
     InputBlock block;
     block.text_input = io.WantTextInput;
@@ -256,7 +347,7 @@ void EditorUI::main_menu() {
         command_item("Edit.Undo", undo_label.c_str());
         command_item("Edit.Redo", redo_label.c_str());
         ImGui::Separator();
-        for (const auto *id : {"Edit.Duplicate", "Edit.Delete", "Edit.MoveToRoot", "Edit.SnapToFloor"}) command_item(id);
+        for (const auto *id : {"Edit.Copy", "Edit.Paste", "Edit.Duplicate", "Edit.Delete", "Edit.Rename", "Edit.Group", "Edit.MoveToRoot", "Edit.SnapToFloor"}) command_item(id);
         ImGui::Separator();
         for (const auto *id : {"Edit.SelectAll", "Edit.Deselect"}) command_item(id);
         ImGui::Separator();
@@ -301,7 +392,23 @@ void EditorUI::main_menu() {
     const bool open_window = ImGui::BeginMenu("Window");
     mark("Menu.Window");
     if (open_window) {
-        for (const auto *id : {"Window.UndoHistory", "Window.KeyboardShortcuts"}) command_item(id);
+        for (const auto *id : {"Window.Toolbar", "Window.Hierarchy", "Window.Inspector", "Window.Lighting", "Window.MaterialEditor", "Window.AssetBrowser", "Window.Console", "Window.UndoHistory", "Window.KeyboardShortcuts"}) command_item(id);
+        ImGui::Separator();
+        command_item("Assets.ToggleDrawer");
+        ImGui::Separator();
+        if (ImGui::BeginMenu("Layouts")) {
+            const auto layouts = saved_layouts();
+            if (layouts.empty()) ImGui::TextDisabled("None saved yet");
+            for (const auto &saved : layouts) {
+                if (ImGui::MenuItem(saved.c_str())) {
+                    if (const auto text = read_text_file(config_folder / "layouts" / utf8_path(saved + ".ini"))) pending_layout = text.value();
+                }
+                mark("Layout." + saved);
+            }
+            ImGui::EndMenu();
+        }
+        mark("Menu.Layouts");
+        for (const auto *id : {"Window.SaveLayout", "Window.ResetLayout"}) command_item(id);
         ImGui::EndMenu();
     }
     ImGui::EndMainMenuBar();
@@ -492,6 +599,11 @@ void EditorUI::load_settings() {
     session.view_flags.shadows = settings.flag("view.shadows", session.view_flags.shadows);
     session.view_flags.ambient_occlusion = settings.flag("view.ambient_occlusion", session.view_flags.ambient_occlusion);
     session.view_flags.bloom = settings.flag("view.bloom", session.view_flags.bloom);
+    constexpr const char *panel_keys[] = {"toolbar", "hierarchy", "inspector", "lighting", "material", "assets", "console"};
+    const auto flags = panel_flags();
+    for (std::size_t i = 0; i < flags.size(); ++i) *flags[i] = settings.flag(std::string("panel.") + panel_keys[i], *flags[i]);
+    saved_panels.clear();
+    for (const bool *flag : flags) saved_panels += *flag ? '1' : '0';
 }
 void EditorUI::save_settings() {
     if (config_folder.empty()) return;
@@ -510,6 +622,13 @@ void EditorUI::save_settings() {
     settings.set("view.shadows", session.view_flags.shadows);
     settings.set("view.ambient_occlusion", session.view_flags.ambient_occlusion);
     settings.set("view.bloom", session.view_flags.bloom);
+    constexpr const char *panel_keys[] = {"toolbar", "hierarchy", "inspector", "lighting", "material", "assets", "console"};
+    const auto flags = panel_flags();
+    saved_panels.clear();
+    for (std::size_t i = 0; i < flags.size(); ++i) {
+        settings.set(std::string("panel.") + panel_keys[i], *flags[i]);
+        saved_panels += *flags[i] ? '1' : '0';
+    }
     if (const auto saved = write_text_file(config_folder / "editor.ini", settings.text()); !saved) log("Error: " + saved.error().message);
 }
 std::string EditorUI::log_fields() const {
@@ -518,7 +637,60 @@ std::string EditorUI::log_fields() const {
            " fov=" + std::to_string(c.fov_degrees) + " ortho=" + std::to_string(c.orthographic ? 1 : 0) + " speed=" + std::to_string(camera_control.speed()) +
            " operation=" + std::to_string(operation) + " space=" + std::to_string(coordinates) + " hidden=" + std::to_string(session.view_state().hidden.size()) +
            " game_view=" + std::to_string(game_view ? 1 : 0) + " maximized=" + std::to_string(viewport_maximized ? 1 : 0) + " grid_size=" + std::to_string(snap.grid_size) +
-           " snap_grid=" + std::to_string(snap.grid ? 1 : 0);
+           " snap_grid=" + std::to_string(snap.grid ? 1 : 0) + " folders=" + std::to_string(session.view_state().folders.folders.size()) +
+           " members=" + std::to_string(session.view_state().folders.members.size()) + " locked=" + std::to_string(session.view_state().locked.size()) +
+           " drawer=" + std::to_string(asset_drawer_open ? 1 : 0) + " details_targets=" + std::to_string(details_targets.size()) + " details_locked=" + std::to_string(details_locked ? 1 : 0) +
+           " thumbnails=" + std::to_string(std::ranges::count_if(thumbnails, [this](const auto &entry) { return renderer.thumbnail(entry.first.value).texture != 0; })) +
+           " selected_asset=" + assets::to_string(selected_asset);
+}
+std::vector<std::string> EditorUI::saved_layouts() const {
+    std::vector<std::string> names;
+    std::error_code error;
+    for (std::filesystem::directory_iterator it(config_folder / "layouts", error), end; !error && it != end; it.increment(error))
+        if (it->path().extension() == ".ini") {
+            const auto stem = it->path().stem().u8string();
+            names.emplace_back(reinterpret_cast<const char *>(stem.data()), stem.size());
+        }
+    std::ranges::sort(names);
+    return names;
+}
+std::array<bool *, 7> EditorUI::panel_flags() { return {&show_toolbar, &show_hierarchy, &show_inspector, &show_lighting, &show_material, &show_assets, &show_console}; }
+void EditorUI::layout_dialog() {
+    if (std::exchange(layout_prompt, false)) ImGui::OpenPopup("Save layout");
+    if (!ImGui::BeginPopupModal("Save layout", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) return;
+    ImGui::TextUnformatted("A name for this arrangement of panels:");
+    if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
+    ImGui::SetNextItemWidth(px(280));
+    const bool entered = ImGui::InputText("##layout", layout_name.data(), layout_name.size(), ImGuiInputTextFlags_EnterReturnsTrue);
+    mark("Layout.Name");
+    if ((ImGui::Button("Save") || entered) && layout_name[0]) {
+        std::size_t size = 0;
+        const char *text = ImGui::SaveIniSettingsToMemory(&size);
+        // ImGui's settings say where windows are, not which are open, so that goes first, on a line ImGui skips.
+        std::string open = "; panels ";
+        for (const bool *flag : panel_flags()) open += *flag ? '1' : '0';
+        report(write_text_file(config_folder / "layouts" / utf8_path(std::string(layout_name.data()) + ".ini"), open + "\n" + std::string(text, size)), "Layout saved");
+        ImGui::CloseCurrentPopup();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Cancel")) ImGui::CloseCurrentPopup();
+    ImGui::EndPopup();
+}
+void EditorUI::apply_pending_layout() {
+    if (pending_layout.empty()) return;
+    // Between frames: ImGui takes settings only then, and the docks must be rebuilt from them.
+    constexpr std::string_view panels_line = "; panels ";
+    if (std::string_view(pending_layout).starts_with(panels_line)) {
+        const auto flags = panel_flags();
+        for (std::size_t i = 0; i < flags.size() && panels_line.size() + i < pending_layout.size(); ++i) {
+            const char state = pending_layout[panels_line.size() + i];
+            if (state == '0' || state == '1') *flags[i] = state == '1';
+        }
+    }
+    ImGui::DockContextClearNodes(ImGui::GetCurrentContext(), 0, true);
+    ImGui::LoadIniSettingsFromMemory(pending_layout.c_str(), pending_layout.size());
+    pending_layout.clear();
+    save_settings();
 }
 void EditorUI::begin_rebind(const std::string &id, int index) {
     rebind_command = id; rebind_index = index; rebind_chord = {};

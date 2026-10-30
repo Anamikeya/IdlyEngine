@@ -61,6 +61,8 @@ struct Host {
         ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_DockingEnable | ImGuiConfigFlags_NavEnableKeyboard;
         // A drag in the viewport is navigation, and must not move a floating viewport window.
         ImGui::GetIO().ConfigWindowsMoveFromTitleBarOnly = true;
+        // Number fields: drag to scrub, click to type.
+        ImGui::GetIO().ConfigDragClickToInputText = true;
         // The viewport draws its own drag readout, with a background, beside the cursor.
         ImGuizmo::GetStyle().Colors[ImGuizmo::TEXT] = {0, 0, 0, 0};
         ImGuizmo::GetStyle().Colors[ImGuizmo::TEXT_SHADOW] = {0, 0, 0, 0};
@@ -278,6 +280,7 @@ int main(int argc, char **argv) {
             if (width <= 0 || height <= 0) { glfwWaitEventsTimeout(0.05); continue; }
             ImGui_ImplGlfw_NewFrame();
             ui.popup_before_frame = ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel);
+            ui.apply_pending_layout();
             ImGui::NewFrame(); ImGuizmo::BeginFrame();
             ui.draw(); ImGui::Render();
             if (!ui.frame) { auto f = session.frame(4.0 / 3); if (f) ui.frame = f.value(); }

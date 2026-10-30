@@ -26,6 +26,10 @@ None fire while a text field has the keyboard, a dialog is open, a drag is in pr
 | Undo | `Ctrl+Z` | Global | `Edit.Undo` |
 | Redo | `Ctrl+Y`, `Ctrl+Shift+Z` | Global | `Edit.Redo` |
 | Duplicate | `Ctrl+D` | Global | `Edit.Duplicate` |
+| Copy | `Ctrl+C` | Global | `Edit.Copy` |
+| Paste | `Ctrl+V` | Global | `Edit.Paste` |
+| Group | `Ctrl+G` | Global | `Edit.Group` |
+| Rename | `F2` | Global | `Edit.Rename` |
 | Delete | `Delete` | Global | `Edit.Delete` |
 | Move to Root |  | Global | `Edit.MoveToRoot` |
 | Select All | `Ctrl+A` | Global | `Edit.SelectAll` |
@@ -33,6 +37,22 @@ None fire while a text field has the keyboard, a dialog is open, a drag is in pr
 | Snap to Floor | `End` | Global | `Edit.SnapToFloor` |
 | Hide Selected | `H` | Global | `Edit.Hide` |
 | Unhide All | `Ctrl+H` | Global | `Edit.UnhideAll` |
+| New Folder |  | Global | `Outliner.NewFolder` |
+
+## Assets
+
+| Command | Keys | Context | ID |
+|---|---|---|---|
+| Asset Drawer | `Ctrl+Space` | Global | `Assets.ToggleDrawer` |
+| Close Asset Drawer | `Esc` | AssetBrowser | `Assets.CloseDrawer` |
+| Find in Asset Browser | `Ctrl+B` | Global | `Assets.FindInBrowser` |
+| Edit Asset | `Ctrl+E` | Global | `Assets.EditAsset` |
+| Assign to Selection |  | AssetBrowser | `Asset.Assign` |
+| Add to Scene |  | AssetBrowser | `Asset.AddToScene` |
+| Edit |  | AssetBrowser | `Asset.Edit` |
+| Reload |  | AssetBrowser | `Asset.Reload` |
+| Rename or Move | `F2` | AssetBrowser | `Asset.Rename` |
+| Favorite |  | AssetBrowser | `Asset.ToggleFavorite` |
 
 ## Create
 
@@ -120,6 +140,15 @@ None fire while a text field has the keyboard, a dialog is open, a drag is in pr
 |---|---|---|---|
 | Undo History |  | Global | `Window.UndoHistory` |
 | Keyboard Shortcuts |  | Global | `Window.KeyboardShortcuts` |
+| Toolbar |  | Global | `Window.Toolbar` |
+| Scene Hierarchy |  | Global | `Window.Hierarchy` |
+| Inspector |  | Global | `Window.Inspector` |
+| Lighting |  | Global | `Window.Lighting` |
+| Material Editor |  | Global | `Window.MaterialEditor` |
+| Asset Browser |  | Global | `Window.AssetBrowser` |
+| Console |  | Global | `Window.Console` |
+| Save Layout... |  | Global | `Window.SaveLayout` |
+| Reset Layout |  | Global | `Window.ResetLayout` |
 
 ## Bookmarks
 
