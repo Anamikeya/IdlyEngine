@@ -160,6 +160,55 @@ function Double-Click-At { param([double]$X, [double]$Y)
     Start-Sleep -Milliseconds 120
 }
 
+# ---- Controls by name: the editor's --ui-map file says where each one is, in client pixels ----
+$script:uiMap = $null
+function Set-UiMap { param([string]$Path) $script:uiMap = $Path; Remove-Item $Path -ErrorAction SilentlyContinue }
+function Get-Widget { param([string]$Name, [int]$TimeoutMilliseconds = 4000)
+    $clock = [Diagnostics.Stopwatch]::StartNew()
+    do {
+        try {
+            $stream = [IO.File]::Open($script:uiMap, 'Open', 'Read', 'ReadWrite,Delete')
+            $reader = New-Object IO.StreamReader $stream
+            $text = $reader.ReadToEnd(); $reader.Close(); $stream.Close()
+            foreach ($line in $text -split "`n") {
+                $p = $line.Split("`t")
+                if ($p.Count -eq 5 -and $p[0] -ceq $Name) {
+                    $culture = [Globalization.CultureInfo]::InvariantCulture
+                    return @{ X0 = [double]::Parse($p[1], $culture); Y0 = [double]::Parse($p[2], $culture); X1 = [double]::Parse($p[3], $culture); Y1 = [double]::Parse($p[4], $culture) }
+                }
+            }
+        } catch [IO.IOException] { }
+        Start-Sleep -Milliseconds 50
+    } while ($clock.ElapsedMilliseconds -lt $TimeoutMilliseconds)
+    throw "The editor shows no control called '$Name'."
+}
+# Client-area fractions of a point inside a control; Fx and Fy are fractions of the control.
+function Get-WidgetPoint { param([string]$Name, [double]$Fx = 0.5, [double]$Fy = 0.5)
+    $w = Get-Widget $Name
+    Update-Window
+    return @((($w.X0 + $Fx * ($w.X1 - $w.X0)) / $script:width), (($w.Y0 + $Fy * ($w.Y1 - $w.Y0)) / $script:height))
+}
+function Click-Widget { param([string]$Name, [double]$Fx = 0.5, [double]$Fy = 0.5, [switch]$Right)
+    $p = Get-WidgetPoint $Name $Fx $Fy
+    Click-At $p[0] $p[1] -Right:$Right
+}
+function Double-Click-Widget { param([string]$Name, [double]$Fx = 0.5, [double]$Fy = 0.5)
+    $p = Get-WidgetPoint $Name $Fx $Fy
+    Double-Click-At $p[0] $p[1]
+}
+function Move-ToWidget { param([string]$Name, [double]$Fx = 0.5, [double]$Fy = 0.5)
+    $p = Get-WidgetPoint $Name $Fx $Fy
+    Move-To $p[0] $p[1]
+    # Hover needs a real movement, and a few frames.
+    [Win32Input]::Mouse(1, 0, 1); Start-Sleep -Milliseconds 80
+}
+# A row of the list a combo has opened, counted from zero. Its rows are not named, so this goes by the combo's own height.
+function Click-ComboRow { param([string]$Name, [int]$Row)
+    $w = Get-Widget $Name
+    $unit = ($w.Y1 - $w.Y0) / 23
+    Update-Window
+    Click-At (($w.X0 + 0.5 * ($w.X1 - $w.X0)) / $script:width) (($w.Y1 + (8 + ($Row + 0.5) * 17) * $unit) / $script:height)
+}
 # A release is always sent: a button left down would be worse wherever focus went.
 function Mouse-Button { param([bool]$Down)
     if ($Down) { Assert-EditorFocused }
