@@ -21,6 +21,7 @@ Real mouse and keyboard runs are scripts, on a Release build, with no one using 
 powershell -ExecutionPolicy Bypass -File Tests/RealInput/shooter_acceptance.ps1 -Editor <engine_editor.exe> -Output <folder>
 powershell -ExecutionPolicy Bypass -File Tests/RealInput/editor_workflow.ps1 -Editor <engine_editor.exe> -Output <folder>
 powershell -ExecutionPolicy Bypass -File Tests/RealInput/editor_ux_phase1.ps1 -Editor <engine_editor.exe> -Output <folder>
+powershell -ExecutionPolicy Bypass -File Tests/RealInput/editor_ux_phase2.ps1 -Editor <engine_editor.exe> -Output <folder>
 ```
 
 They use a settings folder of their own (`--config-dir`) and find controls by name (`--ui-map`).
@@ -51,7 +52,7 @@ LIBRARIES ...)` (`cmake/GameEngineTesting.cmake`). After each build the executab
 runs in a fresh process, which isolates process-global state such as Box3D's world table.
 Case names must be unique within an executable.
 
-## Current suites (268 CTest entries)
+## Current suites (315 CTest entries)
 
 | Executable | Labels | Cases | Covers |
 |---|---|---|---|
@@ -62,6 +63,7 @@ Case names must be unique within an executable.
 | `systems_smoke_tests` | integration, smoke | 1 | OBJ asset sizes a collider, physics drives a scene entity, `extract_frame` sees the published pose |
 | `editor_dependency_smoke` | editor, smoke | 2 | `gameengine::imgui` renders frames through ImGui's null backend (no window, no GPU); `gameengine::glfw` links and reports its version without `glfwInit` |
 | `editor_ux_tests` | editor, unit | 61 | The editor's foundation without a window: chords, command registry, context routing, input blocks, conflicts, keymap files, the default command table and its generated document, bus and session transactions, history order and jumps, gizmo drags, selection, property tables |
+| `editor_viewport_tests` | editor, unit | 47 | The viewport without a window: the camera state machine and every navigation mode, field of view, eased moves, framing, rays, snapping to the floor, vertex snapping, Alt+drag, hiding, view state files, orthographic views, grid and show flags, settings files |
 | `networking_tests` | networking, unit | 41 | Serialization, loopback transport, connection manager |
 | `online_services_tests` | online, unit | 7 | NullOnlineService |
 | `engine_core_tests` | none | 1 entry, 24 scenarios | `engine.core.acceptance`: scene, commands, undo, components, serialization of all format versions, malformed input |

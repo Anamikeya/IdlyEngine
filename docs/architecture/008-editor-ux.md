@@ -20,8 +20,8 @@ route_shortcuts()            Turns key presses into chords and dispatches them.
 command that cannot run now is passed over. Nothing fires while a text field has the keyboard, a popup or dialog is open,
 a drag is in progress, the game holds the mouse, or the Keyboard Shortcuts panel is waiting for keys.
 
-**Settings** live in `%APPDATA%\GameEngine\`: `keymap.ini` holds only what differs from the defaults, and `layout.ini` is
-ImGui's layout. `--config-dir <folder>` points somewhere else. `--smoke` and `--render-test` use none.
+**Settings** live in `%APPDATA%\GameEngine\`: `keymap.ini` holds only what differs from the defaults, `layout.ini` is
+ImGui's layout, and `editor.ini` holds small values like camera speed. `--config-dir <folder>` points somewhere else. `--smoke` and `--render-test` use none.
 
 ### How to add a command
 
@@ -63,6 +63,22 @@ A gizmo drag uses `begin_drag`, `update_drag` and `end_drag`, or `cancel_drag`.
 
 Known limit: `CommandBus::execute` copies the scene on each call. One live drag step with its dirty check takes about
 32 ms at 10,000 entities, which is too slow for 60 Hz at that size. The sample has 73.
+
+## Viewport navigation
+
+`CameraController` (`engine/editor/CameraController.hpp`) is a state machine with no ImGui or GLFW: the host fills a
+`CameraInput` each frame and it updates the `OrbitCamera`. A mode starts on a button press over the view, and lasts until
+the buttons that started it come up, wherever the mouse has gone. `holds_cursor()` tells the host to hide and hold the
+cursor; GLFW puts it back on release. `clicked()` reports an LMB that came up without dragging, which is what selects.
+
+**Keys held while flying** are commands in the `Flying` context, so they can be rebound and W can still mean the move
+gizmo otherwise. They are never dispatched; `EditorUI::update_camera` reads them with `key_held`. Mouse gestures are listed
+by `mouse_gestures()`, and cannot be rebound yet.
+
+**Editor-only state of a scene** (`EditorViewState`: hidden entities, bookmarks) is saved at once in
+`<scene file>.editor`, and removed when empty. It joins no undo step and does not make the scene dirty.
+
+**Settings** such as camera speed, snap values and show flags are in `editor.ini`, through `EditorSettings`.
 
 ## Selection
 

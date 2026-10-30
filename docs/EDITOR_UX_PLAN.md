@@ -3,7 +3,7 @@
 Branch `feature/ui-ux`, worktree `D:\AI\GameEngine-Integration`, created from `main` at `8d12a03` (Milestone 4 merged).
 Reference: `docs/UNREAL_UX_REFERENCE.md`. Blueprints are out of scope.
 
-**Status: Phase 1 done, waiting for approval to start Phase 2.** Results and deviations are in section 9.
+**Status: Phase 2 done, waiting for approval to start Phase 3.** Results and deviations are in section 9.
 
 ## 1. Audit
 
@@ -287,6 +287,7 @@ Both MSVC presets build into fresh `build-ux-windows-msvc-release` and `-ci` fol
 - 2026-10-30: Step 0 audit and plan written. No build run, no code changed. Waiting for approval.
 - 2026-10-30: Plan approved, with the three recommendations: first Esc pauses and second Esc stops, separate OS windows after Phase 5, Alt+2 and Alt+3 greyed out and mouse gestures read-only at first.
 - 2026-10-30: Phase 1 done.
+- 2026-10-30: Phase 2 done.
 
 ### Phase 1 checklist
 
@@ -326,3 +327,44 @@ Both MSVC presets build into fresh `build-ux-windows-msvc-release` and `-ci` fol
 - The key press that finished a rebinding also ran the command it had just been bound to.
 - Esc that closed a menu, or cancelled a rebinding, also cleared the selection.
 - A keymap line ending in a lone `,` key failed to parse.
+
+### Phase 2 checklist
+
+- [x] Camera state machine: `CameraController`, with no ImGui or GLFW, unit tested
+- [x] RMB + WASD fly, Q/E, Z/C temporary field of view, RMB + wheel speed with an overlay, Shift faster, smooth acceleration
+- [x] Alt+LMB orbit around the selection, Alt+RMB dolly, Alt+MMB pan; LMB drag walk, RMB look, MMB pan, LMB + RMB up and sideways
+- [x] Cursor hidden and held during navigation, and put back where it was
+- [x] Camera speed saved between sessions
+- [x] F frames the whole selection with a 0.2 s ease
+- [x] Bookmarks: Ctrl+0-9 store, 0-9 ease back, saved beside the scene
+- [x] Alt+G/H/J/K perspective, front, top, side
+- [x] W/E/R, Space, Ctrl+`; hover highlight, plane handles and constant size come from ImGuizmo
+- [x] Live readout near the cursor
+- [x] Alt+drag copies and moves the copies in one step; Shift+drag takes the camera along; hold V for a vertex; Esc cancels
+- [x] Snapping overlay in the top right: toggle, presets, `[` and `]`, camera speed; the grid follows the size
+- [x] End snaps to the surface below; models dragged from the Asset Browser land at the cursor's ray
+- [x] G game view, F11 maximize, H and Ctrl+H hide and unhide
+- [x] View and show-flags menus in the top left
+
+### Phase 2 deviations
+
+- **`OrbitCamera` stays a pivot, two angles and a distance.** The plan expected it to become a position and an orientation. Flying just moves the pivot along with the eye, so nothing needed replacing and every existing use kept working.
+- **Clicks select on release, not on press,** because a press may turn out to be an LMB drag.
+- **Hidden entities and bookmarks are in `<scene>.scene.editor`,** beside the scene and ignored by git: they are one person's view of a scene. Scene files are untouched.
+- **Hiding takes the children along,** and only hides in the editor: Play mode ignores it.
+- **The gizmo disappears during Shift+drag.** Its maths needs a view that does not move (see the bug below), so it works from a frozen view and would be drawn in the wrong place. The selection box and readout stay.
+- **An orthographic view has no sky, no orbiting and no flying.** A sky means nothing in a parallel view. RMB pans, as in Unreal.
+- **End does nothing for an object already at or below the ground plane with nothing under it,** and says so. Models are tested by their bounding box, as picking is.
+- **Wireframe and Unlit are grey,** as agreed: the renderer has neither.
+
+### Phase 2 known limits
+
+- **The grid is 40 by 40 cells around the world origin.** At a 0.01 m size it covers only 40 cm, and it does not follow the camera.
+- **Not driven with real input:** rotation and scale snapping, the show flags, Alt+drag on a multi-selection, and navigating during Play in a scene with no game. S, A, D, Q and C while flying are covered by unit tests; the script drives W, E and Z.
+- **Large scenes:** the 32 ms per drag step at 10,000 entities from Phase 1 is unchanged.
+
+### Phase 2 bugs found by running it
+
+- **Shift+drag ran away:** an 80-pixel move sent the object 34 m, because the gizmo measured the cursor against a camera that was moving with the object. Only real input showed it.
+- ImGuizmo's own delta text doubled the new readout.
+- The procedural sky drew as a dark bull's-eye in orthographic views.
