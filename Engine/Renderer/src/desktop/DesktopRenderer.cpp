@@ -598,7 +598,13 @@ struct DesktopRenderer::Impl {
             if (wanted) { scene->addEntity(sun); scene->addEntity(fill); } else { scene->remove(sun); scene->remove(fill); }
             editor_lights = wanted;
         }
-        if (wanted) lm.setShadowOptions(lm.getInstance(sun), directional);
+        if (wanted) {
+            lm.setShadowOptions(lm.getInstance(sun), directional);
+            // They exist to show the scene, so they follow its exposure: an indoor EV100 must not burn it out.
+            const auto stops = float(std::pow(2.0, e.ev100 - 15));
+            lm.setIntensity(lm.getInstance(sun), 100000 * stops);
+            lm.setIntensity(lm.getInstance(fill), 30000 * stops);
+        }
         if (frame.show_grid != grid_shown) {
             if (frame.show_grid) scene->addEntity(grid); else scene->remove(grid);
             grid_shown = frame.show_grid;
@@ -711,6 +717,8 @@ RendererStats DesktopRenderer::stats() const {
     for (const auto &[key, object] : p.objects) { (void)key; s.parts += object.parts.size(); s.material_instances += object.parts.size(); }
     s.meshes = asset_mesh_count(); s.textures = p.textures.size();
     s.environment_builds = p.environment_builds;
+    for (const auto &info : p.renderer->getFrameInfoHistory(4))
+        if (info.gpuFrameDuration > 0) { s.gpu_frame_ms = double(info.gpuFrameDuration) / 1e6; break; }
     return s;
 }
 std::size_t DesktopRenderer::object_count() const { return impl_->objects.size(); }

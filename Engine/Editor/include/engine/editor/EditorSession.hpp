@@ -27,6 +27,12 @@ struct OrbitCamera {
 
 enum class PlayState { Editing, Playing, Paused };
 
+// Time spent in fixed ticks, since the session began.
+struct SimulationTiming {
+    std::uint64_t ticks = 0;
+    std::chrono::nanoseconds physics{0}, physics_max{0}, gameplay{0};
+};
+
 // What an import left in the asset folder.
 struct ImportedAsset {
     assets::AssetId id;
@@ -58,6 +64,7 @@ class EditorSession {
     std::unique_ptr<Runtime> runtime_;
     std::string physics_error_; // Last runtime physics failure; Play is paused when one occurs.
     std::uint64_t play_sessions_ = 0;
+    SimulationTiming timing_;
     EntityId selected_ = 0;
     std::uint64_t frame_ = 0;
     // Entities as last saved, loaded or started fresh; the document is dirty when the scene differs.
@@ -164,6 +171,7 @@ public:
     // Each tick steps the runtime physics.
     void update(std::chrono::nanoseconds elapsed);
     std::uint64_t runtime_ticks() const;
+    const SimulationTiming &timing() const { return timing_; }
     // The game the running scene's behaviors set up; null in edit mode and for scenes without one.
     gameplay::Game *game() const;
 

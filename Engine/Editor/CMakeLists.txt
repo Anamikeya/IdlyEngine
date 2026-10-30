@@ -107,4 +107,6 @@ option(ENGINE_EDITOR_GPU_TESTS "Register visible desktop GPU smoke test (require
 if(ENGINE_EDITOR_GPU_TESTS)
     add_test(NAME engine.editor.gpu COMMAND engine_editor --smoke)
     set_tests_properties(engine.editor.gpu PROPERTIES TIMEOUT 120 LABELS "gpu;desktop")
+    add_test(NAME engine.editor.render COMMAND engine_editor --render-test "${CMAKE_CURRENT_BINARY_DIR}/render-test")
+    set_tests_properties(engine.editor.render PROPERTIES TIMEOUT 240 LABELS "gpu;desktop")
 endif()

@@ -438,12 +438,20 @@ std::uint64_t EditorSession::runtime_ticks() const { return runtime_ ? runtime_-
 void EditorSession::tick() {
     auto &r = *runtime_;
     ++r.ticks;
+    const auto start = std::chrono::steady_clock::now();
     if (r.game) r.game->pre_physics();
+    const auto before_physics = std::chrono::steady_clock::now();
     if (auto report = r.physics->fixed_update(fixed_step, r.scene, r.bus, physics_context); !report) {
         physics_error_ = "Physics stopped: " + report.error().message;
         r.paused = true;
     }
+    const auto after_physics = std::chrono::steady_clock::now();
     if (r.game) r.game->post_physics();
+    const auto end = std::chrono::steady_clock::now();
+    ++timing_.ticks;
+    timing_.physics += after_physics - before_physics;
+    timing_.physics_max = std::max<std::chrono::nanoseconds>(timing_.physics_max, after_physics - before_physics);
+    timing_.gameplay += (before_physics - start) + (end - after_physics);
     reconcile();
 }
 void EditorSession::sync_physics() {

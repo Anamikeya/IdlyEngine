@@ -293,14 +293,25 @@ void shadows(Harness &h) {
     h.session.camera.target = {0, 0, 0}; h.session.camera.pitch = 1.5; h.session.camera.yaw = 0; h.session.camera.distance = 7;
     Transform floor; floor.scale = {12, 1, 12};
     h.add("Floor", floor, {MeshComponent{BuiltinMesh::Plane, {0.8, 0.8, 0.8}, 0.9, 0}, {}, {}});
-    Transform box; box.position = {-1.3, 1.5, 0.3}; box.scale = {0.8, 0.3, 0.8};
-    h.add("Box", box, {MeshComponent{BuiltinMesh::Cube, {0.8, 0.8, 0.8}, 0.9, 0}, {}, {}});
+    // The box is half way between the light and the floor, off to one side: its shadow lands at twice the distance.
+    Transform box; box.position = {1.5, 2, 0.3}; box.scale = {0.8, 0.2, 0.8};
+    const auto blocker = h.add("Box", box, {MeshComponent{BuiltinMesh::Cube, {0.8, 0.8, 0.8}, 0.9, 0}, {}, {}});
     LightComponent spot; spot.type = LightType::Spot; spot.intensity = 3000; spot.range = 12; spot.inner_cone_degrees = 50; spot.outer_cone_degrees = 60; spot.cast_shadows = true;
-    h.add("Spot", aimed({-1.3, 4, 0.3}, -90, 0), {{}, {}, spot});
-    // Beside the box's image, the floor the spot reaches. Under it, seen around the box at this camera height, the shadow.
-    const auto spot_lit = h.pixel(0.46f, 0.537f);
-    h.check(brightness(spot_lit) > 10, "spot light reaches the floor", text(spot_lit));
+    const auto lamp = h.add("Spot", aimed({0, 4, 0}, -90, 0), {{}, {}, spot});
+    const float shadow_u = 0.5f + 3.0f / 12.94f, mirror_u = 0.5f - 3.0f / 12.94f, row2 = 0.5f + 0.6f / 8.08f;
+    const auto spot_lit = h.pixel(mirror_u, row2), spot_dark = h.pixel(shadow_u, row2);
+    h.check(brightness(spot_lit) > 2 * brightness(spot_dark) && brightness(spot_lit) > 20, "spot light casts a shadow", "lit " + text(spot_lit) + ", shadowed " + text(spot_dark));
     h.capture("spot_shadow");
+    auto no_shadow = spot; no_shadow.cast_shadows = false;
+    if (!h.session.execute(commands::SetLight{lamp, no_shadow})) throw std::runtime_error("Light failed");
+    const auto spot_open = h.pixel(shadow_u, row2);
+    h.check(brightness(spot_open) > 2 * brightness(spot_dark), "turning a light's shadows off removes them", text(spot_open));
+    // A point light casts too.
+    LightComponent point = spot; point.type = LightType::Point;
+    if (!h.session.execute(commands::SetLight{lamp, point})) throw std::runtime_error("Light failed");
+    const auto point_lit = h.pixel(mirror_u, row2), point_dark = h.pixel(shadow_u, row2);
+    h.check(brightness(point_lit) > 2 * brightness(point_dark) && brightness(point_lit) > 10, "point light casts a shadow", "lit " + text(point_lit) + ", shadowed " + text(point_dark));
+    (void)blocker;
 }
 void environment_lighting(Harness &h) {
     // A panel with no direct light: black with no environment, lit by the sky, and brighter with more intensity.
@@ -341,6 +352,21 @@ void environment_lighting(Harness &h) {
     h.environment(bicolor);
     const auto up = h.pixel(0.5f, 0.1f), down = h.pixel(0.5f, 0.9f);
     h.check(up[2] > up[0] && down[0] > down[2], "sky is above, ground below", "top " + text(up) + ", bottom " + text(down));
+}
+void editor_lights_follow_exposure(Harness &h) {
+    // No lights in the scene: the editor's own show it the same at any exposure.
+    h.reset();
+    if (!h.session.new_scene()) throw std::runtime_error("New scene failed");
+    EnvironmentComponent e; e.source = EnvironmentSource::None; e.tone_mapping = ToneMapping::Linear; e.bloom = false; e.ambient_occlusion = false; e.shadow_quality = ShadowQuality::Off;
+    h.environment(e);
+    h.session.camera.pitch = 0.4;
+    Transform t; t.scale = {3, 3, 3};
+    h.add("Box", t, {MeshComponent{BuiltinMesh::Cube, {0.6, 0.6, 0.6}, 0.9, 0}, {}, {}});
+    const auto daylight = h.pixel(0.53f, 0.45f);
+    e.ev100 = 6;
+    h.environment(e);
+    const auto indoor = h.pixel(0.53f, 0.45f);
+    h.check(brightness(daylight) > 60 && std::abs(brightness(daylight) - brightness(indoor)) < 30, "editor lights follow the scene's exposure", "EV 15 " + text(daylight) + ", EV 6 " + text(indoor));
 }
 void punctual_lights(Harness &h) {
     h.reset();
@@ -426,6 +452,7 @@ int run_render_test(GLFWwindow *window, const fs::path &materials, const fs::pat
         missing_texture(h);
         shadows(h);
         environment_lighting(h);
+        editor_lights_follow_exposure(h);
         punctual_lights(h);
         resource_lifecycle(h);
         const fs::path sample = fs::path(ENGINE_SAMPLES_DIR) / "PhysicsShooter";

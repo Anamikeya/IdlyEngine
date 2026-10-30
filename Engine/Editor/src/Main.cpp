@@ -275,9 +275,12 @@ struct EditorUI {
         if (std::exchange(project_prompt, false)) ImGui::OpenPopup("Project folder");
         if (!ImGui::BeginPopupModal("Project folder", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) return;
         ImGui::TextUnformatted(project_create ? "Create an empty project in this folder:" : "Open the project in this folder:");
-        ImGui::SetNextItemWidth(px(480)); ImGui::InputText("##project", project_path.data(), project_path.size());
+        // The field takes the keyboard at once, and Enter accepts: a dialog with one question should not need the mouse.
+        if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
+        ImGui::SetNextItemWidth(px(480));
+        const bool entered = ImGui::InputText("##project", project_path.data(), project_path.size(), ImGuiInputTextFlags_EnterReturnsTrue);
         ImGui::BeginDisabled(!project_path[0]);
-        if (ImGui::Button(project_create ? "Create" : "Open")) { ImGui::CloseCurrentPopup(); request(project_create ? Pending::NewProject : Pending::OpenProject); }
+        if ((ImGui::Button(project_create ? "Create" : "Open") || entered) && project_path[0]) { ImGui::CloseCurrentPopup(); request(project_create ? Pending::NewProject : Pending::OpenProject); }
         ImGui::EndDisabled();
         ImGui::SameLine(); if (ImGui::Button("Cancel")) ImGui::CloseCurrentPopup();
         ImGui::EndPopup();
@@ -894,6 +897,7 @@ struct EditorUI {
     }
     // Decodes on a worker; the Console reports when it lands, with how long it took.
     std::map<std::string, std::chrono::steady_clock::time_point> import_started;
+    std::vector<std::pair<std::string, long long>> import_times; // For --perf-log.
     void import_file(const std::filesystem::path &file) {
         import_started[file.string()] = std::chrono::steady_clock::now();
         session.begin_import(file);
@@ -907,6 +911,7 @@ struct EditorUI {
             if (!finished.result) { log("Import failed: " + finished.result.error().message); continue; }
             const auto &asset = finished.result.value();
             log("Imported " + asset.path + " as a " + assets::to_string(asset.type) + " in " + std::to_string(took) + " ms");
+            import_times.emplace_back(asset.path, static_cast<long long>(took));
             for (const auto &warning : asset.warnings) log("Warning: " + asset.path + ": " + warning);
             selected_asset = asset.id;
         }
@@ -1148,35 +1153,80 @@ struct EditorUI {
     }
 };
 }
+// What the session is doing, as text, for acceptance runs (--game-log): 20 lines a second of state, and once a second
+// where every body is. Real-input runs read it to check results that a capture cannot show exactly.
+struct StateLog {
+    std::ofstream out;
+    std::chrono::steady_clock::time_point last_line{}, last_bodies{};
+    void write(const editor::EditorSession &session) {
+        if (!out.is_open()) return;
+        const auto now = std::chrono::steady_clock::now();
+        if (now - last_line < std::chrono::milliseconds(50)) return;
+        last_line = now;
+        const char *state = session.play_state() == editor::PlayState::Editing ? "editing" : session.play_state() == editor::PlayState::Paused ? "paused" : "playing";
+        out << "state=" << state << " tick=" << session.runtime_ticks() << " entities=" << session.scene().size() << " revision=" << session.commands().revision() << " dirty=" << (session.dirty() ? 1 : 0);
+        if (auto *game = session.game()) {
+            const auto hud = game->hud();
+            out << " phase=" << gameplay::to_string(hud.phase) << " score=" << hud.score << " targets=" << hud.targets_remaining << " time=" << hud.time_remaining
+                << " ammo=" << hud.ammo << " reserve=" << hud.reserve << " reloading=" << (hud.reloading ? 1 : 0) << " grounded=" << (game->grounded() ? 1 : 0) << " shots=" << game->shots().size();
+            if (const auto w = session.scene().world_transform(game->camera())) out << " eye=" << w->matrix[12] << ',' << w->matrix[13] << ',' << w->matrix[14];
+            for (const auto &e : session.scene().snapshot().entities)
+                if (std::ranges::any_of(e.components.behaviors, [](const BehaviorComponent &b) { return b.type == "target"; }))
+                    if (const auto w = session.scene().world_transform(e.id)) {
+                        std::string name = e.name;
+                        std::ranges::replace(name, ' ', '_');
+                        out << " t:" << name << '=' << w->matrix[12] << ',' << w->matrix[13] << ',' << w->matrix[14];
+                    }
+        }
+        out << '\n';
+        if (session.game() && now - last_bodies >= std::chrono::seconds(1)) {
+            last_bodies = now;
+            out << "bodies";
+            for (const auto &e : session.scene().snapshot().entities)
+                if (e.components.body && e.components.body->kind == BodyKind::Dynamic) {
+                    std::string name = e.name;
+                    std::ranges::replace(name, ' ', '_');
+                    const auto &p = e.transform.position;
+                    out << ' ' << name << '=' << p.x << ',' << p.y << ',' << p.z;
+                }
+            out << '\n';
+        }
+        out.flush();
+    }
+};
 // Frame, physics and render timings over the run, for --perf-log. Measured here, in the release loop, not estimated.
 struct PerformanceLog {
     std::chrono::nanoseconds startup{0};
     std::vector<float> frame_ms;
-    double tick_ms_total = 0, tick_ms_max = 0, render_ms_total = 0;
-    std::uint64_t ticks = 0, frames = 0;
+    double render_ms_total = 0, gpu_ms_total = 0;
+    std::uint64_t frames = 0, loops = 0, gpu_samples = 0;
+    std::chrono::steady_clock::time_point last_drawn{};
     renderer::RendererStats last;
     int bodies = 0;
-    void simulated(std::uint64_t count, std::chrono::nanoseconds took) {
-        if (!count) return;
-        const double each = std::chrono::duration<double, std::milli>(took).count() / double(count);
-        tick_ms_total += each * double(count); ticks += count;
-        tick_ms_max = std::max(tick_ms_max, each);
-    }
-    void rendered(std::chrono::nanoseconds elapsed, std::chrono::nanoseconds took, const renderer::RendererStats &stats, int body_count) {
-        if (frames++ > 10) frame_ms.push_back(std::chrono::duration<float, std::milli>(elapsed).count()); // Skips start-up frames.
+    // Filament may skip a frame when the GPU is behind, so only frames it drew count.
+    void rendered(bool drawn, std::chrono::nanoseconds took, const renderer::RendererStats &stats, int body_count) {
+        ++loops;
+        if (!drawn) return;
+        const auto now = std::chrono::steady_clock::now();
+        if (frames++ > 10) frame_ms.push_back(std::chrono::duration<float, std::milli>(now - last_drawn).count()); // Skips start-up frames.
+        last_drawn = now;
         render_ms_total += std::chrono::duration<double, std::milli>(took).count();
+        if (stats.gpu_frame_ms > 0) { gpu_ms_total += stats.gpu_frame_ms; ++gpu_samples; }
         last = stats; bodies = body_count;
     }
-    void write(const std::filesystem::path &path) {
+    void write(const std::filesystem::path &path, const editor::SimulationTiming &timing) {
         std::ofstream out(path);
         std::sort(frame_ms.begin(), frame_ms.end());
         const auto percentile = [&](double p) { return frame_ms.empty() ? 0.f : frame_ms[std::min(std::size_t(p * double(frame_ms.size())), frame_ms.size() - 1)]; };
+        const auto per_tick = [&](std::chrono::nanoseconds total) { return timing.ticks ? std::chrono::duration<double, std::milli>(total).count() / double(timing.ticks) : 0.0; };
         double total = 0;
         for (const float v : frame_ms) total += v;
-        out << "startup_ms " << std::chrono::duration<double, std::milli>(startup).count() << "\nframes " << frames
+        out << "startup_ms " << std::chrono::duration<double, std::milli>(startup).count() << "\nframes_drawn " << frames << "\nloops " << loops
             << "\nframe_ms_mean " << (frame_ms.empty() ? 0.0 : total / double(frame_ms.size())) << "\nframe_ms_p50 " << percentile(0.5) << "\nframe_ms_p99 " << percentile(0.99)
             << "\nrender_submit_ms_mean " << (frames ? render_ms_total / double(frames) : 0.0)
-            << "\nticks " << ticks << "\ntick_ms_mean " << (ticks ? tick_ms_total / double(ticks) : 0.0) << "\ntick_ms_max " << tick_ms_max
+            << "\ngpu_frame_ms_mean " << (gpu_samples ? gpu_ms_total / double(gpu_samples) : 0.0)
+            << "\nticks " << timing.ticks << "\nphysics_step_ms_mean " << per_tick(timing.physics) << "\nphysics_step_ms_max " << std::chrono::duration<double, std::milli>(timing.physics_max).count()
+            << "\ngameplay_tick_ms_mean " << per_tick(timing.gameplay)
             << "\nbodies " << bodies << "\nobjects " << last.objects << "\nprimitives " << last.parts << "\nlights " << last.lights
             << "\ngpu_asset_meshes " << last.meshes << "\ngpu_asset_textures " << last.textures << "\nmaterial_instances " << last.material_instances << "\nibl_builds " << last.environment_builds << '\n';
     }
@@ -1185,7 +1235,7 @@ int main(int argc, char **argv) {
     try {
         const auto program_start = std::chrono::steady_clock::now();
         bool smoke = false, open_sample_at_start = false;
-        std::filesystem::path project = std::filesystem::current_path(), render_test_output, perf_log;
+        std::filesystem::path project = std::filesystem::current_path(), render_test_output, perf_log, game_log, start_scene;
         for (int i = 1; i < argc; ++i) {
             const std::string_view arg = argv[i];
             if (arg == "--smoke") smoke = true;
@@ -1193,7 +1243,9 @@ int main(int argc, char **argv) {
             else if (arg == "--sample") open_sample_at_start = true;
             else if (arg == "--render-test" && i + 1 < argc) render_test_output = utf8_path(argv[++i]);
             else if (arg == "--perf-log" && i + 1 < argc) perf_log = utf8_path(argv[++i]);
-            else throw std::runtime_error("Usage: engine_editor [--project <folder>] [--sample] [--smoke] [--render-test <folder>] [--perf-log <file>]");
+            else if (arg == "--game-log" && i + 1 < argc) game_log = utf8_path(argv[++i]);
+            else if (arg == "--scene" && i + 1 < argc) start_scene = utf8_path(argv[++i]);
+            else throw std::runtime_error("Usage: engine_editor [--project <folder>] [--scene <file>] [--sample] [--smoke] [--render-test <folder>] [--perf-log <file>] [--game-log <file>]");
         }
         Host host; host.start();
         if (smoke || !render_test_output.empty()) ImGui::GetIO().IniFilename = nullptr;
@@ -1214,6 +1266,12 @@ int main(int argc, char **argv) {
         EditorUI ui(session, renderer, game_input, host.window);
         if (!project_opened) ui.log("Error: " + project_opened.error().message);
         if (open_sample_at_start) ui.open_sample();
+        if (!start_scene.empty()) {
+            ui.set_scene_path(start_scene);
+            ui.report(session.load(start_scene), "Scene loaded");
+        }
+        StateLog state_log;
+        if (!game_log.empty()) state_log.out.open(game_log);
         int frame = 0, rendered = 0;
         SceneSnapshot before_play;
         std::uint64_t revision_before_play = 0;
@@ -1245,11 +1303,9 @@ int main(int argc, char **argv) {
             escape_was_down = escape_down;
             auto *game = session.game();
             if (game && game_input.captured) game_input.feed(host.window, *game);
-            const auto update_start = std::chrono::steady_clock::now();
-            const auto ticks_before = session.runtime_ticks();
             session.update(elapsed);
             if (game) game->update_view();
-            performance.simulated(session.runtime_ticks() - ticks_before, std::chrono::steady_clock::now() - update_start);
+            state_log.write(session);
             if (const auto title = ui.title(); title != shown_title) { glfwSetWindowTitle(host.window, title.c_str()); shown_title = title; }
             host.follow_monitor();
             int width, height; glfwGetFramebufferSize(host.window, &width, &height);
@@ -1258,9 +1314,11 @@ int main(int argc, char **argv) {
             ui.draw(); ImGui::Render();
             if (!ui.frame) { auto f = session.frame(4.0 / 3); if (f) ui.frame = f.value(); }
             const auto render_start = std::chrono::steady_clock::now();
-            if (ui.frame && renderer.render(*ui.frame, session.resources(), ImGui::GetDrawData(), width, height)) ++rendered;
-            performance.rendered(elapsed, std::chrono::steady_clock::now() - render_start, renderer.stats(), session.physics_bridge().diagnostics().world.body_count);
-            if (rendered == 1) performance.startup = std::chrono::steady_clock::now() - program_start;
+            const bool drawn = ui.frame && renderer.render(*ui.frame, session.resources(), ImGui::GetDrawData(), width, height);
+            if (drawn) ++rendered;
+            performance.rendered(drawn, std::chrono::steady_clock::now() - render_start, renderer.stats(), session.physics_bridge().diagnostics().world.body_count);
+            if (rendered == 1 && drawn) performance.startup = std::chrono::steady_clock::now() - program_start;
+            if (!drawn && !smoke) std::this_thread::sleep_for(std::chrono::milliseconds(1)); // The GPU is behind: wait, do not spin.
             if (smoke) {
                 std::this_thread::sleep_for(std::chrono::milliseconds(16));
                 if (frame == 15) {
@@ -1370,7 +1428,11 @@ int main(int argc, char **argv) {
             } else if (!game_input.captured) glfwWaitEventsTimeout(0.005);
         }
         game_input.release(host.window);
-        if (!perf_log.empty()) performance.write(perf_log);
+        if (!perf_log.empty()) {
+            performance.write(perf_log, session.timing());
+            std::ofstream imports(perf_log, std::ios::app);
+            for (const auto &[path, ms] : ui.import_times) imports << "import_ms " << ms << ' ' << path << '\n';
+        }
         if (smoke && frame != 112) throw std::runtime_error("Smoke run closed before completing all checks");
         std::cout << "Editor stopped cleanly.\n";
         return 0;

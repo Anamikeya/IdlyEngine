@@ -1,6 +1,10 @@
 # Real mouse and keyboard input for acceptance runs: SendInput events to a window owned by a process we started, and
 # captures of the desktop afterwards. These are the same events a person's hands produce, so they go through GLFW,
 # ImGui and the game exactly as play does. Needs an unlocked, interactive desktop, and moves the real mouse.
+#
+# SendInput goes to whatever has focus, not to a chosen window, so a person using the machine must never receive it.
+# A run waits for the desktop to be idle before it starts. Every press, click, key and movement first checks that the
+# editor still has focus and that nobody else moved the cursor; if not, the run stops at once. It never takes focus back.
 
 Add-Type -AssemblyName System.Drawing
 Add-Type -TypeDefinition @'
@@ -23,9 +27,23 @@ public static class Win32Input {
     [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int cmd);
     [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
     [DllImport("user32.dll")] public static extern uint MapVirtualKey(uint code, uint map);
+    [StructLayout(LayoutKind.Sequential)] public struct LASTINPUTINFO { public uint cbSize, dwTime; }
+    [DllImport("user32.dll")] public static extern bool GetLastInputInfo(ref LASTINPUTINFO info);
+    public static long IdleMilliseconds() {
+        var info = new LASTINPUTINFO { cbSize = (uint)Marshal.SizeOf(typeof(LASTINPUTINFO)) };
+        GetLastInputInfo(ref info);
+        return (long)(uint)((uint)Environment.TickCount - info.dwTime);
+    }
     public static void Mouse(int dx, int dy, uint flags, uint data = 0) {
         var i = new INPUT { type = 0 }; i.u.mi = new MOUSEINPUT { dx = dx, dy = dy, mouseData = data, dwFlags = flags };
         SendInput(1, new[] { i }, Marshal.SizeOf(typeof(INPUT)));
+    }
+    public static void Character(char c) {
+        const uint unicode = 4, keyUp = 2;
+        foreach (var flags in new[] { unicode, unicode | keyUp }) {
+            var i = new INPUT { type = 1 }; i.u.ki = new KEYBDINPUT { wVk = 0, wScan = c, dwFlags = flags };
+            SendInput(1, new[] { i }, Marshal.SizeOf(typeof(INPUT)));
+        }
     }
     public static void Key(ushort vk, bool up) {
         uint flags = up ? 2u : 0u;
@@ -43,6 +61,22 @@ $script:window = [IntPtr]::Zero
 $script:origin = $null
 $script:width = 0
 $script:height = 0
+
+# Waits until nobody has touched the mouse or keyboard for a while; a person at the machine keeps it waiting.
+function Wait-ForIdleDesktop { param([int]$IdleSeconds = 45, [int]$TimeoutSeconds = 1800)
+    $clock = [Diagnostics.Stopwatch]::StartNew()
+    while ([Win32Input]::IdleMilliseconds() -lt $IdleSeconds * 1000) {
+        if ($clock.Elapsed.TotalSeconds -gt $TimeoutSeconds) { throw "The desktop was in use for $TimeoutSeconds s; not starting a real-input run." }
+        Start-Sleep -Seconds 2
+    }
+}
+
+# Before any input: it would go to the focused window, which must be ours.
+function Assert-EditorFocused {
+    if ([Win32Input]::GetForegroundWindow() -ne $script:window) {
+        throw 'The editor lost focus (someone is using the desktop): stopping so no input reaches another application.'
+    }
+}
 
 function Start-Editor {
     param([string]$Executable, [string[]]$Arguments, [string]$WorkingDirectory, [string]$Log)
@@ -72,28 +106,65 @@ function Update-Window {
 function Get-WindowSize { Update-Window; return @($script:width, $script:height) }
 
 function Focus-Editor {
-    # Windows only lets the foreground process hand over focus; a key press beforehand qualifies this one.
-    [Win32Input]::Key(0x12, $false); [Win32Input]::Key(0x12, $true)
+    # A newly started window normally gets focus. No key press to force it: that would land in whatever has focus now.
     [void][Win32Input]::ShowWindow($script:window, 5)
     [void][Win32Input]::SetForegroundWindow($script:window)
     Start-Sleep -Milliseconds 300
+    Assert-EditorFocused
 }
 
 # Positions are fractions of the client area, so a run does not depend on the DPI scale.
 function Move-To { param([double]$X, [double]$Y)
+    Assert-EditorFocused
     Update-Window
     [void][Win32Input]::SetCursorPos($script:origin.X + [int]($X * $script:width), $script:origin.Y + [int]($Y * $script:height))
     Start-Sleep -Milliseconds 60
 }
 
+$script:drift = 0
+function Get-CursorDrift { return $script:drift }
+# A cursor that moved without this driver means a person is using the mouse: stop, rather than fight them for it.
+function Assert-Cursor { param([int]$ScreenX, [int]$ScreenY)
+    Assert-EditorFocused
+    $p = New-Object Win32Input+POINT
+    [void][Win32Input]::GetCursorPos([ref]$p)
+    if ([Math]::Abs($p.X - $ScreenX) -gt 2 -or [Math]::Abs($p.Y - $ScreenY) -gt 2) {
+        $script:drift++
+        throw 'The cursor moved without this driver (someone is using the desktop): stopping.'
+    }
+}
+
 function Click-At { param([double]$X, [double]$Y, [switch]$Right)
     Move-To $X $Y
+    $sx = $script:origin.X + [int]($X * $script:width); $sy = $script:origin.Y + [int]($Y * $script:height)
+    # A small real movement, so the window sees the mouse arrive, then a pause of a few frames for hover.
+    [Win32Input]::Mouse(1, 0, 1); Start-Sleep -Milliseconds 40
+    [void][Win32Input]::SetCursorPos($sx, $sy); Start-Sleep -Milliseconds 80
+    Assert-Cursor $sx $sy
     $down, $up = if ($Right) { 8, 16 } else { 2, 4 }
     [Win32Input]::Mouse(0, 0, $down); Start-Sleep -Milliseconds 70
     [Win32Input]::Mouse(0, 0, $up); Start-Sleep -Milliseconds 150
 }
 
-function Mouse-Button { param([bool]$Down) [Win32Input]::Mouse(0, 0, $(if ($Down) { 2 } else { 4 })) }
+# Fast enough for the UI to read it as one double-click.
+function Double-Click-At { param([double]$X, [double]$Y)
+    Move-To $X $Y
+    $sx = $script:origin.X + [int]($X * $script:width); $sy = $script:origin.Y + [int]($Y * $script:height)
+    [Win32Input]::Mouse(1, 0, 1); Start-Sleep -Milliseconds 40
+    [void][Win32Input]::SetCursorPos($sx, $sy); Start-Sleep -Milliseconds 80
+    Assert-Cursor $sx $sy
+    foreach ($i in 1, 2) {
+        [Win32Input]::Mouse(0, 0, 2); Start-Sleep -Milliseconds 35
+        [Win32Input]::Mouse(0, 0, 4); Start-Sleep -Milliseconds 35
+    }
+    Start-Sleep -Milliseconds 120
+}
+
+# A release is always sent: a button left down would be worse wherever focus went.
+function Mouse-Button { param([bool]$Down)
+    if ($Down) { Assert-EditorFocused }
+    [Win32Input]::Mouse(0, 0, $(if ($Down) { 2 } else { 4 }))
+}
 
 # Relative movement, as a real mouse: this is what turns the player's view. Sent in small steps over Milliseconds.
 function Move-Relative { param([int]$Dx, [int]$Dy, [int]$Milliseconds = 300)
@@ -102,12 +173,13 @@ function Move-Relative { param([int]$Dx, [int]$Dy, [int]$Milliseconds = 300)
     for ($i = 1; $i -le $steps; $i++) {
         $x = [int]($Dx * $i / $steps) - $doneX; $y = [int]($Dy * $i / $steps) - $doneY
         $doneX += $x; $doneY += $y
+        Assert-EditorFocused
         [Win32Input]::Mouse($x, $y, 1)
         Start-Sleep -Milliseconds 16
     }
 }
 
-function Key-Down { param([string]$Key) [Win32Input]::Key((Get-VirtualKey $Key), $false) }
+function Key-Down { param([string]$Key) Assert-EditorFocused; [Win32Input]::Key((Get-VirtualKey $Key), $false) }
 function Key-Up { param([string]$Key) [Win32Input]::Key((Get-VirtualKey $Key), $true) }
 function Press-Key { param([string]$Key, [int]$Milliseconds = 60) Key-Down $Key; Start-Sleep -Milliseconds $Milliseconds; Key-Up $Key; Start-Sleep -Milliseconds 80 }
 function Hold-Key { param([string[]]$Keys, [int]$Milliseconds)
@@ -125,14 +197,8 @@ function Get-VirtualKey { param([string]$Key)
 }
 function Type-Text { param([string]$Text)
     foreach ($c in $Text.ToCharArray()) {
-        $code = [int][char]$c
-        $i = New-Object Win32Input+INPUT; $i.type = 1
-        $k = New-Object Win32Input+KEYBDINPUT; $k.wScan = [uint16]$code; $k.dwFlags = 4
-        $i.u.ki = $k
-        $size = [System.Runtime.InteropServices.Marshal]::SizeOf([type][Win32Input+INPUT])
-        [void][Win32Input]::SendInput(1, @($i), $size)
-        $k.dwFlags = 6; $i.u.ki = $k
-        [void][Win32Input]::SendInput(1, @($i), $size)
+        Assert-EditorFocused
+        [Win32Input]::Character($c)
         Start-Sleep -Milliseconds 15
     }
 }

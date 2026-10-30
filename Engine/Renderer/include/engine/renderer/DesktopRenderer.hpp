@@ -13,6 +13,7 @@ struct RendererStats {
     std::size_t meshes = 0, textures = 0;           // Asset resources on the GPU, not built-ins.
     std::size_t material_instances = 0;
     std::uint64_t environment_builds = 0;           // IBL rebuilds so far.
+    double gpu_frame_ms = 0;                        // Of the latest finished frame; 0 when the driver does not say.
 };
 // Desktop host boundary only; never include this in ECS components or scene files.
 // UI uses an opaque texture token, not a Filament resource handle.
