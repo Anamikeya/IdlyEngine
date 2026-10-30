@@ -3,7 +3,7 @@
 Branch `agent/claude-milestone-3`, worktree `D:\AI\GameEngine-Integration`. Plan: `docs/MILESTONE_3_PLAN.md`
 (approved 2026-10-29).
 
-**Status: complete on `agent/claude-milestone-3`, not merged into `main`.** The brief's 13-step acceptance workflow
+**Status: complete; merged into `main` on 2026-10-30 at the user's request.** The brief's 13-step acceptance workflow
 passes on a fresh Release build with real mouse and keyboard input. Three Inspector controls were not clicked through
 (listed under "What was not verified"). Hosted CI has never run.
 

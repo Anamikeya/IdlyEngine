@@ -5,7 +5,8 @@ Status: **approved 2026-10-29; S1–S6 done.** Results, evidence and departures 
 `docs/MILESTONE_3_REPORT.md`.
 
 M3 turns the M2 prototype editor into a usable scene editor without replacing Filament, Flecs, ImGui docking,
-GLFW or the typed `CommandBus`. M3 work is not merged into `main` without explicit approval.
+GLFW or the typed `CommandBus`. M3 work was not to be merged into `main` without explicit approval; the user approved
+the merge on 2026-10-30.
 
 ## 1. Phase 1 audit: what works today
 
