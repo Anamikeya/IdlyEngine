@@ -204,6 +204,8 @@ void EditorUI::delete_selection() { if (session.selection()) report(session.dele
 void EditorUI::draw() {
     ui_map.begin_frame();
     hovered_context = {}; focused_context = {};
+    // Claimed, so that releasing Alt after Alt+drag does not move the keyboard to the menu bar.
+    if (ImGui::GetIO().KeyAlt) ImGui::SetKeyOwner(ImGuiMod_Alt, ImGui::GetID("##alt-for-viewport"));
     // The keys that finish a rebinding this frame must not also run a command.
     const bool rebinding_at_frame_start = !rebind_command.empty();
     for (const auto &file : std::exchange(dropped_files, {})) import_file(file);

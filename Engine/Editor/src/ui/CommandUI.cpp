@@ -37,8 +37,8 @@ std::uint8_t held_modifiers() {
 void EditorUI::mark(std::string_view control) {
     if (ui_map.enabled() && ImGui::IsItemVisible()) ui_map.mark(control, ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
 }
-bool EditorUI::begin_panel(const char *title, std::string_view control, std::string_view context, bool *open) {
-    const bool visible = ImGui::Begin(title, open);
+bool EditorUI::begin_panel(const char *title, std::string_view control, std::string_view context, bool *open, ImGuiWindowFlags flags) {
+    const bool visible = ImGui::Begin(title, open, flags);
     if (visible && ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows)) hovered_context = context;
     if (visible && ImGui::IsWindowFocused(ImGuiFocusedFlags_ChildWindows)) focused_context = context;
     if (ui_map.enabled()) {
@@ -122,6 +122,9 @@ void EditorUI::bind_commands() {
     });
     bind("Edit.SelectAll", [this] { session.select_all(); }, [this] { return session.scene().size() != 0; });
     bind("Edit.Deselect", [this] { session.select(0); }, selected);
+    bind("Edit.SnapToFloor", [this] { report(session.snap_selection_to_floor(*frame), "Snapped to the floor"); }, [this] { return session.selection() != 0 && frame != nullptr; });
+    bind("Edit.Hide", [this] { session.hide_selection(); log("Hidden in the editor. Ctrl+H shows everything again."); }, [this] { return session.selection() != 0 && !playing(); });
+    bind("Edit.UnhideAll", [this] { session.unhide_all(); log("Everything is shown again"); }, [this] { return !session.view_state().hidden.empty() && !playing(); });
     // ---- Create ----
     bind("Create.Cube", [this] { spawn("Cube", {MeshComponent{BuiltinMesh::Cube}, {}, {}}); });
     bind("Create.Sphere", [this] { spawn("Sphere", {MeshComponent{BuiltinMesh::Sphere}, {}, {}}); });
@@ -145,8 +148,43 @@ void EditorUI::bind_commands() {
     bind("Create.ChildSphere", [this, above] { spawn("Sphere", {MeshComponent{BuiltinMesh::Sphere}, {}, {}}, above, session.selection()); }, selected);
     bind("Create.ChildPointLight", [this, above] { spawn("Point Light", {{}, {}, point_light()}, above, session.selection()); }, selected);
     // ---- Viewport ----
-    bind("Viewport.FocusSelected", [this] { session.focus(); }, selected);
-    bind("Viewport.ToggleColliders", [this] { show_colliders = !show_colliders; }, {}, [this] { return show_colliders; });
+    bind("Viewport.FocusSelected", [this] { if (const auto goal = session.focus_goal()) camera_control.animate_to(session.camera, *goal); }, selected);
+    const auto toggle = [this, &bind](const char *id, bool &flag) {
+        bind(id, [this, &flag] { flag = !flag; save_settings(); }, {}, [&flag] { return flag; });
+    };
+    toggle("Viewport.ToggleColliders", show_colliders);
+    toggle("Viewport.ShowGrid", show_grid);
+    toggle("Viewport.ShowMarkers", show_markers);
+    toggle("Viewport.ShowSkybox", session.view_flags.skybox);
+    toggle("Viewport.ShowShadows", session.view_flags.shadows);
+    toggle("Viewport.ShowAmbientOcclusion", session.view_flags.ambient_occlusion);
+    toggle("Viewport.ShowBloom", session.view_flags.bloom);
+    bind("Viewport.GameView", [this] { game_view = !game_view; }, {}, [this] { return game_view; });
+    bind("Viewport.Maximize", [this] { viewport_maximized = !viewport_maximized; }, {}, [this] { return viewport_maximized; });
+    constexpr const char *views[] = {"Viewport.Perspective", "Viewport.Front", "Viewport.Top", "Viewport.Side"};
+    for (int kind = 0; kind < 4; ++kind) bind(views[kind], [this, kind] { set_view(kind); }, {}, [this, kind] { return view_kind == kind; });
+    // The renderer has one shading mode for now, so these two wait, greyed out, with their keys reserved.
+    bind("Viewport.Wireframe", [] {}, [] { return false; });
+    bind("Viewport.Unlit", [] {}, [] { return false; });
+    bind("Viewport.Lit", [] {}, {}, [] { return true; });
+    // ---- Transform ----
+    constexpr const char *gizmos[] = {"Gizmo.Move", "Gizmo.Rotate", "Gizmo.Scale"};
+    for (int kind = 0; kind < 3; ++kind) bind(gizmos[kind], [this, kind] { operation = kind; }, {}, [this, kind] { return operation == kind; });
+    bind("Gizmo.Cycle", [this] { operation = (operation + 1) % 3; });
+    bind("Gizmo.ToggleSpace", [this] { coordinates = 1 - coordinates; });
+    toggle("Snap.ToggleGrid", snap.grid);
+    toggle("Snap.ToggleRotation", snap.rotation);
+    toggle("Snap.ToggleScale", snap.scale);
+    bind("Snap.GridSmaller", [this] { step_grid(-1); });
+    bind("Snap.GridLarger", [this] { step_grid(1); });
+    // ---- Camera: the keys are read while flying, never dispatched ----
+    for (const auto *id : {"Camera.FlyForward", "Camera.FlyBack", "Camera.FlyLeft", "Camera.FlyRight", "Camera.FlyDown", "Camera.FlyUp", "Camera.FovOut", "Camera.FovIn"}) bind(id, [] {});
+    // ---- Bookmarks ----
+    for (std::size_t slot = 0; slot < 10; ++slot) {
+        const auto number = std::to_string(slot);
+        bind(("Bookmark.Set" + number).c_str(), [this, slot] { session.set_bookmark(slot); log("Bookmark " + std::to_string(slot) + " set"); });
+        bind(("Bookmark.Go" + number).c_str(), [this, slot] { if (const auto goal = session.bookmark(slot)) { camera_control.animate_to(session.camera, *goal); view_kind = goal->orthographic ? view_kind : 0; } }, [this, slot] { return session.bookmark(slot).has_value(); });
+    }
     // ---- Play ----
     bind("Play.Play", [this] { report(session.play(), "Play mode: running a copy of the scene; changes are discarded on Stop"); }, editing);
     bind("Play.Resume", [this] { report(session.play(), "Resumed"); }, [this] { return session.play_state() == PlayState::Paused; });
@@ -178,7 +216,7 @@ void EditorUI::route_shortcuts(bool rebinding_at_frame_start) {
     block.text_input = io.WantTextInput;
     block.modal = popup_before_frame || ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel);
     block.captured = game_input.captured;
-    block.interacting = gizmo_active || ImGui::IsAnyItemActive();
+    block.interacting = gizmo_active || ImGui::IsAnyItemActive() || camera_control.holds_cursor();
     block.rebinding = rebinding_at_frame_start || !rebind_command.empty();
     if (block.any()) return;
     // The viewport answers while the mouse is over it; other panels when they have the focus.
@@ -218,9 +256,11 @@ void EditorUI::main_menu() {
         command_item("Edit.Undo", undo_label.c_str());
         command_item("Edit.Redo", redo_label.c_str());
         ImGui::Separator();
-        for (const auto *id : {"Edit.Duplicate", "Edit.Delete", "Edit.MoveToRoot"}) command_item(id);
+        for (const auto *id : {"Edit.Duplicate", "Edit.Delete", "Edit.MoveToRoot", "Edit.SnapToFloor"}) command_item(id);
         ImGui::Separator();
         for (const auto *id : {"Edit.SelectAll", "Edit.Deselect"}) command_item(id);
+        ImGui::Separator();
+        for (const auto *id : {"Edit.Hide", "Edit.UnhideAll"}) command_item(id);
         ImGui::EndMenu();
     }
     const bool open_create = ImGui::BeginMenu("Create");
@@ -229,7 +269,27 @@ void EditorUI::main_menu() {
     const bool open_view = ImGui::BeginMenu("View");
     mark("Menu.View");
     if (open_view) {
-        for (const auto *id : {"Viewport.FocusSelected", "Viewport.ToggleColliders"}) command_item(id);
+        for (const auto *id : {"Viewport.FocusSelected", "Viewport.GameView", "Viewport.Maximize"}) command_item(id);
+        ImGui::Separator();
+        for (const auto *id : {"Viewport.Perspective", "Viewport.Front", "Viewport.Top", "Viewport.Side"}) command_item(id);
+        ImGui::Separator();
+        for (const auto *id : {"Viewport.Lit", "Viewport.Wireframe", "Viewport.Unlit"}) command_item(id);
+        ImGui::Separator();
+        for (const auto *id : {"Viewport.ShowGrid", "Viewport.ToggleColliders", "Viewport.ShowMarkers", "Viewport.ShowSkybox", "Viewport.ShowShadows", "Viewport.ShowAmbientOcclusion", "Viewport.ShowBloom"}) command_item(id);
+        if (ImGui::BeginMenu("Bookmarks")) {
+            for (int slot = 0; slot < 10; ++slot) command_item(("Bookmark.Go" + std::to_string(slot)).c_str());
+            ImGui::Separator();
+            for (int slot = 0; slot < 10; ++slot) command_item(("Bookmark.Set" + std::to_string(slot)).c_str());
+            ImGui::EndMenu();
+        }
+        ImGui::EndMenu();
+    }
+    const bool open_transform = ImGui::BeginMenu("Transform");
+    mark("Menu.Transform");
+    if (open_transform) {
+        for (const auto *id : {"Gizmo.Move", "Gizmo.Rotate", "Gizmo.Scale", "Gizmo.Cycle", "Gizmo.ToggleSpace"}) command_item(id);
+        ImGui::Separator();
+        for (const auto *id : {"Snap.ToggleGrid", "Snap.ToggleRotation", "Snap.ToggleScale", "Snap.GridSmaller", "Snap.GridLarger"}) command_item(id);
         ImGui::EndMenu();
     }
     const bool open_play = ImGui::BeginMenu("Play");
@@ -392,8 +452,73 @@ void EditorUI::shortcuts_panel() {
         }
         ImGui::EndTable();
     }
+    ImGui::SeparatorText("Mouse");
+    ImGui::TextDisabled("These cannot be changed yet.");
+    if (ImGui::BeginTable("##gestures", 2, ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_RowBg)) {
+        for (const auto &gesture : mouse_gestures()) {
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn(); ImGui::TextUnformatted(gesture.input.data(), gesture.input.data() + gesture.input.size());
+            ImGui::TableNextColumn(); ImGui::TextUnformatted(gesture.action.data(), gesture.action.data() + gesture.action.size());
+        }
+        ImGui::EndTable();
+    }
     ImGui::EndChild();
     ImGui::End();
+}
+bool EditorUI::key_held(const char *id) const {
+    const auto *command = registry.find(id);
+    if (!command) return false;
+    // Modifiers do not matter here: Shift while flying only makes it faster.
+    for (const auto chord : command->chords)
+        for (const auto &[key, imgui] : key_pairs())
+            if (key == chord.key && ImGui::IsKeyDown(imgui)) return true;
+    return false;
+}
+void EditorUI::load_settings() {
+    if (config_folder.empty()) return;
+    if (const auto text = read_text_file(config_folder / "editor.ini")) settings.parse(text.value());
+    camera_control.set_speed(settings.number("camera.speed", camera_control.speed()));
+    saved_speed = float(camera_control.speed());
+    snap.grid = settings.flag("snap.grid", snap.grid);
+    snap.rotation = settings.flag("snap.rotation", snap.rotation);
+    snap.scale = settings.flag("snap.scale", snap.scale);
+    snap.grid_size = std::max(settings.number("snap.grid_size", snap.grid_size), 0.001);
+    snap.rotation_step = std::max(settings.number("snap.rotation_step", snap.rotation_step), 0.001);
+    snap.scale_step = std::max(settings.number("snap.scale_step", snap.scale_step), 0.001);
+    show_colliders = settings.flag("view.colliders", show_colliders);
+    show_grid = settings.flag("view.grid", show_grid);
+    show_markers = settings.flag("view.markers", show_markers);
+    session.view_flags.skybox = settings.flag("view.skybox", session.view_flags.skybox);
+    session.view_flags.shadows = settings.flag("view.shadows", session.view_flags.shadows);
+    session.view_flags.ambient_occlusion = settings.flag("view.ambient_occlusion", session.view_flags.ambient_occlusion);
+    session.view_flags.bloom = settings.flag("view.bloom", session.view_flags.bloom);
+}
+void EditorUI::save_settings() {
+    if (config_folder.empty()) return;
+    settings.set("camera.speed", camera_control.speed());
+    saved_speed = float(camera_control.speed());
+    settings.set("snap.grid", snap.grid);
+    settings.set("snap.rotation", snap.rotation);
+    settings.set("snap.scale", snap.scale);
+    settings.set("snap.grid_size", snap.grid_size);
+    settings.set("snap.rotation_step", snap.rotation_step);
+    settings.set("snap.scale_step", snap.scale_step);
+    settings.set("view.colliders", show_colliders);
+    settings.set("view.grid", show_grid);
+    settings.set("view.markers", show_markers);
+    settings.set("view.skybox", session.view_flags.skybox);
+    settings.set("view.shadows", session.view_flags.shadows);
+    settings.set("view.ambient_occlusion", session.view_flags.ambient_occlusion);
+    settings.set("view.bloom", session.view_flags.bloom);
+    if (const auto saved = write_text_file(config_folder / "editor.ini", settings.text()); !saved) log("Error: " + saved.error().message);
+}
+std::string EditorUI::log_fields() const {
+    const auto &c = session.camera;
+    return " mode=" + std::to_string(int(camera_control.mode())) + " yaw=" + std::to_string(c.yaw) + " pitch=" + std::to_string(c.pitch) + " distance=" + std::to_string(c.distance) +
+           " fov=" + std::to_string(c.fov_degrees) + " ortho=" + std::to_string(c.orthographic ? 1 : 0) + " speed=" + std::to_string(camera_control.speed()) +
+           " operation=" + std::to_string(operation) + " space=" + std::to_string(coordinates) + " hidden=" + std::to_string(session.view_state().hidden.size()) +
+           " game_view=" + std::to_string(game_view ? 1 : 0) + " maximized=" + std::to_string(viewport_maximized ? 1 : 0) + " grid_size=" + std::to_string(snap.grid_size) +
+           " snap_grid=" + std::to_string(snap.grid ? 1 : 0);
 }
 void EditorUI::begin_rebind(const std::string &id, int index) {
     rebind_command = id; rebind_index = index; rebind_chord = {};

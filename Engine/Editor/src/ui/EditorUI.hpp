@@ -6,6 +6,7 @@
 #include <imgui.h>
 #include <imgui_internal.h>
 #include <engine/editor/EditorCommands.hpp>
+#include <engine/editor/EditorPrefs.hpp>
 #include <engine/editor/EditorSession.hpp>
 #include <engine/renderer/DesktopRenderer.hpp>
 #include <glm/glm.hpp>
@@ -132,7 +133,37 @@ struct EditorUI {
     int rebind_index = -1;      // Which binding it replaces; -1 adds one.
     KeyChord rebind_chord;      // Set when the keys conflict, while the panel asks what to do.
     std::array<float, 16> gizmo_start{};
+    std::array<float, 3> gizmo_last_position{};
+    bool gizmo_cancelled = false; // Esc during the drag: nothing more happens until the button comes up.
+    // Shift during a move: the camera goes along. The gizmo then works from the view as it was when that began, because
+    // measured against the moving view the object would never catch up with the cursor and would run away.
+    bool gizmo_following = false;
+    std::array<float, 16> gizmo_frozen_view{};
+    OrbitCamera gizmo_camera_start;
     std::string drag_error; // The latest failed step of a gizmo drag, reported when it ends.
+    // ---- Viewport ----
+    CameraController camera_control;
+    bool camera_holding = false; // Navigating: the cursor is hidden and held, and comes back where it was.
+    double cursor_x = 0, cursor_y = 0;
+    float saved_speed = 0;
+    int view_kind = 0; // Perspective, front, top, side.
+    double perspective_yaw = 0.7, perspective_pitch = 0.4;
+    bool overlay_hovered = false, game_view = false, viewport_maximized = false, show_markers = true, show_grid = true;
+    struct SnapSettings {
+        bool grid = false, rotation = false, scale = false;
+        double grid_size = 1, rotation_step = 15, scale_step = 0.25;
+    } snap;
+    EditorSettings settings;
+    void update_camera(bool hovered, float height);
+    void hold_cursor(bool hold);
+    bool key_held(const char *id) const;
+    void set_view(int kind);
+    void step_grid(int direction);
+    void viewport_overlay(ImVec2 origin, ImVec2 size);
+    void load_settings();
+    void save_settings();
+    // The UI's state, for the --game-log line.
+    std::string log_fields() const;
     // Registers every command and binds its behavior; throws if the table and the bindings disagree.
     void bind_commands();
     void load_keymap();
@@ -142,7 +173,7 @@ struct EditorUI {
     void route_shortcuts(bool rebinding_at_frame_start);
     void main_menu();
     // Begin() that records the panel's context for shortcuts and its place for the UI map. `control` is its title without any ID suffix.
-    bool begin_panel(const char *title, std::string_view control, std::string_view context, bool *open = nullptr);
+    bool begin_panel(const char *title, std::string_view control, std::string_view context, bool *open = nullptr, ImGuiWindowFlags flags = 0);
     // A menu item, button or checkbox built from a command: its label, shortcut, enabled and checked state and tooltip.
     bool command_item(const char *id, const char *label = nullptr);
     bool command_button(const char *id, const char *label = nullptr);
@@ -186,6 +217,7 @@ struct EditorUI {
     // ---- Scene Hierarchy: a tree in stable-ID order. Drag a row onto another to parent it there, or onto the
     // empty area below the tree to move it to the root; both keep the world transform. Right-click for actions.
     static constexpr const char *entity_payload = "ENGINE_ENTITY";
+    static constexpr const char *asset_payload = "ENGINE_ASSET";
     std::map<EntityId, EntityRecord> records;
     std::map<EntityId, std::vector<EntityId>> children;
     EntityId revealed = 0; // Selection whose ancestors were last opened, so viewport picks show up in the tree.

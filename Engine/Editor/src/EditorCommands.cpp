@@ -199,7 +199,7 @@ Result<KeymapReport> CommandRegistry::load_keymap(std::string_view text) {
 std::vector<CommandInfo> default_command_table() {
     using namespace modifier;
     const auto chord = [](Key key, std::uint8_t modifiers = none) { return KeyChord{key, modifiers}; };
-    const std::string global(context::global), viewport(context::viewport), outliner(context::outliner);
+    const std::string global(context::global), viewport(context::viewport), outliner(context::outliner), flying(context::flying);
     std::vector<CommandInfo> table{
         {"File.NewScene", "New Scene", "Start an empty scene.", "File", global, {chord(Key::N, ctrl)}},
         {"File.OpenScene", "Open Scene...", "Choose a scene file and load it.", "File", global, {chord(Key::O, ctrl)}},
@@ -219,6 +219,9 @@ std::vector<CommandInfo> default_command_table() {
         {"Edit.MoveToRoot", "Move to Root", "Take the selection out of its parent, keeping its place in the world.", "Edit", global, {}},
         {"Edit.SelectAll", "Select All", "Select every entity.", "Edit", global, {chord(Key::A, ctrl)}},
         {"Edit.Deselect", "Deselect", "Clear the selection.", "Edit", global, {chord(Key::Escape)}},
+        {"Edit.SnapToFloor", "Snap to Floor", "Drop the selection onto the surface below it.", "Edit", global, {chord(Key::End)}},
+        {"Edit.Hide", "Hide Selected", "Hide the selection in the editor. Play mode and saved content are not affected.", "Edit", global, {chord(Key::H)}},
+        {"Edit.UnhideAll", "Unhide All", "Show everything hidden in the editor.", "Edit", global, {chord(Key::H, ctrl)}},
 
         {"Create.Cube", "Cube", "Add a cube.", "Create", global, {}},
         {"Create.Sphere", "Sphere", "Add a sphere.", "Create", global, {}},
@@ -238,6 +241,41 @@ std::vector<CommandInfo> default_command_table() {
 
         {"Viewport.FocusSelected", "Focus Selected", "Frame the selection in the viewport.", "Viewport", viewport, {chord(Key::F)}},
         {"Viewport.ToggleColliders", "Show Colliders", "Draw collider outlines over the view.", "Viewport", viewport, {}},
+        {"Viewport.ShowGrid", "Show Grid", "Draw the grid.", "Viewport", viewport, {}},
+        {"Viewport.ShowMarkers", "Show Light and Camera Markers", "Draw the clickable markers for lights and cameras.", "Viewport", viewport, {}},
+        {"Viewport.ShowSkybox", "Show Skybox", "Draw the environment behind the scene.", "Viewport", viewport, {}},
+        {"Viewport.ShowShadows", "Show Shadows", "Draw shadows.", "Viewport", viewport, {}},
+        {"Viewport.ShowAmbientOcclusion", "Show Ambient Occlusion", "Darken creases and contact points.", "Viewport", viewport, {}},
+        {"Viewport.ShowBloom", "Show Bloom", "Let bright areas glow.", "Viewport", viewport, {}},
+        {"Viewport.GameView", "Game View", "Hide the gizmo, markers, grid and outlines, to see what the player sees.", "Viewport", viewport, {chord(Key::G)}},
+        {"Viewport.Maximize", "Maximize Viewport", "Let the viewport fill the window.", "Viewport", viewport, {chord(Key::F11)}},
+        {"Viewport.Perspective", "Perspective", "A perspective view.", "Viewport", viewport, {chord(Key::G, alt)}},
+        {"Viewport.Front", "Front", "An orthographic view from the front, along -Z.", "Viewport", viewport, {chord(Key::H, alt)}},
+        {"Viewport.Top", "Top", "An orthographic view from above.", "Viewport", viewport, {chord(Key::J, alt)}},
+        {"Viewport.Side", "Side", "An orthographic view from the side, along -X.", "Viewport", viewport, {chord(Key::K, alt)}},
+        {"Viewport.Wireframe", "Wireframe", "Not available yet: the renderer has no wireframe mode.", "Viewport", viewport, {chord(Key::Num2, alt)}},
+        {"Viewport.Unlit", "Unlit", "Not available yet: the renderer has no unlit mode.", "Viewport", viewport, {chord(Key::Num3, alt)}},
+        {"Viewport.Lit", "Lit", "The normal, fully lit view.", "Viewport", viewport, {chord(Key::Num4, alt)}},
+
+        {"Gizmo.Move", "Move", "The move gizmo.", "Transform", viewport, {chord(Key::W)}},
+        {"Gizmo.Rotate", "Rotate", "The rotate gizmo.", "Transform", viewport, {chord(Key::E)}},
+        {"Gizmo.Scale", "Scale", "The scale gizmo.", "Transform", viewport, {chord(Key::R)}},
+        {"Gizmo.Cycle", "Next Gizmo", "Cycle through move, rotate and scale.", "Transform", viewport, {chord(Key::Space)}},
+        {"Gizmo.ToggleSpace", "World or Local", "Switch the gizmo between world and local axes.", "Transform", viewport, {chord(Key::Grave, ctrl)}},
+        {"Snap.ToggleGrid", "Snap to Grid", "Moves go in whole grid steps.", "Transform", viewport, {}},
+        {"Snap.ToggleRotation", "Snap Rotation", "Rotations go in whole steps.", "Transform", viewport, {}},
+        {"Snap.ToggleScale", "Snap Scale", "Scaling goes in whole steps.", "Transform", viewport, {}},
+        {"Snap.GridSmaller", "Smaller Grid", "The next smaller grid size.", "Transform", viewport, {chord(Key::LeftBracket)}},
+        {"Snap.GridLarger", "Larger Grid", "The next larger grid size.", "Transform", viewport, {chord(Key::RightBracket)}},
+
+        {"Camera.FlyForward", "Fly Forward", "While holding the right mouse button.", "Camera", flying, {chord(Key::W)}},
+        {"Camera.FlyBack", "Fly Back", "While holding the right mouse button.", "Camera", flying, {chord(Key::S)}},
+        {"Camera.FlyLeft", "Fly Left", "While holding the right mouse button.", "Camera", flying, {chord(Key::A)}},
+        {"Camera.FlyRight", "Fly Right", "While holding the right mouse button.", "Camera", flying, {chord(Key::D)}},
+        {"Camera.FlyDown", "Fly Down", "While holding the right mouse button.", "Camera", flying, {chord(Key::Q)}},
+        {"Camera.FlyUp", "Fly Up", "While holding the right mouse button.", "Camera", flying, {chord(Key::E)}},
+        {"Camera.FovOut", "Widen View", "While holding the right mouse button. It returns when the button comes up.", "Camera", flying, {chord(Key::Z)}},
+        {"Camera.FovIn", "Narrow View", "While holding the right mouse button. It returns when the button comes up.", "Camera", flying, {chord(Key::C)}},
 
         {"Play.Play", "Play", "Run a copy of the scene. Changes are discarded on Stop.", "Play", global, {}},
         {"Play.Resume", "Resume", "Continue the paused run.", "Play", global, {}},
@@ -248,7 +286,34 @@ std::vector<CommandInfo> default_command_table() {
         {"Window.UndoHistory", "Undo History", "Show every edit and jump to any of them.", "Window", global, {}},
         {"Window.KeyboardShortcuts", "Keyboard Shortcuts", "Search and change every shortcut.", "Window", global, {}},
     };
+    for (int slot = 0; slot < 10; ++slot) {
+        const auto number = std::to_string(slot);
+        const auto key = Key(int(Key::Num0) + slot);
+        table.push_back({"Bookmark.Set" + number, "Set Bookmark " + number, "Remember this view in the scene's editor file.", "Bookmarks", viewport, {chord(key, ctrl)}});
+        table.push_back({"Bookmark.Go" + number, "Go to Bookmark " + number, "Ease back to the remembered view.", "Bookmarks", viewport, {chord(key)}});
+    }
     return table;
+}
+std::span<const MouseGesture> mouse_gestures() {
+    static constexpr MouseGesture gestures[] = {
+        {"RMB drag", "Look around"},
+        {"RMB + Wheel", "Change camera speed"},
+        {"Shift while flying", "Move three times as fast"},
+        {"LMB drag", "Move forward and back, and turn"},
+        {"LMB + RMB drag", "Move up, down and sideways"},
+        {"MMB drag", "Pan"},
+        {"Wheel", "Zoom"},
+        {"Alt + LMB drag", "Orbit around the selection"},
+        {"Alt + RMB drag", "Dolly"},
+        {"Alt + MMB drag", "Pan"},
+        {"Click", "Select"},
+        {"Ctrl + Click", "Add to or take from the selection"},
+        {"Alt + drag a gizmo", "Copy the selection and move the copies"},
+        {"Shift + drag a gizmo", "The camera follows what moves"},
+        {"Hold V while dragging a gizmo", "Snap to the nearest vertex"},
+        {"Esc while dragging a gizmo", "Cancel the drag"},
+    };
+    return gestures;
 }
 std::string shortcuts_markdown(std::span<const CommandInfo> commands) {
     std::ostringstream out;
@@ -267,6 +332,8 @@ std::string shortcuts_markdown(std::span<const CommandInfo> commands) {
             out << "| " << command.label << " | " << keys << " | " << command.context << " | `" << command.id << "` |\n";
         }
     }
+    out << "\n## Mouse\n\nThese cannot be changed yet.\n\n| Input | Action |\n|---|---|\n";
+    for (const auto &gesture : mouse_gestures()) out << "| " << gesture.input << " | " << gesture.action << " |\n";
     return out.str();
 }
 } // namespace engine::editor

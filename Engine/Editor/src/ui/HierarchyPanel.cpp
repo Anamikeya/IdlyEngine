@@ -50,7 +50,10 @@ void EditorUI::tree_node(EntityId id, const std::set<EntityId> &open_path) {
     if (leaf) flags |= ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen;
     if (session.selected().contains(id)) flags |= ImGuiTreeNodeFlags_Selected;
     if (open_path.contains(id)) ImGui::SetNextItemOpen(true);
-    const bool open = ImGui::TreeNodeEx(reinterpret_cast<void *>(static_cast<uintptr_t>(id)), flags, "%s", e.name.c_str());
+    const bool hidden_row = !playing() && session.hidden(id);
+    if (hidden_row) ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+    const bool open = ImGui::TreeNodeEx(reinterpret_cast<void *>(static_cast<uintptr_t>(id)), flags, hidden_row ? "%s (hidden)" : "%s", e.name.c_str());
+    if (hidden_row) ImGui::PopStyleColor();
     mark("Row." + e.name);
     mark("RowAt." + std::to_string(visible_rows.size() - 1)); // Names repeat; a row's place in the tree does not.
     if (ImGui::IsItemClicked(ImGuiMouseButton_Left) && !ImGui::IsItemToggledOpen()) {

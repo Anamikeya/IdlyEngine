@@ -59,6 +59,11 @@ struct Host {
         glfwShowWindow(window);
         IMGUI_CHECKVERSION(); ImGui::CreateContext(); imgui = true;
         ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_DockingEnable | ImGuiConfigFlags_NavEnableKeyboard;
+        // A drag in the viewport is navigation, and must not move a floating viewport window.
+        ImGui::GetIO().ConfigWindowsMoveFromTitleBarOnly = true;
+        // The viewport draws its own drag readout, with a background, beside the cursor.
+        ImGuizmo::GetStyle().Colors[ImGuizmo::TEXT] = {0, 0, 0, 0};
+        ImGuizmo::GetStyle().Colors[ImGuizmo::TEXT_SHADOW] = {0, 0, 0, 0};
         ImGui::StyleColorsDark();
         auto &style = ImGui::GetStyle();
         style.WindowRounding = 3; style.FrameRounding = 3; style.FramePadding = {6,5};
@@ -94,14 +99,14 @@ struct Host {
 struct StateLog {
     std::ofstream out;
     std::chrono::steady_clock::time_point last_line{}, last_bodies{};
-    void write(const editor::EditorSession &session) {
+    void write(const editor::EditorSession &session, const std::string &ui_fields) {
         if (!out.is_open()) return;
         const auto now = std::chrono::steady_clock::now();
         if (now - last_line < std::chrono::milliseconds(50)) return;
         last_line = now;
         const char *state = session.play_state() == editor::PlayState::Editing ? "editing" : session.play_state() == editor::PlayState::Paused ? "paused" : "playing";
         out << "state=" << state << " tick=" << session.runtime_ticks() << " entities=" << session.scene().size() << " revision=" << session.commands().revision() << " dirty=" << (session.dirty() ? 1 : 0)
-            << " selected=" << session.selected().size() << " history=" << session.history_position() << '/' << session.history_names().size()
+            << " selected=" << session.selected().size() << " history=" << session.history_position() << '/' << session.history_names().size() << ui_fields
             << " camera=" << session.camera.target.x << ',' << session.camera.target.y << ',' << session.camera.target.z;
         if (const auto w = session.scene().world_transform(session.selection())) out << " primary=" << w->matrix[12] << ',' << w->matrix[13] << ',' << w->matrix[14];
         if (auto *game = session.game()) {
@@ -223,7 +228,7 @@ int main(int argc, char **argv) {
         renderer.resize_viewport(800, 600);
         GameInput game_input;
         EditorUI ui(session, renderer, game_input, host.window);
-        if (!automated) { ui.config_folder = config_folder; ui.load_keymap(); }
+        if (!automated) { ui.config_folder = config_folder; ui.load_keymap(); ui.load_settings(); }
         ui.ui_map.set_file(ui_map_file);
         if (!project_opened) ui.log("Error: " + project_opened.error().message);
         if (open_sample_at_start) ui.open_sample();
@@ -266,7 +271,7 @@ int main(int argc, char **argv) {
             if (game && game_input.captured) game_input.feed(host.window, *game);
             session.update(elapsed);
             if (game) game->update_view();
-            state_log.write(session);
+            if (state_log.out.is_open()) state_log.write(session, ui.log_fields());
             if (const auto title = ui.title(); title != shown_title) { glfwSetWindowTitle(host.window, title.c_str()); shown_title = title; }
             host.follow_monitor();
             int width, height; glfwGetFramebufferSize(host.window, &width, &height);

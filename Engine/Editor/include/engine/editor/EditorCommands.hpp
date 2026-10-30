@@ -37,6 +37,8 @@ std::optional<KeyChord> parse_chord(std::string_view);
 
 namespace context {
 inline constexpr std::string_view global = "Global", viewport = "Viewport", outliner = "Outliner", details = "Details", asset_browser = "AssetBrowser";
+// Keys held while flying with RMB. Never dispatched: the camera reads them, so the same keys can mean something else otherwise.
+inline constexpr std::string_view flying = "Flying";
 }
 // The description of a command, with no behavior: what the shortcut documentation and tests read.
 struct CommandInfo {
@@ -107,6 +109,9 @@ public:
 };
 // Every command the editor has, as data. The UI binds behavior to these by ID.
 std::vector<CommandInfo> default_command_table();
+// Mouse gestures, which belong to the camera and gizmo state machines rather than to chords, so they cannot be rebound yet.
+struct MouseGesture { std::string_view input, action; };
+std::span<const MouseGesture> mouse_gestures();
 // The commands and their default bindings as Markdown: docs/EDITOR_SHORTCUTS.md.
 std::string shortcuts_markdown(std::span<const CommandInfo>);
 } // namespace engine::editor

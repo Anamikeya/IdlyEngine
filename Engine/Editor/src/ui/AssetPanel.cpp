@@ -72,6 +72,12 @@ void EditorUI::assets() {
         const char *kind = meta.type == assets::AssetType::Mesh ? "[model]    " : meta.type == assets::AssetType::Material ? "[material] " : meta.type == assets::AssetType::Environment ? "[hdr]      " : "[texture]  ";
         const auto label = std::string(kind) + meta.path + "  (" + assets::to_string(state) + ")##" + assets::to_string(meta.id);
         if (ImGui::Selectable(label.c_str(), meta.id == selected_asset)) selected_asset = meta.id;
+        mark("Asset." + meta.path);
+        if (meta.type == assets::AssetType::Mesh && ImGui::BeginDragDropSource()) {
+            ImGui::SetDragDropPayload(asset_payload, &meta.id.value, sizeof meta.id.value);
+            ImGui::Text("Place '%s'", meta.path.c_str());
+            ImGui::EndDragDropSource();
+        }
         if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left) && meta.type == assets::AssetType::Mesh)
             report(session.place_asset(meta.id), "Model added to the scene");
         if (failed) ImGui::PopStyleColor();
