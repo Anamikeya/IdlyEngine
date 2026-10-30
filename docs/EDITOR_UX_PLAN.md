@@ -406,5 +406,5 @@ Both MSVC presets build into fresh `build-ux-windows-msvc-release` and `-ci` fol
 
 - At the default size, the Asset Browser's tool row ran past the panel, so New Material could not be reached. The tools now wrap, and the browser gets more of the window.
 - Asset fields were too narrow to read "(none)".
-- A test, not the game: the shooter script failed once in about ten runs, when a light crate sailed over the bonus zone, hit the back wall and bounced away. Gameplay and physics are unchanged since Milestone 4. The script now tries the next crate, since what it checks is the sensor.
+- A test, not the game: the shooter script failed once, when a light crate sailed over the bonus zone, hit the back wall and bounced away. Gameplay and physics are unchanged since Milestone 4. The script now tries the next crate, since what it checks is the sensor.
 - A saved layout did not restore which panels were open, and closed panels came back after a restart. ImGui's settings record neither, so layouts and `editor.ini` now do.
