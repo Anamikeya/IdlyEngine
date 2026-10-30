@@ -91,7 +91,9 @@ entities whose ancestor is also selected: use it for anything that moves, copies
 `engine/editor/PropertyMeta.hpp` describes each property: name, type, category, tooltip, range, step, read-only, hidden,
 and a condition. Tables are written by hand in `src/PropertyTables.cpp`, in the editor layer, so `Scene.hpp` stays plain
 data. `Property::condition` is a predicate rather than Unreal's "another bool", because many conditions depend on an enum.
-The Inspector starts using these tables in Phase 3.
+The Details panel (`src/ui/InspectorPanel.cpp`) draws from these tables and knows nothing about any component beyond which
+table and command go with it. A row reads the value from each target, and an edit copies each target's component, applies
+the change and issues its command, so multi-edit, reset, copy and paste, search and favorites come for free.
 
 ### How to add an inspectable property
 
@@ -105,7 +107,23 @@ The Inspector starts using these tables in Phase 3.
 
 3. Add the field to the matching `*_table_covers_every_field` test in `Tests/Editor/editor_ux_tests.cpp`.
 
-Use `choice<T>` for an enum and `asset<T>` for an `AssetRef`.
+Use `choice<T>` for an enum and `asset<T>` for an `AssetRef`. That is all: the row appears in the panel, with its tooltip,
+reset arrow, menu and multi-edit.
+
+A new component also needs a table, a `Section<T>` in `EditorUI::inspector()` with its command, and an entry in Add Component.
+
+## Hierarchy folders
+
+`EditorFolders`, in the view state, holds folders and which root entities are filed in them. They mean nothing to the scene
+or to gameplay. Unlike hide and lock, folder edits are undoable, through `commit_folders`. A step can hold both a scene
+change and a folder change, so filing a child (which reparents it too) is one undo.
+
+## Asset thumbnails
+
+`EditorUI::want_thumbnail` asks for a picture when a tile is visible. Models and images decode on a worker
+(`request_thumbnail_data`, `poll_thumbnail_data`). The renderer then draws a mesh into a small texture, one a frame
+(`request_thumbnail`), or takes a reduced image directly (`set_thumbnail_image`). A material's picture is a sphere, and is
+redrawn when its handle changes.
 
 ## Real-input runs
 

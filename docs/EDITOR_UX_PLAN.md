@@ -3,7 +3,7 @@
 Branch `feature/ui-ux`, worktree `D:\AI\GameEngine-Integration`, created from `main` at `8d12a03` (Milestone 4 merged).
 Reference: `docs/UNREAL_UX_REFERENCE.md`. Blueprints are out of scope.
 
-**Status: Phase 2 done, waiting for approval to start Phase 3.** Results and deviations are in section 9.
+**Status: Phase 3 done, waiting for approval to start Phase 4.** Results and deviations are in section 9.
 
 ## 1. Audit
 
@@ -288,6 +288,7 @@ Both MSVC presets build into fresh `build-ux-windows-msvc-release` and `-ci` fol
 - 2026-10-30: Plan approved, with the three recommendations: first Esc pauses and second Esc stops, separate OS windows after Phase 5, Alt+2 and Alt+3 greyed out and mouse gestures read-only at first.
 - 2026-10-30: Phase 1 done.
 - 2026-10-30: Phase 2 done.
+- 2026-10-30: Phase 3 done.
 
 ### Phase 1 checklist
 
@@ -368,3 +369,42 @@ Both MSVC presets build into fresh `build-ux-windows-msvc-release` and `-ci` fol
 - **Shift+drag ran away:** an 80-pixel move sent the object 34 m, because the gizmo measured the cursor against a camera that was moving with the object. Only real input showed it.
 - ImGuizmo's own delta text doubled the new readout.
 - The procedural sky drew as a dark bull's-eye in orthographic views.
+
+### Phase 3 checklist
+
+- [x] Details panel generated from the property tables, with collapsible, remembered sections and categories
+- [x] Search by property, category or component; Show only modified
+- [x] Scrubbing is live and one undo step; Shift fine, Ctrl coarse, click to type
+- [x] Reset arrow only on modified properties
+- [x] Multi-edit: every shared component shows, differing values say "Multiple Values", an edit reaches all targets in one step
+- [x] Right-click Copy, Paste and Reset on any value, and Copy and Paste on a whole component
+- [x] Lock, favorites, conditions that hide or grey out, X/Y/Z colors, tooltips from the tables
+- [x] Asset fields: picture, searchable list, use selected, find in browser, drop target
+- [x] Outliner: folders, eye, lock, search, type chips, F2, Ctrl+G, Ctrl+C and Ctrl+V, double-click focus, menus from commands
+- [x] Runtime entities in Play, which already worked
+- [x] Asset Browser: folder tree, grid and list, thumbnails, color strip, chips, search, favorites, tooltips
+- [x] Drag to the viewport and to a Details field; Ctrl+B, Ctrl+E; rename and move with references; Ctrl+Space drawer
+- [x] Named layouts, Reset Layout, Window menu listing every panel
+
+### Phase 3 deviations
+
+- **The panels keep the names Inspector and Scene Hierarchy.** Their shortcut contexts are `Details` and `Outliner`, as the brief names them. Renaming them is one line each if you want Unreal's words.
+- **Tear-off stays inside the main window,** as agreed. Separate OS windows are a follow-up after Phase 5.
+- **Multi-edit sets the same value on all targets;** it does not add a relative amount. Vectors edit one axis at a time, so the other axes keep their own values. A vector's narrow fields say "Mixed", with "Multiple Values" as the tooltip; every other field says it in full.
+- **Thumbnails are not cached to disk.** They are made on first view and live on the GPU until the editor closes, about 64 KB each. Models and images decode on a worker. Materials read their maps on the main thread, one every six frames, which can hitch on a large image not yet in memory. HDR images show a type tile.
+- **Renaming an asset cannot be undone as a file move.** The scene's paths are one undo step; undoing it leaves the file at its new path, and references still find it by ID.
+- **Hidden `category` and `mask` on colliders stay out of the panel,** as before: scenes and the sample set them.
+- **Behaviors have no favorites or tooltips,** because their keys have no table: they stay generic rows, with search, reset and copy and paste.
+
+### Phase 3 known limits
+
+- **Not driven with real input:** folder eye and lock, nested folders, Ctrl+E, the use-selected and find buttons on an asset field, the searchable list on a field, and Paste Component. Unit tests cover the session side of folders and the component text; the rest are UI paths only.
+- **Very long lists:** the hierarchy and browser draw every row with no clipping, so tens of thousands of entities will slow the panel.
+- **Grid view hides failed assets' reason** until you hover; the name turns red and the tooltip says why.
+
+### Phase 3 bugs found by running it
+
+- At the default size, the Asset Browser's tool row ran past the panel, so New Material could not be reached. The tools now wrap, and the browser gets more of the window.
+- Asset fields were too narrow to read "(none)".
+- A test, not the game: the shooter script failed once in about ten runs, when a light crate sailed over the bonus zone, hit the back wall and bounced away. Gameplay and physics are unchanged since Milestone 4. The script now tries the next crate, since what it checks is the sensor.
+- A saved layout did not restore which panels were open, and closed panels came back after a restart. ImGui's settings record neither, so layouts and `editor.ini` now do.
