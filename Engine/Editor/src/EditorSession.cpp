@@ -5,6 +5,9 @@
 #include <fstream>
 #include <set>
 #include <stdexcept>
+#include <string>
+#include <utility>
+#include <variant>
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/quaternion.hpp>
@@ -117,13 +120,72 @@ const commands::Context physics_context{"physics", 3};
 EditorSession::EditorSession() : edit_physics_(make_physics(false)) {}
 EditorSession::~EditorSession() = default;
 const Scene &EditorSession::scene() const { return runtime_ ? runtime_->scene : scene_; }
-void EditorSession::reconcile() { if (!scene().inspect(selected_)) selected_ = 0; }
-void EditorSession::select(EntityId id) { selected_ = scene().inspect(id) ? id : 0; }
+void EditorSession::reconcile() { selection_.retain([this](EntityId id) { return scene().inspect(id).has_value(); }); }
+void EditorSession::select(EntityId id) { selection_.set(scene().inspect(id) ? id : 0); }
+void EditorSession::select_all() {
+    std::vector<EntityId> ids;
+    for (const auto &e : scene().snapshot().entities) ids.push_back(e.id);
+    selection_.set(std::span<const EntityId>(ids));
+}
+std::vector<EntityId> EditorSession::selection_roots() const {
+    std::vector<EntityId> roots;
+    for (const auto id : selection_.items()) {
+        const auto record = scene().inspect(id);
+        if (!record) continue;
+        bool covered = false;
+        for (EntityId p = record->parent; p && !covered; p = scene().inspect(p)->parent) covered = selection_.contains(p);
+        if (!covered) roots.push_back(id);
+    }
+    return roots;
+}
+void EditorSession::sync_history() {
+    if (bus_.recorded() == bus_recorded_) return;
+    bus_recorded_ = bus_.recorded();
+    undo_steps_.push_back({std::string(bus_.latest_name()), std::nullopt});
+    redo_steps_.clear();
+    // The bus forgets its oldest step past its limit, so its name has to go too.
+    auto scene_steps = std::size_t(std::ranges::count_if(undo_steps_, [](const HistoryStep &step) { return !step.material; }));
+    for (auto it = undo_steps_.begin(); it != undo_steps_.end() && scene_steps > bus_.undo_size();)
+        if (!it->material) { it = undo_steps_.erase(it); --scene_steps; } else ++it;
+}
+Result<void> EditorSession::begin_transaction(std::string name) {
+    if (transaction_depth_++ == 0 && !runtime_) {
+        transaction_cancelled_ = false;
+        if (auto begun = bus_.begin_transaction(std::move(name)); !begun) { --transaction_depth_; return begun; }
+    }
+    return {};
+}
+Result<void> EditorSession::end_transaction() {
+    if (!transaction_depth_) return fail(ErrorCode::InvalidState, "No transaction is open");
+    if (--transaction_depth_ || !bus_.in_transaction()) return {};
+    if (std::exchange(transaction_cancelled_, false)) {
+        auto restored = bus_.abort_transaction(context_);
+        reconcile();
+        if (!restored) return restored.error();
+        return {};
+    }
+    auto ended = bus_.end_transaction();
+    sync_history();
+    reconcile();
+    return ended;
+}
+std::vector<std::string> EditorSession::history_names() const {
+    std::vector<std::string> names;
+    for (const auto &step : undo_steps_) names.push_back(step.name);
+    for (auto it = redo_steps_.rbegin(); it != redo_steps_.rend(); ++it) names.push_back(it->name);
+    return names;
+}
+Result<void> EditorSession::jump_history(std::size_t position) {
+    if (position > undo_steps_.size() + redo_steps_.size()) return fail(ErrorCode::InvalidArgument, "No such point in the history");
+    while (undo_steps_.size() > position) if (auto r = undo(); !r) return r.error();
+    while (undo_steps_.size() < position) if (auto r = redo(); !r) return r.error();
+    return {};
+}
 Result<void> EditorSession::editing_only(const char *action) const {
     if (runtime_) return fail(ErrorCode::InvalidState, std::string(action) + " is unavailable in Play mode; press Stop first");
     return {};
 }
-Result<commands::Receipt> EditorSession::execute(commands::Command cmd) {
+Result<commands::Receipt> EditorSession::execute(commands::Command cmd, std::string_view label) {
     if (runtime_) {
         if (std::holds_alternative<commands::ReplaceScene>(cmd))
             return fail(ErrorCode::InvalidState, "Replacing the scene is unavailable in Play mode; press Stop first");
@@ -131,48 +193,75 @@ Result<commands::Receipt> EditorSession::execute(commands::Command cmd) {
         reconcile();
         return result;
     }
-    auto result = bus_.execute(context_, bus_.revision(), std::move(cmd));
-    if (result) material_redo_.clear();
+    auto result = bus_.execute(context_, bus_.revision(), std::move(cmd), label);
+    sync_history();
+    reconcile();
+    return result;
+}
+Result<commands::Receipt> EditorSession::execute(std::span<const commands::Command> batch, std::string_view label) {
+    if (runtime_) {
+        if (std::ranges::any_of(batch, [](const commands::Command &c) { return std::holds_alternative<commands::ReplaceScene>(c); }))
+            return fail(ErrorCode::InvalidState, "Replacing the scene is unavailable in Play mode; press Stop first");
+        auto result = runtime_->bus.execute(context_, runtime_->bus.revision(), batch);
+        reconcile();
+        return result;
+    }
+    auto result = bus_.execute(context_, bus_.revision(), batch, label);
+    sync_history();
     reconcile();
     return result;
 }
 Result<commands::Receipt> EditorSession::create(std::string name, EntityId parent, Components components) {
     Transform t; t.position.y = 0.5;
-    auto r = execute(commands::CreateEntity{std::move(name), t, parent, 0, std::move(components)});
-    if (r) selected_ = r.value().created.front();
+    const auto label = "Create " + name;
+    auto r = execute(commands::CreateEntity{std::move(name), t, parent, 0, std::move(components)}, label);
+    if (r) selection_.set(r.value().created.front());
     return r;
 }
 Result<commands::Receipt> EditorSession::undo() {
     if (auto allowed = editing_only("Undo"); !allowed) return allowed.error();
-    // Nothing happened to the scene since this material edit, so it is the latest step.
-    if (!material_undo_.empty() && material_undo_.back().scene_depth == bus_.undo_size()) {
-        auto edit = std::move(material_undo_.back());
-        material_undo_.pop_back();
-        if (auto saved = assets_->save_material(edit.id, edit.before); !saved) return saved.error();
+    if (in_transaction()) return fail(ErrorCode::InvalidState, "Finish the drag before undoing");
+    if (undo_steps_.empty()) return fail(ErrorCode::InvalidState, "History is empty");
+    auto &step = undo_steps_.back();
+    if (step.material) {
+        if (auto saved = assets_->save_material(step.material->id, step.material->before); !saved) return saved.error();
         forget_materials();
-        material_redo_.push_back(std::move(edit));
+        redo_steps_.push_back(std::move(step));
+        undo_steps_.pop_back();
         return commands::Receipt{bus_.revision(), {}, 0};
     }
-    auto r = bus_.undo(context_, bus_.revision()); reconcile(); return r;
+    auto r = bus_.undo(context_, bus_.revision());
+    reconcile();
+    if (!r) return r;
+    redo_steps_.push_back(std::move(step));
+    undo_steps_.pop_back();
+    return r;
 }
 Result<commands::Receipt> EditorSession::redo() {
     if (auto allowed = editing_only("Redo"); !allowed) return allowed.error();
-    if (!material_redo_.empty() && material_redo_.back().scene_depth == bus_.undo_size()) {
-        auto edit = std::move(material_redo_.back());
-        material_redo_.pop_back();
-        if (auto saved = assets_->save_material(edit.id, edit.after); !saved) return saved.error();
+    if (in_transaction()) return fail(ErrorCode::InvalidState, "Finish the drag before redoing");
+    if (redo_steps_.empty()) return fail(ErrorCode::InvalidState, "History is empty");
+    auto &step = redo_steps_.back();
+    if (step.material) {
+        if (auto saved = assets_->save_material(step.material->id, step.material->after); !saved) return saved.error();
         forget_materials();
-        material_undo_.push_back(std::move(edit));
+        undo_steps_.push_back(std::move(step));
+        redo_steps_.pop_back();
         return commands::Receipt{bus_.revision(), {}, 0};
     }
-    auto r = bus_.redo(context_, bus_.revision()); reconcile(); return r;
+    auto r = bus_.redo(context_, bus_.revision());
+    reconcile();
+    if (!r) return r;
+    undo_steps_.push_back(std::move(step));
+    redo_steps_.pop_back();
+    return r;
 }
 Result<void> EditorSession::new_scene() {
     if (auto allowed = editing_only("New Scene"); !allowed) return allowed;
     // next_id is kept by ReplaceScene, so stable IDs are never recycled within a session.
-    auto r = execute(commands::ReplaceScene{SceneSnapshot{}});
+    auto r = execute(commands::ReplaceScene{SceneSnapshot{}}, "New Scene");
     if (!r) return r.error();
-    selected_ = 0;
+    selection_.clear();
     clean_.clear(); dirty_revision_ = ~std::uint64_t(0);
     return {};
 }
@@ -211,9 +300,9 @@ Result<void> EditorSession::load(const std::filesystem::path &path) {
     if (!stream) return fail(ErrorCode::NotFound, "Cannot open scene file");
     auto snapshot = read_scene(stream);
     if (!snapshot) return snapshot.error();
-    auto r = execute(commands::ReplaceScene{std::move(snapshot.value())});
+    auto r = execute(commands::ReplaceScene{std::move(snapshot.value())}, "Load Scene");
     if (!r) return r.error();
-    selected_ = 0;
+    selection_.clear();
     mark_clean();
     return {};
 }
@@ -249,10 +338,7 @@ Result<commands::Receipt> EditorSession::reparent(EntityId id, EntityId parent) 
     auto local = local_from_world(parent, *scene().world_transform(id));
     if (!local) return fail(ErrorCode::InvalidArgument, "Cannot keep the world transform under that parent: " + local.error().message);
     const commands::Command batch[] = {commands::SetParent{id, parent}, commands::SetTransform{id, local.value()}};
-    auto &bus = runtime_ ? runtime_->bus : bus_;
-    auto result = bus.execute(context_, bus.revision(), std::span<const commands::Command>(batch));
-    reconcile();
-    return result;
+    return execute(std::span<const commands::Command>(batch), parent ? "Reparent " + record->name : "Move " + record->name + " to Root");
 }
 Result<commands::Receipt> EditorSession::duplicate(EntityId id) {
     const auto record = scene().inspect(id);
@@ -265,17 +351,97 @@ Result<commands::Receipt> EditorSession::duplicate(EntityId id) {
         while (!name.empty() && (static_cast<unsigned char>(name.back()) & 0xC0) == 0x80) name.pop_back();
         if (!name.empty() && static_cast<unsigned char>(name.back()) >= 0xC0) name.pop_back();
     }
-    auto result = execute(commands::DuplicateEntity{id, name + std::string(suffix)});
-    if (result) selected_ = result.value().created.front();
+    auto result = execute(commands::DuplicateEntity{id, name + std::string(suffix)}, "Duplicate " + record->name);
+    if (result) selection_.set(result.value().created.front());
     return result;
 }
+namespace {
+std::string many(std::string_view verb, std::size_t count, const std::string &single) {
+    return std::string(verb) + ' ' + (count == 1 ? single : std::to_string(count) + " Entities");
+}
+}
+Result<void> EditorSession::duplicate_selection() {
+    const auto roots = selection_roots();
+    if (roots.empty()) return fail(ErrorCode::InvalidState, "Nothing is selected");
+    ScopedTransaction transaction(*this, many("Duplicate", roots.size(), scene().inspect(roots.front())->name));
+    std::vector<EntityId> copies;
+    for (const auto id : roots) {
+        auto copied = duplicate(id);
+        if (!copied) { transaction.cancel(); return copied.error(); }
+        copies.push_back(copied.value().created.front());
+    }
+    selection_.set(std::span<const EntityId>(copies));
+    return {};
+}
+Result<void> EditorSession::delete_selection() {
+    const auto roots = selection_roots();
+    if (roots.empty()) return fail(ErrorCode::InvalidState, "Nothing is selected");
+    ScopedTransaction transaction(*this, many("Delete", roots.size(), scene().inspect(roots.front())->name));
+    for (const auto id : roots)
+        if (auto deleted = execute(commands::DeleteEntity{id}); !deleted) { transaction.cancel(); return deleted.error(); }
+    return {};
+}
+Result<void> EditorSession::begin_drag(std::string_view verb) {
+    if (dragging()) return fail(ErrorCode::InvalidState, "A drag is already in progress");
+    const auto roots = selection_roots();
+    if (roots.empty()) return fail(ErrorCode::InvalidState, "Nothing is selected");
+    if (auto begun = begin_transaction(many(verb, roots.size(), scene().inspect(roots.front())->name)); !begun) return begun;
+    for (const auto id : roots) drag_start_.emplace_back(id, *scene().world_transform(id));
+    return {};
+}
+Result<void> EditorSession::update_drag(const WorldTransform &delta) {
+    if (!dragging()) return fail(ErrorCode::InvalidState, "No drag is in progress");
+    const auto change = glm::make_mat4(delta.matrix.data());
+    std::vector<commands::Command> moves;
+    // Worked out before anything is applied, so one entity that cannot follow leaves them all where they were.
+    for (const auto &[id, start] : drag_start_) {
+        const auto record = scene().inspect(id);
+        if (!record) continue;
+        auto local = local_from_world(record->parent, copy(change * glm::make_mat4(start.matrix.data())));
+        if (!local) return local.error();
+        moves.emplace_back(commands::SetTransform{id, local.value()});
+    }
+    for (std::size_t at = 0; at < moves.size(); at += commands::CommandBus::max_transaction) {
+        const auto count = std::min(moves.size() - at, commands::CommandBus::max_transaction);
+        if (auto moved = execute(std::span<const commands::Command>(moves).subspan(at, count), {}); !moved) return moved.error();
+    }
+    return {};
+}
+Result<void> EditorSession::end_drag() {
+    if (!dragging()) return fail(ErrorCode::InvalidState, "No drag is in progress");
+    drag_start_.clear();
+    return end_transaction();
+}
+Result<void> EditorSession::cancel_drag() {
+    if (!dragging()) return fail(ErrorCode::InvalidState, "No drag is in progress");
+    // A runtime scene keeps no record to restore from, so it is put back by hand.
+    if (runtime_) {
+        WorldTransform unchanged;
+        std::copy_n(glm::value_ptr(glm::dmat4(1)), 16, unchanged.matrix.begin());
+        if (auto restored = update_drag(unchanged); !restored) return restored;
+    }
+    drag_start_.clear();
+    cancel_transaction();
+    return end_transaction();
+}
+std::optional<std::pair<Vec3, Vec3>> EditorSession::local_bounds(EntityId id) {
+    const auto record = scene().inspect(id);
+    if (!record || !record->components.mesh) return std::nullopt;
+    const auto &mesh = *record->components.mesh;
+    if (const auto data = model(mesh.mesh_asset)) {
+        const auto low = vector(data->bounds.min), high = vector(data->bounds.max);
+        return std::pair<Vec3, Vec3>{{low.x, low.y, low.z}, {high.x, high.y, high.z}};
+    }
+    if (mesh.mesh == BuiltinMesh::Plane) return std::pair<Vec3, Vec3>{{-0.5, 0, -0.5}, {0.5, 0, 0.5}};
+    return std::pair<Vec3, Vec3>{{-0.5, -0.5, -0.5}, {0.5, 0.5, 0.5}};
+}
 void EditorSession::focus() {
-    if (const auto w = scene().world_transform(selected_)) {
+    if (const auto w = scene().world_transform(selection_.primary())) {
         const auto m = glm::make_mat4(w->matrix.data());
         const double scale = std::max({glm::length(glm::dvec3(m[0])), glm::length(glm::dvec3(m[1])), glm::length(glm::dvec3(m[2]))});
         glm::dvec3 center(m[3]);
         double size = 3.0 / 1.75; // Diagonal-like size that puts a unit cube 3 m away.
-        const auto record = scene().inspect(selected_);
+        const auto record = scene().inspect(selection_.primary());
         // A model's origin can be far from its geometry, and its size is anything.
         if (const auto data = record->components.mesh ? model(record->components.mesh->mesh_asset) : nullptr) {
             const auto low = vector(data->bounds.min), high = vector(data->bounds.max);
@@ -380,6 +546,7 @@ PlayState EditorSession::play_state() const {
     return runtime_->paused ? PlayState::Paused : PlayState::Playing;
 }
 Result<void> EditorSession::play() {
+    if (in_transaction()) return fail(ErrorCode::InvalidState, "Finish the drag before Play");
     if (runtime_) {
         runtime_->paused = false;
         if (runtime_->game) runtime_->game->resume();
@@ -414,6 +581,7 @@ Result<void> EditorSession::stop() {
     if (!runtime_) return fail(ErrorCode::InvalidState, "Not in Play mode");
     runtime_.reset();
     physics_error_.clear();
+    transaction_depth_ = 0; drag_start_.clear(); // A runtime transaction has nothing to finish.
     reconcile();
     return {};
 }
@@ -421,6 +589,7 @@ Result<void> EditorSession::restart() {
     if (!runtime_) return fail(ErrorCode::InvalidState, "Not in Play mode");
     runtime_.reset();
     physics_error_.clear();
+    transaction_depth_ = 0; drag_start_.clear();
     return play();
 }
 gameplay::Game *EditorSession::game() const { return runtime_ ? runtime_->game.get() : nullptr; }
@@ -671,9 +840,13 @@ Result<void> EditorSession::save_material(assets::AssetId id, const assets::Mate
     material_drafts_.erase(id);
     forget_materials();
     if (before != data) {
-        material_undo_.push_back({id, before, data, bus_.undo_size()});
-        material_redo_.clear();
-        if (material_undo_.size() > 128) material_undo_.erase(material_undo_.begin());
+        const auto meta = assets_->find(id);
+        const auto stem = std::filesystem::path(std::u8string(reinterpret_cast<const char8_t *>(meta->path.data()), meta->path.size())).stem().u8string();
+        undo_steps_.push_back({"Edit Material " + std::string(reinterpret_cast<const char *>(stem.data()), stem.size()), MaterialEdit{id, before, data}});
+        redo_steps_.clear();
+        bus_.discard_redo();
+        if (std::ranges::count_if(undo_steps_, [](const HistoryStep &step) { return step.material.has_value(); }) > 128)
+            undo_steps_.erase(std::ranges::find_if(undo_steps_, [](const HistoryStep &step) { return step.material.has_value(); }));
     }
     return {};
 }
@@ -702,7 +875,7 @@ Result<commands::Receipt> EditorSession::assign_material(EntityId id, assets::As
         else if (exists) at->material = ref;
         else slots.insert(at, MaterialSlot{*slot, ref});
     }
-    return execute(commands::SetMesh{id, mesh});
+    return execute(commands::SetMesh{id, mesh}, "Assign Material");
 }
 renderer::MaterialHandle EditorSession::material_handle(assets::AssetId id) {
     const auto meta = assets_ ? assets_->find(id) : std::nullopt;
@@ -725,7 +898,7 @@ Result<commands::Receipt> EditorSession::set_environment(const EnvironmentCompon
     if (const auto id = environment_entity()) return execute(commands::SetEnvironment{id, environment});
     Components components;
     components.environment = environment;
-    return execute(commands::CreateEntity{"Environment", Transform{}, 0, 0, std::move(components)});
+    return execute(commands::CreateEntity{"Environment", Transform{}, 0, 0, std::move(components)}, "Add Environment");
 }
 EnvironmentComponent EditorSession::outdoor_environment() { return {}; }
 EnvironmentComponent EditorSession::indoor_environment() {
@@ -762,7 +935,7 @@ Result<commands::Receipt> EditorSession::create_preset_lights(bool outdoor) {
         t.position = {0, 4, 0};
     }
     components.light = light;
-    return execute(commands::CreateEntity{outdoor ? "Sun" : "Key Light", t, 0, 0, std::move(components)});
+    return execute(commands::CreateEntity{outdoor ? "Sun" : "Key Light", t, 0, 0, std::move(components)}, outdoor ? "Add Sun" : "Add Key Light");
 }
 Result<void> EditorSession::open_project(const std::filesystem::path &root) {
     std::error_code ec;
@@ -770,7 +943,9 @@ Result<void> EditorSession::open_project(const std::filesystem::path &root) {
     project_ = root;
     assets_.reset(); resolved_.clear();
     // Material edits belong to the old project's files.
-    material_drafts_.clear(); material_undo_.clear(); material_redo_.clear();
+    material_drafts_.clear();
+    std::erase_if(undo_steps_, [](const HistoryStep &step) { return step.material.has_value(); });
+    std::erase_if(redo_steps_, [](const HistoryStep &step) { return step.material.has_value(); });
     if (!std::filesystem::is_directory(asset_folder(), ec)) return {};
     auto database = assets::AssetDatabase::open(asset_folder());
     if (!database) return database.error();
@@ -826,7 +1001,7 @@ Result<commands::Receipt> EditorSession::assign_asset(EntityId id, assets::Asset
     auto mesh = record->components.mesh.value_or(MeshComponent{});
     mesh.color = {1, 1, 1};
     (meta->type == assets::AssetType::Mesh ? mesh.mesh_asset : mesh.texture) = reference(*meta);
-    return execute(commands::SetMesh{id, mesh});
+    return execute(commands::SetMesh{id, mesh}, "Assign " + std::string(assets::to_string(meta->type)));
 }
 Result<commands::Receipt> EditorSession::place_asset(assets::AssetId asset) {
     const auto meta = assets_ ? assets_->find(asset) : std::nullopt;
@@ -840,8 +1015,10 @@ Result<commands::Receipt> EditorSession::place_asset(assets::AssetId asset) {
     mesh.mesh_asset = ref;
     Transform t; t.position.y = -double(data->bounds.min[1]);
     const auto stem = std::filesystem::path(std::u8string(reinterpret_cast<const char8_t *>(meta->path.data()), meta->path.size())).stem().u8string();
-    auto result = execute(commands::CreateEntity{trimmed_name(std::string(reinterpret_cast<const char *>(stem.data()), stem.size())), t, 0, 0, Components{mesh, {}, {}}});
-    if (result) selected_ = result.value().created.front();
+    auto name = trimmed_name(std::string(reinterpret_cast<const char *>(stem.data()), stem.size()));
+    const auto label = "Place " + name;
+    auto result = execute(commands::CreateEntity{std::move(name), t, 0, 0, Components{mesh, {}, {}}}, label);
+    if (result) selection_.set(result.value().created.front());
     return result;
 }
 std::shared_ptr<const assets::MeshData> EditorSession::model(const AssetRef &ref) {

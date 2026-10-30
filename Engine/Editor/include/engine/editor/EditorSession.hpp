@@ -1,6 +1,7 @@
 #pragma once
 #include <engine/assets/asset_database.h>
 #include <engine/commands/CommandBus.hpp>
+#include <engine/editor/Selection.hpp>
 #include <engine/gameplay/game.h>
 #include <engine/physics/scene_physics.h>
 #include <engine/renderer/RenderSnapshot.hpp>
@@ -12,7 +13,11 @@
 #include <memory>
 #include <optional>
 #include <set>
+#include <span>
+#include <string>
+#include <string_view>
 #include <tuple>
+#include <utility>
 #include <vector>
 
 namespace engine::editor {
@@ -65,7 +70,7 @@ class EditorSession {
     std::string physics_error_; // Last runtime physics failure; Play is paused when one occurs.
     std::uint64_t play_sessions_ = 0;
     SimulationTiming timing_;
-    EntityId selected_ = 0;
+    SelectionSet selection_;
     std::uint64_t frame_ = 0;
     // Entities as last saved, loaded or started fresh; the document is dirty when the scene differs.
     std::vector<EntityRecord> clean_;
@@ -88,9 +93,16 @@ class EditorSession {
     std::vector<std::string> asset_problems_;
     // Material edits in progress, not saved yet (a drag in the Material Editor); these win over the file.
     std::map<assets::AssetId, assets::MaterialData> material_drafts_;
-    // Material edits join undo and redo. Each records how deep the scene's undo stack was, which orders the two histories.
-    struct MaterialEdit { assets::AssetId id; assets::MaterialData before, after; std::size_t scene_depth; };
-    std::vector<MaterialEdit> material_undo_, material_redo_;
+    // One ordered history of named steps. A scene step's data lives in the command bus; a material edit carries its own.
+    struct MaterialEdit { assets::AssetId id; assets::MaterialData before, after; };
+    struct HistoryStep { std::string name; std::optional<MaterialEdit> material; };
+    std::vector<HistoryStep> undo_steps_, redo_steps_;
+    std::uint64_t bus_recorded_ = 0;
+    int transaction_depth_ = 0;
+    bool transaction_cancelled_ = false;
+    // A gizmo drag in progress: where each moved entity started.
+    std::vector<std::pair<EntityId, WorldTransform>> drag_start_;
+    void sync_history();
     std::vector<std::shared_future<Result<assets::PreparedImport>>> imports_;
     std::vector<std::filesystem::path> import_sources_;
     std::uint64_t frames_since_trim_ = 0;
@@ -119,17 +131,39 @@ public:
     std::uint64_t scene_identity() const;
     std::uint64_t scene_revision() const;
     const commands::CommandBus &commands() const { return bus_; }
-    EntityId selection() const { return selected_; }
+    // The primary selected entity, or 0: what gizmos and the Inspector follow.
+    EntityId selection() const { return selection_.primary(); }
+    const SelectionSet &selected() const { return selection_; }
+    // For subscribing to changes. Entities that do not exist are dropped when the scene next changes.
+    SelectionSet &selection_set() { return selection_; }
     void select(EntityId id);
-    Result<commands::Receipt> execute(commands::Command);
+    void select_all();
+    // The selected entities with no selected ancestor: moving, copying or deleting these covers the rest.
+    std::vector<EntityId> selection_roots() const;
+    // `label` names the undo step; empty uses the command's own label. Ignored inside a transaction.
+    Result<commands::Receipt> execute(commands::Command, std::string_view label = {});
+    // All or nothing, at most commands::CommandBus::max_transaction commands.
+    Result<commands::Receipt> execute(std::span<const commands::Command>, std::string_view label);
+    // Everything until the matching end_transaction() is one undo step, drawn live as it happens. They nest, and the
+    // outermost name wins. In Play mode the runtime scene keeps no history, so these do nothing there.
+    Result<void> begin_transaction(std::string name);
+    Result<void> end_transaction();
+    // Marks the transaction to restore what it changed when the outermost one ends.
+    void cancel_transaction() { transaction_cancelled_ = transaction_depth_ > 0; }
+    bool in_transaction() const { return transaction_depth_ > 0; }
+    // The history as a list, oldest first. The first history_position() entries are applied, the rest can be redone.
+    std::vector<std::string> history_names() const;
+    std::size_t history_position() const { return undo_steps_.size(); }
+    // Undoes or redoes until exactly `position` entries are applied.
+    Result<void> jump_history(std::size_t position);
     // Creates an entity 0.5 m above the parent's origin and selects it. The default is a built-in cube.
     Result<commands::Receipt> create(std::string name = "Cube", EntityId parent = 0,
                                      Components components = Components{MeshComponent{}, {}, {}});
     // Undoes the latest edit, a scene command or a material edit, whichever came last.
     Result<commands::Receipt> undo();
     Result<commands::Receipt> redo();
-    bool can_undo() const { return bus_.undo_size() || !material_undo_.empty(); }
-    bool can_redo() const { return bus_.redo_size() || !material_redo_.empty(); }
+    bool can_undo() const { return !undo_steps_.empty(); }
+    bool can_redo() const { return !redo_steps_.empty(); }
     // Replaces the editor scene with an empty one (undoable) and starts a clean document.
     Result<void> new_scene();
     Result<void> save(const std::filesystem::path &);
@@ -144,7 +178,21 @@ public:
     Result<commands::Receipt> reparent(EntityId id, EntityId parent);
     // Copies the entity and its subtree, components included, as "<name> (copy)": one undo step. Selects the copy.
     Result<commands::Receipt> duplicate(EntityId id);
+    // The same for the whole selection, in one undo step. Selects the copies.
+    Result<void> duplicate_selection();
+    // Deletes the selection and its subtrees in one undo step.
+    Result<void> delete_selection();
+    // ---- A gizmo drag: one undo step named "<verb> <name>" or "<verb> 3 Entities", drawn live ----
+    Result<void> begin_drag(std::string_view verb);
+    // Places every moved entity at `delta` times where it started. All or nothing: a shear leaves the last good place.
+    Result<void> update_drag(const WorldTransform &delta);
+    Result<void> end_drag();
+    // Puts everything back. No undo step.
+    Result<void> cancel_drag();
+    bool dragging() const { return !drag_start_.empty(); }
     void focus();
+    // The box the entity draws, in its local space; empty when it draws nothing.
+    std::optional<std::pair<Vec3, Vec3>> local_bounds(EntityId);
     // Extracts the shown scene: mesh components become lit meshes, light components scene lights. An asset that
     // cannot be resolved draws as a magenta cube and is listed in asset_problems(); nothing else changes.
     // Edit mode views through the editor camera. Play mode views through the first primary camera component
@@ -257,5 +305,16 @@ public:
     Result<commands::Receipt> create_preset_lights(bool outdoor);
 private:
     void tick();
+};
+// Keeps a transaction open for a scope. Nested guards join the outer one.
+class ScopedTransaction {
+    EditorSession &session_;
+    bool open_;
+public:
+    ScopedTransaction(EditorSession &session, std::string name) : session_(session), open_(static_cast<bool>(session.begin_transaction(std::move(name)))) {}
+    ~ScopedTransaction() { if (open_) (void)session_.end_transaction(); }
+    ScopedTransaction(const ScopedTransaction &) = delete;
+    ScopedTransaction &operator=(const ScopedTransaction &) = delete;
+    void cancel() { session_.cancel_transaction(); }
 };
 } // namespace engine::editor
