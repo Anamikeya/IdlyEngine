@@ -30,6 +30,9 @@ None fire while a text field has the keyboard, a dialog is open, a drag is in pr
 | Move to Root |  | Global | `Edit.MoveToRoot` |
 | Select All | `Ctrl+A` | Global | `Edit.SelectAll` |
 | Deselect | `Esc` | Global | `Edit.Deselect` |
+| Snap to Floor | `End` | Global | `Edit.SnapToFloor` |
+| Hide Selected | `H` | Global | `Edit.Hide` |
+| Unhide All | `Ctrl+H` | Global | `Edit.UnhideAll` |
 
 ## Create
 
@@ -57,6 +60,49 @@ None fire while a text field has the keyboard, a dialog is open, a drag is in pr
 |---|---|---|---|
 | Focus Selected | `F` | Viewport | `Viewport.FocusSelected` |
 | Show Colliders |  | Viewport | `Viewport.ToggleColliders` |
+| Show Grid |  | Viewport | `Viewport.ShowGrid` |
+| Show Light and Camera Markers |  | Viewport | `Viewport.ShowMarkers` |
+| Show Skybox |  | Viewport | `Viewport.ShowSkybox` |
+| Show Shadows |  | Viewport | `Viewport.ShowShadows` |
+| Show Ambient Occlusion |  | Viewport | `Viewport.ShowAmbientOcclusion` |
+| Show Bloom |  | Viewport | `Viewport.ShowBloom` |
+| Game View | `G` | Viewport | `Viewport.GameView` |
+| Maximize Viewport | `F11` | Viewport | `Viewport.Maximize` |
+| Perspective | `Alt+G` | Viewport | `Viewport.Perspective` |
+| Front | `Alt+H` | Viewport | `Viewport.Front` |
+| Top | `Alt+J` | Viewport | `Viewport.Top` |
+| Side | `Alt+K` | Viewport | `Viewport.Side` |
+| Wireframe | `Alt+2` | Viewport | `Viewport.Wireframe` |
+| Unlit | `Alt+3` | Viewport | `Viewport.Unlit` |
+| Lit | `Alt+4` | Viewport | `Viewport.Lit` |
+
+## Transform
+
+| Command | Keys | Context | ID |
+|---|---|---|---|
+| Move | `W` | Viewport | `Gizmo.Move` |
+| Rotate | `E` | Viewport | `Gizmo.Rotate` |
+| Scale | `R` | Viewport | `Gizmo.Scale` |
+| Next Gizmo | `Space` | Viewport | `Gizmo.Cycle` |
+| World or Local | `Ctrl+`` | Viewport | `Gizmo.ToggleSpace` |
+| Snap to Grid |  | Viewport | `Snap.ToggleGrid` |
+| Snap Rotation |  | Viewport | `Snap.ToggleRotation` |
+| Snap Scale |  | Viewport | `Snap.ToggleScale` |
+| Smaller Grid | `[` | Viewport | `Snap.GridSmaller` |
+| Larger Grid | `]` | Viewport | `Snap.GridLarger` |
+
+## Camera
+
+| Command | Keys | Context | ID |
+|---|---|---|---|
+| Fly Forward | `W` | Flying | `Camera.FlyForward` |
+| Fly Back | `S` | Flying | `Camera.FlyBack` |
+| Fly Left | `A` | Flying | `Camera.FlyLeft` |
+| Fly Right | `D` | Flying | `Camera.FlyRight` |
+| Fly Down | `Q` | Flying | `Camera.FlyDown` |
+| Fly Up | `E` | Flying | `Camera.FlyUp` |
+| Widen View | `Z` | Flying | `Camera.FovOut` |
+| Narrow View | `C` | Flying | `Camera.FovIn` |
 
 ## Play
 
@@ -74,3 +120,51 @@ None fire while a text field has the keyboard, a dialog is open, a drag is in pr
 |---|---|---|---|
 | Undo History |  | Global | `Window.UndoHistory` |
 | Keyboard Shortcuts |  | Global | `Window.KeyboardShortcuts` |
+
+## Bookmarks
+
+| Command | Keys | Context | ID |
+|---|---|---|---|
+| Set Bookmark 0 | `Ctrl+0` | Viewport | `Bookmark.Set0` |
+| Go to Bookmark 0 | `0` | Viewport | `Bookmark.Go0` |
+| Set Bookmark 1 | `Ctrl+1` | Viewport | `Bookmark.Set1` |
+| Go to Bookmark 1 | `1` | Viewport | `Bookmark.Go1` |
+| Set Bookmark 2 | `Ctrl+2` | Viewport | `Bookmark.Set2` |
+| Go to Bookmark 2 | `2` | Viewport | `Bookmark.Go2` |
+| Set Bookmark 3 | `Ctrl+3` | Viewport | `Bookmark.Set3` |
+| Go to Bookmark 3 | `3` | Viewport | `Bookmark.Go3` |
+| Set Bookmark 4 | `Ctrl+4` | Viewport | `Bookmark.Set4` |
+| Go to Bookmark 4 | `4` | Viewport | `Bookmark.Go4` |
+| Set Bookmark 5 | `Ctrl+5` | Viewport | `Bookmark.Set5` |
+| Go to Bookmark 5 | `5` | Viewport | `Bookmark.Go5` |
+| Set Bookmark 6 | `Ctrl+6` | Viewport | `Bookmark.Set6` |
+| Go to Bookmark 6 | `6` | Viewport | `Bookmark.Go6` |
+| Set Bookmark 7 | `Ctrl+7` | Viewport | `Bookmark.Set7` |
+| Go to Bookmark 7 | `7` | Viewport | `Bookmark.Go7` |
+| Set Bookmark 8 | `Ctrl+8` | Viewport | `Bookmark.Set8` |
+| Go to Bookmark 8 | `8` | Viewport | `Bookmark.Go8` |
+| Set Bookmark 9 | `Ctrl+9` | Viewport | `Bookmark.Set9` |
+| Go to Bookmark 9 | `9` | Viewport | `Bookmark.Go9` |
+
+## Mouse
+
+These cannot be changed yet.
+
+| Input | Action |
+|---|---|
+| RMB drag | Look around |
+| RMB + Wheel | Change camera speed |
+| Shift while flying | Move three times as fast |
+| LMB drag | Move forward and back, and turn |
+| LMB + RMB drag | Move up, down and sideways |
+| MMB drag | Pan |
+| Wheel | Zoom |
+| Alt + LMB drag | Orbit around the selection |
+| Alt + RMB drag | Dolly |
+| Alt + MMB drag | Pan |
+| Click | Select |
+| Ctrl + Click | Add to or take from the selection |
+| Alt + drag a gizmo | Copy the selection and move the copies |
+| Shift + drag a gizmo | The camera follows what moves |
+| Hold V while dragging a gizmo | Snap to the nearest vertex |
+| Esc while dragging a gizmo | Cancel the drag |
