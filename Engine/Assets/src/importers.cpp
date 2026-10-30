@@ -354,6 +354,7 @@ Result<MeshData> import_obj(std::string_view text, const ImportSettings& setting
 			mesh.vertices[i].normal = normalized_or_up(accumulated[i]);
 		}
 	}
+	compute_tangents(mesh, 0, static_cast<std::uint32_t>(mesh.indices.size()));
 
 	mesh.bounds.min = mesh.vertices.front().position;
 	mesh.bounds.max = mesh.vertices.front().position;
@@ -705,7 +706,337 @@ AssetType asset_type_for(std::string_view path) noexcept
 	if (iequals(ext, "tga") || iequals(ext, "ppm") || iequals(ext, "png") || iequals(ext, "jpg") || iequals(ext, "jpeg")) {
 		return AssetType::Texture;
 	}
+	if (iequals(ext, "material")) {
+		return AssetType::Material;
+	}
+	if (iequals(ext, "hdr")) {
+		return AssetType::Environment;
+	}
 	return AssetType::Unknown;
+}
+
+// ---- Tangents ------------------------------------------------------------------------------------
+
+void compute_tangents(MeshData& mesh, std::uint32_t first_index, std::uint32_t index_count)
+{
+	using V3 = std::array<float, 3>;
+	const auto sub = [](const V3& a, const V3& b) { return V3{a[0] - b[0], a[1] - b[1], a[2] - b[2]}; };
+	const auto dot = [](const V3& a, const V3& b) { return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]; };
+	const auto cross = [](const V3& a, const V3& b) {
+		return V3{a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]};
+	};
+	std::map<std::uint32_t, std::pair<V3, V3>> sums; // Vertex: sum of +u directions, sum of +v directions.
+	const std::uint32_t* indices = mesh.indices.data() + first_index;
+	for (std::uint32_t i = 0; i + 2 < index_count; i += 3) {
+		const MeshVertex& a = mesh.vertices[indices[i]];
+		const MeshVertex& b = mesh.vertices[indices[i + 1]];
+		const MeshVertex& c = mesh.vertices[indices[i + 2]];
+		const V3 e1 = sub(b.position, a.position), e2 = sub(c.position, a.position);
+		const float du1 = b.uv[0] - a.uv[0], dv1 = b.uv[1] - a.uv[1], du2 = c.uv[0] - a.uv[0], dv2 = c.uv[1] - a.uv[1];
+		const float det = du1 * dv2 - du2 * dv1;
+		if (std::abs(det) < 1.0e-12f || !std::isfinite(det)) {
+			continue;
+		}
+		const float r = 1.0f / det;
+		const V3 t{(dv2 * e1[0] - dv1 * e2[0]) * r, (dv2 * e1[1] - dv1 * e2[1]) * r, (dv2 * e1[2] - dv1 * e2[2]) * r};
+		const V3 s{(du1 * e2[0] - du2 * e1[0]) * r, (du1 * e2[1] - du2 * e1[1]) * r, (du1 * e2[2] - du2 * e1[2]) * r};
+		for (const std::uint32_t index : {indices[i], indices[i + 1], indices[i + 2]}) {
+			auto& [tangent, bitangent] = sums[index];
+			for (std::size_t k = 0; k < 3; ++k) {
+				tangent[k] += t[k];
+				bitangent[k] += s[k];
+			}
+		}
+	}
+	for (std::uint32_t i = 0; i < index_count; ++i) {
+		MeshVertex& v = mesh.vertices[indices[i]];
+		const auto found = sums.find(indices[i]);
+		V3 t{};
+		V3 s{};
+		if (found != sums.end()) {
+			t = found->second.first;
+			s = found->second.second;
+		}
+		// Gram-Schmidt against the normal; a vertex with no usable UVs gets any frame around its normal.
+		const float along = dot(t, v.normal);
+		V3 ortho{t[0] - v.normal[0] * along, t[1] - v.normal[1] * along, t[2] - v.normal[2] * along};
+		float length = std::sqrt(dot(ortho, ortho));
+		if (!std::isfinite(length) || length < 1.0e-8f) {
+			ortho = cross(std::abs(v.normal[1]) > 0.9f ? V3{0.0f, 0.0f, 1.0f} : V3{0.0f, 1.0f, 0.0f}, v.normal);
+			length = std::sqrt(dot(ortho, ortho));
+			s = {};
+		}
+		if (length < 1.0e-8f) {
+			continue; // A zero normal: leave the default.
+		}
+		// +v runs towards the bottom of the image, and the bitangent must point at its top.
+		const float handedness = dot(cross(v.normal, ortho), s) > 0.0f ? -1.0f : 1.0f;
+		v.tangent = {ortho[0] / length, ortho[1] / length, ortho[2] / length, handedness};
+	}
+}
+
+// ---- Material assets -----------------------------------------------------------------------------
+
+namespace {
+
+constexpr std::string_view material_magic = "ENGINE_MATERIAL";
+
+const char* alpha_token(AlphaMode mode) noexcept
+{
+	return mode == AlphaMode::Mask ? "mask" : mode == AlphaMode::Blend ? "blend" : "opaque";
+}
+
+bool unit(double v) noexcept
+{
+	return std::isfinite(v) && v >= 0.0 && v <= 1.0;
+}
+
+// Whitespace-separated tokens with `"` quoted strings, of one line.
+std::vector<std::string> line_tokens(std::string_view line, bool& valid)
+{
+	std::vector<std::string> tokens;
+	std::size_t i = 0;
+	while (i < line.size()) {
+		if (line[i] == ' ' || line[i] == '\t' || line[i] == '\r') {
+			++i;
+		} else if (line[i] == '"') {
+			std::string value;
+			++i;
+			bool closed = false;
+			while (i < line.size()) {
+				if (line[i] == '"') {
+					closed = true;
+					++i;
+					break;
+				}
+				if (line[i] == '\\' && i + 1 < line.size()) {
+					++i;
+				}
+				value += line[i++];
+			}
+			valid = valid && closed;
+			tokens.push_back(std::move(value));
+		} else {
+			const std::size_t start = i;
+			while (i < line.size() && line[i] != ' ' && line[i] != '\t' && line[i] != '\r') {
+				++i;
+			}
+			tokens.emplace_back(line.substr(start, i - start));
+		}
+	}
+	return tokens;
+}
+
+bool number(const std::string& text, double& value) noexcept
+{
+	const auto result = std::from_chars(text.data(), text.data() + text.size(), value);
+	return result.ec == std::errc{} && result.ptr == text.data() + text.size() && std::isfinite(value);
+}
+
+void write_texture(std::string& out, std::string_view key, const MaterialTexture& texture)
+{
+	out += key;
+	out += ' ';
+	if (texture.empty()) {
+		out += "-\n";
+		return;
+	}
+	out += to_string(texture.id);
+	out += " \"";
+	for (const char c : texture.path) {
+		if (c == '"' || c == '\\') {
+			out += '\\';
+		}
+		out += c;
+	}
+	out += "\"\n";
+}
+
+void write_numbers(std::string& out, std::string_view key, std::initializer_list<double> values)
+{
+	out += key;
+	for (const double value : values) {
+		char buffer[64];
+		const auto result = std::to_chars(buffer, buffer + sizeof buffer, value);
+		out += ' ';
+		out.append(buffer, result.ptr);
+	}
+	out += '\n';
+}
+
+} // namespace
+
+Result<void> validate_material(const MaterialData& m)
+{
+	const auto invalid = [](const char* text) { return fail(ErrorCode::InvalidArgument, std::string("Invalid material: ") + text); };
+	for (const double c : m.base_color) {
+		if (!unit(c)) {
+			return invalid("base color must be within [0, 1]");
+		}
+	}
+	for (const double c : m.emissive) {
+		if (!unit(c)) {
+			return invalid("emissive color must be within [0, 1]");
+		}
+	}
+	if (!unit(m.metallic) || !unit(m.roughness) || !unit(m.occlusion_strength) || !unit(m.alpha_cutoff)) {
+		return invalid("metallic, roughness, occlusion strength and alpha cutoff must be within [0, 1]");
+	}
+	if (!std::isfinite(m.emissive_strength) || m.emissive_strength < 0.0 || !std::isfinite(m.normal_scale) || m.normal_scale < 0.0) {
+		return invalid("emissive strength and normal scale must be >= 0");
+	}
+	if (!std::isfinite(m.uv_scale[0]) || !std::isfinite(m.uv_scale[1]) || m.uv_scale[0] <= 0.0 || m.uv_scale[1] <= 0.0) {
+		return invalid("UV scale must be positive");
+	}
+	if (m.alpha_mode != AlphaMode::Opaque && m.alpha_mode != AlphaMode::Mask && m.alpha_mode != AlphaMode::Blend) {
+		return invalid("unknown alpha mode");
+	}
+	for (const MaterialTexture* texture : {&m.base_color_map, &m.metallic_roughness_map, &m.normal_map, &m.occlusion_map, &m.emissive_map}) {
+		if (texture->empty() != texture->path.empty() || texture->path.size() > max_path_bytes) {
+			return invalid("a texture reference needs both an ID and a short path, or neither");
+		}
+	}
+	return {};
+}
+
+std::string write_material(const MaterialData& m)
+{
+	std::string out(material_magic);
+	out += " 1\n";
+	write_numbers(out, "base_color", {m.base_color[0], m.base_color[1], m.base_color[2], m.base_color[3]});
+	write_numbers(out, "metallic", {m.metallic});
+	write_numbers(out, "roughness", {m.roughness});
+	write_numbers(out, "emissive", {m.emissive[0], m.emissive[1], m.emissive[2]});
+	write_numbers(out, "emissive_strength", {m.emissive_strength});
+	write_numbers(out, "normal_scale", {m.normal_scale});
+	write_numbers(out, "occlusion_strength", {m.occlusion_strength});
+	out += "alpha_mode ";
+	out += alpha_token(m.alpha_mode);
+	out += '\n';
+	write_numbers(out, "alpha_cutoff", {m.alpha_cutoff});
+	write_numbers(out, "double_sided", {m.double_sided ? 1.0 : 0.0});
+	write_numbers(out, "uv_scale", {m.uv_scale[0], m.uv_scale[1]});
+	write_texture(out, "base_color_map", m.base_color_map);
+	write_texture(out, "metallic_roughness_map", m.metallic_roughness_map);
+	write_texture(out, "normal_map", m.normal_map);
+	write_texture(out, "occlusion_map", m.occlusion_map);
+	write_texture(out, "emissive_map", m.emissive_map);
+	return out;
+}
+
+Result<MaterialData> parse_material(std::string_view text)
+{
+	if (text.size() > 64 * 1024) {
+		return fail(ErrorCode::InvalidArgument, "the material file is too large");
+	}
+	const auto malformed = [](const std::string& why) { return fail(ErrorCode::ParseError, "Invalid material: " + why); };
+	MaterialData m;
+	std::vector<std::string> seen;
+	bool header = false;
+	std::size_t start = 0;
+	while (start <= text.size()) {
+		const std::size_t end = std::min(text.find('\n', start), text.size());
+		const std::string_view line = text.substr(start, end - start);
+		start = end + 1;
+		bool valid = true;
+		const std::vector<std::string> tokens = line_tokens(line, valid);
+		if (tokens.empty()) {
+			continue;
+		}
+		if (!valid) {
+			return malformed("unterminated string");
+		}
+		if (!header) {
+			if (tokens.size() != 2 || tokens[0] != material_magic || tokens[1] != "1") {
+				return malformed("missing header or unsupported version");
+			}
+			header = true;
+			continue;
+		}
+		const std::string& key = tokens[0];
+		if (std::find(seen.begin(), seen.end(), key) != seen.end()) {
+			return malformed("duplicate key " + key);
+		}
+		seen.push_back(key);
+		const auto numbers = [&](std::initializer_list<double*> targets) {
+			if (tokens.size() != targets.size() + 1) {
+				return false;
+			}
+			std::size_t i = 1;
+			for (double* target : targets) {
+				if (!number(tokens[i++], *target)) {
+					return false;
+				}
+			}
+			return true;
+		};
+		const auto texture = [&](MaterialTexture& out) {
+			if (tokens.size() == 2 && tokens[1] == "-") {
+				out = {};
+				return true;
+			}
+			if (tokens.size() != 3) {
+				return false;
+			}
+			const auto id = parse_asset_id(tokens[1]);
+			if (!id) {
+				return false;
+			}
+			out = {*id, tokens[2]};
+			return true;
+		};
+		bool parsed = false;
+		if (key == "base_color") {
+			parsed = numbers({&m.base_color[0], &m.base_color[1], &m.base_color[2], &m.base_color[3]});
+		} else if (key == "metallic") {
+			parsed = numbers({&m.metallic});
+		} else if (key == "roughness") {
+			parsed = numbers({&m.roughness});
+		} else if (key == "emissive") {
+			parsed = numbers({&m.emissive[0], &m.emissive[1], &m.emissive[2]});
+		} else if (key == "emissive_strength") {
+			parsed = numbers({&m.emissive_strength});
+		} else if (key == "normal_scale") {
+			parsed = numbers({&m.normal_scale});
+		} else if (key == "occlusion_strength") {
+			parsed = numbers({&m.occlusion_strength});
+		} else if (key == "alpha_mode") {
+			parsed = tokens.size() == 2 && (tokens[1] == "opaque" || tokens[1] == "mask" || tokens[1] == "blend");
+			if (parsed) {
+				m.alpha_mode = tokens[1] == "mask" ? AlphaMode::Mask : tokens[1] == "blend" ? AlphaMode::Blend : AlphaMode::Opaque;
+			}
+		} else if (key == "alpha_cutoff") {
+			parsed = numbers({&m.alpha_cutoff});
+		} else if (key == "double_sided") {
+			double flag = 0.0;
+			parsed = numbers({&flag}) && (flag == 0.0 || flag == 1.0);
+			m.double_sided = flag == 1.0;
+		} else if (key == "uv_scale") {
+			parsed = numbers({&m.uv_scale[0], &m.uv_scale[1]});
+		} else if (key == "base_color_map") {
+			parsed = texture(m.base_color_map);
+		} else if (key == "metallic_roughness_map") {
+			parsed = texture(m.metallic_roughness_map);
+		} else if (key == "normal_map") {
+			parsed = texture(m.normal_map);
+		} else if (key == "occlusion_map") {
+			parsed = texture(m.occlusion_map);
+		} else if (key == "emissive_map") {
+			parsed = texture(m.emissive_map);
+		} else {
+			return malformed("unknown key " + key);
+		}
+		if (!parsed) {
+			return malformed("bad value for " + key);
+		}
+	}
+	if (!header) {
+		return malformed("missing header or unsupported version");
+	}
+	if (auto valid = validate_material(m); !valid) {
+		return valid.error();
+	}
+	return m;
 }
 
 } // namespace engine::assets

@@ -596,3 +596,184 @@ ENGINE_TEST(events_cleared_on_next_step)
 	world.reset();
 	ENGINE_CHECK(world.moved_bodies().empty());
 }
+
+// ---- Queries and impulses ------------------------------------------------------------------------
+
+namespace {
+
+BodyHandle make_box(PhysicsWorld& world, BodyType type, Vec3 position, float density = 1000.0f, CollisionFilter filter = {}, std::uint64_t key = 0)
+{
+	BodyDesc desc;
+	desc.type = type;
+	desc.pose.position = position;
+	desc.user_key = key;
+	auto body = world.create_body(desc);
+	ENGINE_REQUIRE(body.ok());
+	ColliderDesc collider;
+	collider.shape = BoxShape{{0.5f, 0.5f, 0.5f}, {}};
+	collider.density = density;
+	collider.filter = filter;
+	ENGINE_REQUIRE(world.add_collider(body.value(), collider).ok());
+	return body.value();
+}
+
+} // namespace
+
+ENGINE_TEST(ray_finds_the_nearest_collider_with_point_and_normal)
+{
+	PhysicsWorld world = make_world();
+	const BodyHandle near_box = make_box(world, BodyType::Static, {0, 0, -5}, 1000, {}, 7);
+	make_box(world, BodyType::Static, {0, 0, -10}, 1000, {}, 8);
+	const RayHit hit = world.cast_ray({0, 0, 0}, {0, 0, -20});
+	ENGINE_REQUIRE(hit.hit);
+	ENGINE_CHECK(hit.body == near_box);
+	ENGINE_CHECK_EQ(hit.user_key, std::uint64_t{7});
+	ENGINE_CHECK_NEAR(hit.point.z, -4.5f, 1e-3f);
+	ENGINE_CHECK_NEAR(hit.normal.z, 1.0f, 1e-3f);
+	ENGINE_CHECK_NEAR(hit.fraction, 4.5f / 20.0f, 1e-4f);
+}
+
+ENGINE_TEST(ray_misses_what_is_not_on_its_path)
+{
+	PhysicsWorld world = make_world();
+	make_box(world, BodyType::Static, {0, 0, -5});
+	ENGINE_CHECK(!world.cast_ray({3, 0, 0}, {0, 0, -20}).hit); // To the side.
+	ENGINE_CHECK(!world.cast_ray({0, 0, 0}, {0, 0, 20}).hit);  // Behind.
+	ENGINE_CHECK(!world.cast_ray({0, 0, 0}, {0, 0, -4}).hit);  // Short of it.
+	const float nan = std::numeric_limits<float>::quiet_NaN();
+	ENGINE_CHECK(!world.cast_ray({nan, 0, 0}, {0, 0, -20}).hit);
+}
+
+ENGINE_TEST(ray_filters_by_category_and_mask)
+{
+	PhysicsWorld world = make_world();
+	CollisionFilter layer_two;
+	layer_two.category_bits = 2;
+	make_box(world, BodyType::Static, {0, 0, -5}, 1000, layer_two, 1);
+	make_box(world, BodyType::Static, {0, 0, -10}, 1000, {}, 2);
+	RayFilter only_two;
+	only_two.mask_bits = 2;
+	const RayHit hit = world.cast_ray({0, 0, 0}, {0, 0, -20}, only_two);
+	ENGINE_REQUIRE(hit.hit);
+	ENGINE_CHECK_EQ(hit.user_key, std::uint64_t{1});
+	RayFilter not_two;
+	not_two.mask_bits = ~std::uint64_t{2};
+	const RayHit past = world.cast_ray({0, 0, 0}, {0, 0, -20}, not_two);
+	ENGINE_REQUIRE(past.hit);
+	ENGINE_CHECK_EQ(past.user_key, std::uint64_t{2}); // Sees through the filtered box.
+}
+
+ENGINE_TEST(ray_skips_the_ignored_body_and_sensors)
+{
+	PhysicsWorld world = make_world();
+	const BodyHandle own = make_box(world, BodyType::Dynamic, {0, 0, -2});
+	make_box(world, BodyType::Static, {0, 0, -8}, 1000, {}, 9);
+	BodyDesc sensor_desc;
+	sensor_desc.type = BodyType::Static;
+	sensor_desc.pose.position = {0, 0, -5};
+	auto sensor_body = world.create_body(sensor_desc);
+	ENGINE_REQUIRE(sensor_body.ok());
+	ColliderDesc sensor;
+	sensor.shape = BoxShape{{1.0f, 1.0f, 1.0f}, {}};
+	sensor.is_sensor = true;
+	ENGINE_REQUIRE(world.add_collider(sensor_body.value(), sensor).ok());
+	ENGINE_CHECK(world.cast_ray({0, 0, 0}, {0, 0, -20}).body == own);
+	RayFilter filter;
+	filter.ignore_body = own;
+	const RayHit hit = world.cast_ray({0, 0, 0}, {0, 0, -20}, filter);
+	ENGINE_REQUIRE(hit.hit);
+	ENGINE_CHECK_EQ(hit.user_key, std::uint64_t{9});
+}
+
+ENGINE_TEST(collision_filter_stops_two_bodies_touching)
+{
+	PhysicsWorld world = make_world();
+	make_ground(world);
+	CollisionFilter ghost;
+	ghost.mask_bits = 0;
+	const BodyHandle falling = make_box(world, BodyType::Dynamic, {0, 2, 0}, 1000, ghost);
+	const BodyHandle landing = make_box(world, BodyType::Dynamic, {3, 2, 0});
+	for (int i = 0; i < 180; ++i) {
+		ENGINE_CHECK(world.step() == PhysicsError::None);
+	}
+	ENGINE_CHECK(world.body_pose(falling).value().position.y < -5.0f); // Through the ground.
+	ENGINE_CHECK_NEAR(world.body_pose(landing).value().position.y, 0.5f, 0.02f);
+}
+
+ENGINE_TEST(impulse_at_the_center_moves_along_its_direction_scaled_by_mass)
+{
+	WorldConfig config;
+	config.gravity = {0, 0, 0};
+	PhysicsWorld world = make_world(config);
+	const BodyHandle light = make_box(world, BodyType::Dynamic, {0, 0, 0}, 100);
+	const BodyHandle heavy = make_box(world, BodyType::Dynamic, {5, 0, 0}, 400);
+	ENGINE_CHECK(world.apply_linear_impulse_at(light, {0, 0, -100}, {0, 0, 0}) == PhysicsError::None);
+	ENGINE_CHECK(world.apply_linear_impulse_at(heavy, {0, 0, -100}, {5, 0, 0}) == PhysicsError::None);
+	const Vec3 a = world.linear_velocity(light).value(), b = world.linear_velocity(heavy).value();
+	ENGINE_CHECK_NEAR(a.z, -1.0f, 1e-4f); // 100 N*s on 100 kg.
+	ENGINE_CHECK_NEAR(b.z, -0.25f, 1e-4f);
+	ENGINE_CHECK_NEAR(a.x, 0.0f, 1e-5f);
+	ENGINE_CHECK_NEAR(world.angular_velocity(light).value().y, 0.0f, 1e-5f); // Through the center: no spin.
+}
+
+ENGINE_TEST(impulse_off_center_also_spins_the_body)
+{
+	WorldConfig config;
+	config.gravity = {0, 0, 0};
+	PhysicsWorld world = make_world(config);
+	const BodyHandle body = make_box(world, BodyType::Dynamic, {0, 0, 0}, 100);
+	ENGINE_CHECK(world.apply_linear_impulse_at(body, {0, 0, -100}, {0.5f, 0, 0}) == PhysicsError::None);
+	ENGINE_CHECK_NEAR(world.linear_velocity(body).value().z, -1.0f, 1e-4f);
+	ENGINE_CHECK(world.angular_velocity(body).value().y > 1.0f); // r x J, around +Y.
+}
+
+ENGINE_TEST(impulse_wakes_a_sleeping_body)
+{
+	PhysicsWorld world = make_world();
+	make_ground(world);
+	const BodyHandle body = make_box(world, BodyType::Dynamic, {0, 0.5f, 0}, 100);
+	for (int i = 0; i < 180 && world.is_awake(body).value(); ++i) {
+		ENGINE_CHECK(world.step() == PhysicsError::None);
+	}
+	ENGINE_REQUIRE(!world.is_awake(body).value());
+	ENGINE_CHECK(world.apply_linear_impulse_at(body, {0, 0, -100}, {0, 0.5f, 0}) == PhysicsError::None);
+	ENGINE_CHECK(world.is_awake(body).value());
+	ENGINE_CHECK(world.linear_velocity(body).value().z < -0.5f);
+}
+
+ENGINE_TEST(impulse_is_refused_by_static_and_kinematic_bodies)
+{
+	PhysicsWorld world = make_world();
+	const BodyHandle wall = make_box(world, BodyType::Static, {0, 0, 0});
+	const BodyHandle platform = make_box(world, BodyType::Kinematic, {5, 0, 0});
+	ENGINE_CHECK(world.apply_linear_impulse_at(wall, {0, 0, -100}, {0, 0, 0}) == PhysicsError::InvalidArgument);
+	ENGINE_CHECK(world.apply_linear_impulse_at(platform, {0, 0, -100}, {5, 0, 0}) == PhysicsError::InvalidArgument);
+	ENGINE_CHECK(world.apply_linear_impulse_at(BodyHandle{}, {0, 0, -100}, {0, 0, 0}) == PhysicsError::InvalidBody);
+	ENGINE_CHECK(world.step() == PhysicsError::None);
+	ENGINE_CHECK_EQ(world.body_pose(wall).value().position.z, 0.0f);
+}
+
+ENGINE_TEST(locked_rotation_keeps_a_body_upright)
+{
+	PhysicsWorld world = make_world();
+	make_ground(world);
+	const auto drop = [&](bool lock, float x) {
+		BodyDesc desc;
+		desc.pose.position = {x, 3, 0};
+		desc.angular_velocity = {3, 2, 1};
+		desc.lock_rotation = lock;
+		auto body = world.create_body(desc);
+		ENGINE_REQUIRE(body.ok());
+		ColliderDesc collider;
+		collider.shape = CapsuleShape{{0, -0.5f, 0}, {0, 0.5f, 0}, 0.3f};
+		ENGINE_REQUIRE(world.add_collider(body.value(), collider).ok());
+		return body.value();
+	};
+	const BodyHandle locked = drop(true, 0), free_body = drop(false, 4);
+	for (int i = 0; i < 180; ++i) {
+		ENGINE_CHECK(world.step() == PhysicsError::None);
+	}
+	const Quat q = world.body_pose(locked).value().rotation, tumbled = world.body_pose(free_body).value().rotation;
+	ENGINE_CHECK_NEAR(q.w, 1.0f, 1e-4f);
+	ENGINE_CHECK(std::abs(tumbled.w) < 0.99f);
+}

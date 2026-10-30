@@ -57,6 +57,10 @@ endif()
 if(GAMEENGINE_WITH_PHYSICS)
 	add_subdirectory(Engine/Physics)
 endif()
+# Runtime gameplay on top of the physics bridge; no editor, renderer or ImGui dependency.
+if(TARGET engine::physics_scene)
+	add_subdirectory(Engine/Gameplay)
+endif()
 # Claude-owned CPU asset pipeline; depends on engine::core for the shared Result type.
 if(TARGET engine::core AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/Engine/Assets/CMakeLists.txt")
 	add_subdirectory(Engine/Assets)

@@ -1,0 +1,17 @@
+ENGINE_MATERIAL 1
+base_color 1 1 1 1
+metallic 1
+roughness 1
+emissive 0 0 0
+emissive_strength 1
+normal_scale 1
+occlusion_strength 1
+alpha_mode opaque
+alpha_cutoff 0.5
+double_sided 0
+uv_scale 1 1
+base_color_map 84995e8779017a21 "textures/wood_base.jpg"
+metallic_roughness_map 04e096bd575a0bd0 "textures/wood_arm.jpg"
+normal_map b9e4c9bf246412ca "textures/wood_normal.jpg"
+occlusion_map 04e096bd575a0bd0 "textures/wood_arm.jpg"
+emissive_map -

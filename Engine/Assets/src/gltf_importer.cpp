@@ -23,9 +23,8 @@
 #define STB_IMAGE_IMPLEMENTATION
 #define STBI_ONLY_PNG
 #define STBI_ONLY_JPEG
+#define STBI_ONLY_HDR
 #define STBI_NO_STDIO
-#define STBI_NO_LINEAR
-#define STBI_NO_HDR
 #include <stb_image.h>
 #endif
 
@@ -43,6 +42,11 @@ Result<MeshData> import_glb(std::span<const std::uint8_t>, const ImportSettings&
 Result<TextureData> import_image(std::span<const std::uint8_t>, const ImportSettings&, const ImportLimits&)
 {
 	return fail(ErrorCode::InvalidState, "this build has no PNG/JPEG support (stb_image was not found in the dependency tree)");
+}
+
+Result<EnvironmentData> import_hdr(std::span<const std::uint8_t>, const ImportLimits&)
+{
+	return fail(ErrorCode::InvalidState, "this build has no .hdr support (stb_image was not found in the dependency tree)");
 }
 
 #else
@@ -141,7 +145,7 @@ private:
 	const ImportSettings& settings_;
 	const ImportLimits& limits_;
 	MeshData mesh_;
-	std::map<const cgltf_image*, int> images_;
+	std::map<std::pair<const cgltf_image*, bool>, int> images_; // By image and color space.
 	std::set<std::string> warnings_;
 
 	// Every node of the default scene (or of all root nodes when the file names no scene), parents first.
@@ -196,6 +200,7 @@ private:
 		const cgltf_accessor* positions = nullptr;
 		const cgltf_accessor* normals = nullptr;
 		const cgltf_accessor* uvs = nullptr;
+		const cgltf_accessor* tangents = nullptr;
 		for (cgltf_size i = 0; i < primitive.attributes_count; ++i) {
 			const cgltf_attribute& attribute = primitive.attributes[i];
 			if (attribute.type == cgltf_attribute_type_position) {
@@ -204,7 +209,16 @@ private:
 				normals = attribute.data;
 			} else if (attribute.type == cgltf_attribute_type_texcoord && attribute.index == 0) {
 				uvs = attribute.data;
+			} else if (attribute.type == cgltf_attribute_type_tangent) {
+				tangents = attribute.data;
 			}
+		}
+		// A malformed TANGENT is not worth refusing a model over: derive the tangents instead.
+		if (tangents && (tangents->type != cgltf_type_vec4 || tangents->count != positions->count)) {
+			tangents = nullptr;
+		}
+		if (!normals) {
+			tangents = nullptr; // Generated normals would not match the file's tangents.
 		}
 		if (!positions || positions->type != cgltf_type_vec3) {
 			return fail(ErrorCode::ParseError, "a primitive has no usable POSITION attribute");
@@ -235,7 +249,7 @@ private:
 			}
 			return values;
 		};
-		const std::vector<float> p = read(positions, 3), n = read(normals, 3), t = read(uvs, 2);
+		const std::vector<float> p = read(positions, 3), n = read(normals, 3), t = read(uvs, 2), g = read(tangents, 4);
 		if (!readable) {
 			return fail(ErrorCode::ParseError, "a primitive's vertex data cannot be read");
 		}
@@ -269,6 +283,14 @@ private:
 					return fail(ErrorCode::ParseError, "a primitive has non-finite texture coordinates");
 				}
 			}
+			if (tangents) {
+				const float* s = &g[i * 4];
+				std::array<float, 3> direction{world[0] * s[0] + world[4] * s[1] + world[8] * s[2],
+					world[1] * s[0] + world[5] * s[1] + world[9] * s[2], world[2] * s[0] + world[6] * s[1] + world[10] * s[2]};
+				if (normalize(direction)) {
+					v.tangent = {direction[0], direction[1], direction[2], s[3] < 0.0f ? -flip : flip};
+				}
+			}
 		}
 		mesh_.missing_uvs = mesh_.missing_uvs || !uvs;
 
@@ -291,6 +313,9 @@ private:
 		}
 		if (!normals) {
 			generate_normals(part, base, count);
+		}
+		if (!tangents) {
+			compute_tangents(mesh_, part.first_index, part.index_count);
 		}
 		auto material = convert_material(primitive.material);
 		if (!material) {
@@ -331,12 +356,20 @@ private:
 		if (!material) {
 			return out;
 		}
-		if (material->normal_texture.texture || material->occlusion_texture.texture || material->emissive_texture.texture) {
-			warnings_.insert("normal, occlusion and emissive maps are ignored");
+		out.alpha_mode = material->alpha_mode == cgltf_alpha_mode_mask    ? AlphaMode::Mask
+			: material->alpha_mode == cgltf_alpha_mode_blend ? AlphaMode::Blend
+															 : AlphaMode::Opaque;
+		out.alpha_cutoff = std::clamp(material->alpha_cutoff, 0.0f, 1.0f);
+		out.double_sided = material->double_sided != 0;
+		const float emissive_strength = material->has_emissive_strength ? material->emissive_strength.emissive_strength : 1.0f;
+		for (std::size_t i = 0; i < 3; ++i) {
+			out.emissive[i] = std::max(material->emissive_factor[i] * emissive_strength, 0.0f);
 		}
-		if (material->alpha_mode != cgltf_alpha_mode_opaque) {
-			warnings_.insert("transparency is ignored; materials render as opaque");
-		}
+		out.normal_scale = std::max(material->normal_texture.scale, 0.0f);
+		out.occlusion_strength = std::clamp(material->occlusion_texture.scale, 0.0f, 1.0f);
+		out.normal_image = secondary_map(material->normal_texture, false, "normal");
+		out.occlusion_image = secondary_map(material->occlusion_texture, false, "occlusion");
+		out.emissive_image = secondary_map(material->emissive_texture, true, "emissive");
 		if (material->has_pbr_specular_glossiness) {
 			warnings_.insert("specular-glossiness materials are not supported; default values are used");
 		}
@@ -349,20 +382,13 @@ private:
 		}
 		out.roughness = std::clamp(pbr.roughness_factor, 0.0f, 1.0f);
 		out.metallic = std::clamp(pbr.metallic_factor, 0.0f, 1.0f);
-		if (pbr.metallic_roughness_texture.texture) {
-			// Beside a map the factors are multipliers, usually 1: alone they would make the surface a rough, black metal.
-			out.roughness = 0.65f;
-			out.metallic = 0.0f;
-			warnings_.insert("metallic-roughness maps are ignored; a non-metal default is used");
-		}
+		out.metallic_roughness_image = secondary_map(pbr.metallic_roughness_texture, false, "metallic-roughness");
 		if (const cgltf_texture* texture = pbr.base_color_texture.texture) {
-			if (pbr.base_color_texture.texcoord != 0 || pbr.base_color_texture.has_transform) {
-				warnings_.insert("texture transforms and secondary UV sets are ignored");
-			}
+			check_texture_view(pbr.base_color_texture);
 			if (!texture->image) {
 				return fail(ErrorCode::ParseError, "a base color texture has no PNG or JPEG image (WebP and KTX2 are not supported)");
 			}
-			auto image = image_index(*texture->image);
+			auto image = image_index(*texture->image, true);
 			if (!image) {
 				return image.error();
 			}
@@ -371,13 +397,39 @@ private:
 		return out;
 	}
 
-	Result<int> image_index(const cgltf_image& image)
+	void check_texture_view(const cgltf_texture_view& view)
 	{
-		if (const auto found = images_.find(&image); found != images_.end()) {
+		if (view.texcoord != 0 || view.has_transform) {
+			warnings_.insert("texture transforms and secondary UV sets are ignored");
+		}
+	}
+
+	// An image for a map the material can do without: anything wrong with it is a warning, and the part still imports.
+	int secondary_map(const cgltf_texture_view& view, bool srgb, const char* role)
+	{
+		if (!view.texture) {
+			return -1;
+		}
+		check_texture_view(view);
+		if (!view.texture->image) {
+			warnings_.insert(std::string(role) + " map skipped: it has no PNG or JPEG image (WebP and KTX2 are not supported)");
+			return -1;
+		}
+		auto image = image_index(*view.texture->image, srgb);
+		if (!image) {
+			warnings_.insert(std::string(role) + " map skipped: " + image.error().message);
+			return -1;
+		}
+		return image.value();
+	}
+
+	Result<int> image_index(const cgltf_image& image, bool srgb)
+	{
+		if (const auto found = images_.find({&image, srgb}); found != images_.end()) {
 			return found->second;
 		}
 		ImportSettings settings = settings_;
-		settings.texture_srgb = true; // Base color data.
+		settings.texture_srgb = srgb;
 		Result<TextureData> decoded = fail(ErrorCode::ParseError, "unset");
 		if (image.buffer_view) {
 			const auto* bytes = cgltf_buffer_view_data(image.buffer_view);
@@ -410,7 +462,7 @@ private:
 		}
 		mesh_.images.push_back(std::make_shared<const TextureData>(std::move(decoded.value())));
 		const int index = static_cast<int>(mesh_.images.size()) - 1;
-		images_.emplace(&image, index);
+		images_.emplace(std::make_pair(&image, srgb), index);
 		return index;
 	}
 
@@ -479,6 +531,44 @@ Result<MeshData> import_glb(std::span<const std::uint8_t> bytes, const ImportSet
 		return fail(ErrorCode::ParseError, std::string("Invalid GLB: ") + describe(valid));
 	}
 	return GlbImporter(*data, settings, limits).run();
+}
+
+Result<EnvironmentData> import_hdr(std::span<const std::uint8_t> bytes, const ImportLimits& limits)
+{
+	if (bytes.size() > limits.max_source_bytes || bytes.size() > static_cast<std::size_t>(std::numeric_limits<int>::max())) {
+		return fail(ErrorCode::InvalidArgument, "the image exceeds the size limit");
+	}
+	const auto size = static_cast<int>(bytes.size());
+	if (!stbi_is_hdr_from_memory(bytes.data(), size)) {
+		return fail(ErrorCode::ParseError, "not a Radiance .hdr image");
+	}
+	int width = 0, height = 0, channels = 0;
+	if (!stbi_info_from_memory(bytes.data(), size, &width, &height, &channels)) {
+		return fail(ErrorCode::ParseError, "not a valid .hdr image");
+	}
+	if (width <= 0 || height <= 0 || static_cast<std::uint32_t>(width) > limits.max_texture_dimension ||
+		static_cast<std::uint32_t>(height) > limits.max_texture_dimension) {
+		return fail(ErrorCode::InvalidArgument, "the image exceeds the dimension limit");
+	}
+	if (width != 2 * height) {
+		return fail(ErrorCode::InvalidArgument, "an environment image must be equirectangular: twice as wide as it is tall");
+	}
+	const std::unique_ptr<float, decltype(&stbi_image_free)> pixels(
+		stbi_loadf_from_memory(bytes.data(), size, &width, &height, &channels, 3), stbi_image_free);
+	if (!pixels) {
+		return fail(ErrorCode::ParseError, std::string("the image could not be decoded: ") + stbi_failure_reason());
+	}
+	EnvironmentData out;
+	out.width = static_cast<std::uint32_t>(width);
+	out.height = static_cast<std::uint32_t>(height);
+	const std::size_t count = static_cast<std::size_t>(width) * static_cast<std::size_t>(height) * 3;
+	out.pixels.assign(pixels.get(), pixels.get() + count);
+	for (float& value : out.pixels) {
+		if (!std::isfinite(value) || value < 0.0f) {
+			value = 0.0f;
+		}
+	}
+	return out;
 }
 
 Result<TextureData> import_image(std::span<const std::uint8_t> bytes, const ImportSettings& settings, const ImportLimits& limits)

@@ -627,9 +627,313 @@ void asset_workflow() {
     }
     fs::remove_all(base);
 }
+std::string read_all(const std::filesystem::path &path) {
+    std::ifstream in(path, std::ios::binary);
+    return {std::istreambuf_iterator<char>(in), {}};
+}
+std::chrono::nanoseconds fixed_step_of_session() { return EditorSession::fixed_step; }
+void materials_workflow() {
+    namespace fs = std::filesystem;
+    const auto base = fs::current_path() / "editor-material-test-files";
+    fs::remove_all(base);
+    const auto project = base / "project";
+    fs::create_directories(project);
+    write_file(base / "red.ppm", "P6\n1 1\n255\n\xff\x01\x01");
+    EditorSession s;
+    check(!s.create_material("x"), "a material needs a project");
+    ok(s.open_project(project));
+    auto created = s.create_material("Rust"); ok(created);
+    const auto rust = created.value();
+    check(fs::exists(project / "Assets/materials/Rust.material"), "material written to the project");
+    const auto listed = [&](assets::AssetId id) {
+        const auto all = s.assets();
+        return std::find_if(all.begin(), all.end(), [&](const assets::AssetMetadata &m) { return m.id == id && m.type == assets::AssetType::Material; }) != all.end();
+    };
+    check(listed(rust), "material visible in the catalogue");
+
+    // Duplicate: a new ID and the same values.
+    auto data = *s.material(rust);
+    data.roughness = 0.2;
+    ok(s.save_material(rust, data));
+    auto copied = s.duplicate_material(rust); ok(copied);
+    check(copied.value() != rust && listed(copied.value()) && s.material(copied.value())->roughness == 0.2, "duplicate keeps values under a new ID");
+
+    // Assign to an entity: drawn with the material.
+    ok(s.create("Box")); const auto box = s.selection();
+    const auto revision = s.commands().revision();
+    ok(s.assign_material(box, rust));
+    check(s.commands().revision() == revision + 1, "assignment is one step");
+    check(s.scene().inspect(box)->components.mesh->material.id == rust.value, "reference stored");
+    auto f = s.frame(1); ok(f);
+    check(f.value()->objects.at(0).material == s.material_handle(rust), "frame draws the material");
+    const auto *desc = s.resources().find(f.value()->objects.at(0).material);
+    check(desc && near(desc->roughness, 0.2), "registry holds its values");
+    ok(s.undo());
+    check(s.scene().inspect(box)->components.mesh->material.empty(), "assignment undone");
+    ok(s.redo());
+    check(!s.assign_material(box, assets::AssetId{424242}), "unknown material rejected");
+
+    // Per-part: only that slot changes; an empty id clears it; slots stay sorted.
+    ok(s.assign_material(box, copied.value(), 3));
+    ok(s.assign_material(box, rust, 1));
+    auto slots = s.scene().inspect(box)->components.mesh->material_slots;
+    check(slots.size() == 2 && slots[0].slot == 1 && slots[1].slot == 3, "slots sorted");
+    f = s.frame(1); ok(f);
+    check(f.value()->objects.at(0).parts.size() == 2 && f.value()->objects.at(0).parts[1].part == 3, "parts reach the frame");
+    ok(s.assign_material(box, assets::AssetId{}, 1));
+    check(s.scene().inspect(box)->components.mesh->material_slots.size() == 1, "slot cleared");
+
+    // A live edit shows at once, and neither saves nor adds history.
+    auto file_before = read_all(project / "Assets/materials/Rust.material");
+    auto draft = data; draft.metallic = 0.75;
+    const auto undo_before = s.commands().undo_size();
+    ok(s.preview_material(rust, draft));
+    f = s.frame(1); ok(f);
+    check(near(s.resources().find(f.value()->objects.at(0).material)->metallic, 0.75), "preview reaches the frame");
+    check(read_all(project / "Assets/materials/Rust.material") == file_before, "preview does not touch the file");
+    check(s.commands().undo_size() == undo_before, "preview adds no history");
+    check(s.material(rust)->metallic == 0.75, "the draft is what the editor shows");
+    s.discard_material_draft(rust);
+    check(s.material(rust)->metallic == 0, "a discarded draft is gone");
+    check(!s.preview_material(rust, [&] { auto bad = data; bad.metallic = 3; return bad; }()), "invalid draft rejected");
+
+    // Saving is one undo step, in order with scene edits.
+    ok(s.preview_material(rust, draft));
+    ok(s.save_material(rust, draft));
+    check(read_all(project / "Assets/materials/Rust.material") != file_before, "saved to the file");
+    Transform moved; moved.position = {5, 0, 0};
+    ok(s.execute(commands::SetTransform{box, moved}));
+    auto after_both = s.material(rust)->metallic;
+    check(after_both == 0.75, "edit kept");
+    check(s.can_undo(), "undo offered");
+    ok(s.undo()); // The move, which was last.
+    check(s.scene().inspect(box)->transform.position != moved.position && s.material(rust)->metallic == 0.75, "scene edit undone first");
+    ok(s.undo()); // Then the material.
+    check(s.material(rust)->metallic == 0 && read_all(project / "Assets/materials/Rust.material") == file_before, "material undone, and its file too");
+    f = s.frame(1); ok(f);
+    check(near(s.resources().find(f.value()->objects.at(0).material)->metallic, 0), "the frame follows undo");
+    ok(s.redo());
+    check(s.material(rust)->metallic == 0.75, "material redone");
+    ok(s.redo());
+    check(s.scene().inspect(box)->transform.position == moved.position, "scene edit redone");
+    // A new scene edit ends the redo chain for materials too.
+    ok(s.undo()); ok(s.undo());
+    ok(s.execute(commands::RenameEntity{box, "Renamed"}));
+    check(!s.can_redo(), "a new edit clears redo");
+
+    // Texture slots: a linear slot is read back as what was picked.
+    const auto image = s.import_asset(base / "red.ppm"); ok(image);
+    auto textured = *s.material(rust);
+    textured.base_color_map = {image.value().id, image.value().path};
+    textured.normal_map = {image.value().id, image.value().path};
+    ok(s.save_material(rust, textured));
+    f = s.frame(1); ok(f);
+    const auto *with_maps = s.resources().find(f.value()->objects.at(0).material);
+    check(with_maps && with_maps->base_color_map.index && with_maps->base_color_map == with_maps->normal_map, "maps resolve to handles");
+
+    // Persistence: saved, closed, reopened in a new session.
+    const auto scene_file = base / "m.scene";
+    ok(s.save(scene_file));
+    {
+        EditorSession t;
+        ok(t.open_project(project));
+        ok(t.load(scene_file));
+        const auto loaded = t.scene().snapshot().entities.at(0);
+        check(loaded.components.mesh->material.id == rust.value, "reference survives save and load");
+        check(t.material(rust)->roughness == 0.2 && !t.material(rust)->base_color_map.empty(), "material survives a new session");
+        auto g = t.frame(1); ok(g);
+        check(t.asset_problems().empty(), "no problems when everything is there");
+    }
+
+    // Missing assets: the texture gone, the material gone. Reported; the scene loads and still draws.
+    fs::remove(project / "Assets/red.ppm"); fs::remove(project / "Assets/red.ppm.meta");
+    {
+        EditorSession t;
+        ok(t.open_project(project));
+        ok(t.load(scene_file));
+        auto g = t.frame(1); ok(g);
+        check(g.value()->objects.size() == 1 && !t.asset_problems().empty(), "a missing map is reported and the object draws");
+        check(t.asset_problems().front().find("red.ppm") != std::string::npos, "the problem names the file");
+        check(g.value()->objects.at(0).material != renderer::builtin_lit, "the material still applies");
+    }
+    fs::remove(project / "Assets/materials/Rust.material"); fs::remove(project / "Assets/materials/Rust.material.meta");
+    {
+        EditorSession t;
+        ok(t.open_project(project));
+        ok(t.load(scene_file));
+        auto g = t.frame(1); ok(g);
+        check(g.value()->objects.at(0).material == renderer::builtin_lit && !t.asset_problems().empty(), "a missing material falls back and is reported");
+        check(t.scene().snapshot().entities.at(0).components.mesh->material.id == rust.value, "the reference is kept");
+    }
+}
+void lighting_settings() {
+    EditorSession s;
+    // No environment entity: the defaults apply.
+    check(!s.environment_entity(), "no environment yet");
+    auto f = s.frame(1); ok(f);
+    check(f.value()->environment.source == EnvironmentSource::Procedural && near(f.value()->environment.ev100, 15), "default environment");
+    check(f.value()->show_grid, "the grid shows while editing");
+    // Setting one creates an entity, one undo step; the next edit reuses it.
+    auto indoor = EditorSession::indoor_environment();
+    ok(s.set_environment(indoor));
+    const auto owner = s.environment_entity();
+    check(owner != 0 && s.scene().size() == 1, "environment entity created");
+    indoor.ev100 = 7;
+    ok(s.set_environment(indoor));
+    check(s.environment_entity() == owner && s.scene().size() == 1, "edit reuses it");
+    f = s.frame(1); ok(f);
+    check(near(f.value()->environment.ev100, 7) && !f.value()->environment.show_skybox, "frame carries the settings");
+    check(f.value()->environment.sky_color.x < 0.55 && f.value()->environment.sky_color.x > 0, "colors become linear");
+    ok(s.undo());
+    check(near(s.environment().ev100, 6), "undone");
+    ok(s.undo());
+    check(!s.environment_entity(), "entity gone with its undo");
+    // Point light sized for the exposure: a real bulb indoors, far more under daylight exposure.
+    check(near(EditorSession::point_light_lumens(6), 3000), "indoor point light");
+    check(EditorSession::point_light_lumens(15) > 1e6, "outdoor point light");
+    // Lights reach the frame with their new fields.
+    Components c;
+    LightComponent spot; spot.type = LightType::Spot; spot.inner_cone_degrees = 10; spot.outer_cone_degrees = 20; spot.cast_shadows = true;
+    c.light = spot;
+    ok(s.execute(commands::CreateEntity{"Spot", {}, 0, 0, c}));
+    ok(s.create_preset_lights(true));
+    ok(s.create_preset_lights(false));
+    f = s.frame(1); ok(f);
+    check(f.value()->lights.size() == 3, "lights extracted");
+    check(f.value()->lights[0].kind == renderer::LightKind::Spot && f.value()->lights[0].cast_shadows && near(f.value()->lights[0].outer_cone_radians, glm::radians(20.0)), "spot fields");
+    // An image environment with a missing file: reported, and lit by the sky instead.
+    EnvironmentComponent image;
+    image.source = EnvironmentSource::Image;
+    image.image = {77, "environments/gone.hdr"};
+    ok(s.set_environment(image));
+    f = s.frame(1); ok(f);
+    check(f.value()->environment.source == EnvironmentSource::Procedural && !s.asset_problems().empty(), "missing environment image falls back");
+    // Play mode hides the grid.
+    ok(s.play());
+    f = s.frame(1); ok(f);
+    check(!f.value()->show_grid, "no grid in Play mode");
+    ok(s.stop());
+}
+void background_import() {
+    namespace fs = std::filesystem;
+    const auto base = fs::current_path() / "editor-import-test-files";
+    fs::remove_all(base);
+    const auto project = base / "project";
+    fs::create_directories(project);
+    write_file(base / "tri.obj", "v -1 0 0\nv 1 0 0\nv 0 3 0\nf 1 2 3\n");
+    write_file(base / "bad.obj", "v 0 0 0\nf 1 2 3\n");
+    EditorSession s;
+    ok(s.open_project(project));
+    s.begin_import(base / "tri.obj");
+    s.begin_import(base / "bad.obj");
+    s.begin_import(base / "absent.png");
+    check(s.imports_pending() == 3, "imports are pending");
+    const auto finished = s.wait_for_imports();
+    check(finished.size() == 3 && s.imports_pending() == 0, "all finished");
+    check(std::count_if(finished.begin(), finished.end(), [](const FinishedImport &f) { return static_cast<bool>(f.result); }) == 1, "only the good one lands");
+    const auto all = s.assets();
+    check(all.size() == 1 && all[0].path == "tri.obj" && s.asset_state(all[0].id) == assets::AssetState::Loaded, "catalogued and cached");
+    ok(s.place_asset(all[0].id));
+    auto f = s.frame(1); ok(f);
+    check(f.value()->objects.size() == 1 && s.asset_problems().empty(), "usable at once");
+}
+void resource_lifetime() {
+    namespace fs = std::filesystem;
+    const auto base = fs::current_path() / "editor-lifetime-test-files";
+    fs::remove_all(base);
+    const auto project = base / "project";
+    fs::create_directories(project);
+    write_file(base / "tri.obj", "v -1 0 0\nv 1 0 0\nv 0 3 0\nf 1 2 3\n");
+    EditorSession s;
+    ok(s.open_project(project));
+    const auto imported = s.import_asset(base / "tri.obj"); ok(imported);
+    ok(s.place_asset(imported.value().id));
+    const auto placed = s.selection();
+    auto f = s.frame(1); ok(f);
+    const auto handle = f.value()->objects.at(0).mesh;
+    check(s.resources().find(handle) != nullptr, "held while drawn");
+    check(s.release_unused_assets() == 0 && s.resources().find(handle) != nullptr, "an asset in use is kept");
+    // Play keeps references alive even if only the runtime copy has them.
+    ok(s.play());
+    ok(s.stop());
+    // Removed from the scene: the CPU data goes, and only then. Undo brings the reference back, and it loads again.
+    ok(s.execute(commands::DeleteEntity{placed}));
+    check(s.release_unused_assets() == 1, "the unused asset is freed");
+    check(s.resources().find(handle) == nullptr && s.resources().held_meshes() == 0, "the registry let it go");
+    check(s.asset_state(imported.value().id) == assets::AssetState::Unloaded, "the database let it go");
+    ok(s.undo());
+    f = s.frame(1); ok(f);
+    check(s.resources().find(f.value()->objects.at(0).mesh) != nullptr && s.asset_problems().empty(), "reloaded from disk on the next reference");
+    check(f.value()->objects.at(0).mesh == handle, "with the same handle: the asset did not change");
+}
+void shooter_game() {
+    namespace fs = std::filesystem;
+    const fs::path sample = fs::path(ENGINE_TEST_SAMPLES_DIR) / "PhysicsShooter";
+    EditorSession s;
+    ok(s.open_project(sample));
+    ok(s.load(sample / "physics_shooter.scene"));
+    check(s.scene().size() > 60 && !s.dirty(), "sample loads clean");
+    check(!s.game(), "no game while editing");
+    const auto authored = s.editor_scene().snapshot();
+    const auto revision = s.commands().revision();
+    auto f = s.frame(1.6); ok(f);
+    check(s.asset_problems().empty(), "every reference in the sample resolves");
+    check(f.value()->objects.size() > 50 && !f.value()->lights.empty(), "sample draws");
+
+    // Play sets up the game from the scene's behaviors, viewing through the player's camera.
+    ok(s.play());
+    auto *game = s.game();
+    check(game != nullptr && game->phase() == gameplay::GamePhase::Ready, "Play offers the game");
+    check(game->setup_issues().empty(), "the scene's behaviors are understood");
+    f = s.frame(1.6); ok(f);
+    check(s.view_camera() == game->camera(), "looking through the player");
+    game->start();
+    s.update(std::chrono::milliseconds(500));
+    check(s.runtime_ticks() > 0 && game->ticks() == s.runtime_ticks(), "gameplay ticks with physics");
+    gameplay::InputFrame input;
+    input.held[std::size_t(gameplay::Action::MoveForward)] = true;
+    input.held[std::size_t(gameplay::Action::Fire)] = true;
+    input.pressed[std::size_t(gameplay::Action::Fire)] = true;
+    const auto start_z = s.scene().world_transform(game->player())->matrix[14];
+    for (int i = 0; i < 30; ++i) { game->set_input(input); s.update(fixed_step_of_session()); }
+    check(s.scene().world_transform(game->player())->matrix[14] < start_z - 0.5, "the player moves");
+    check(game->hud().ammo < game->hud().magazine, "the gun fires");
+
+    // Pause stops the world; the toolbar's Pause and the game's agree.
+    ok(s.pause());
+    check(game->phase() == gameplay::GamePhase::Paused, "game paused");
+    const auto ticks = s.runtime_ticks();
+    s.update(std::chrono::milliseconds(200));
+    check(s.runtime_ticks() == ticks, "no ticks while paused");
+    ok(s.play());
+    check(game->phase() == gameplay::GamePhase::Playing, "game resumed");
+
+    // Restart: a new game on a fresh copy, without leaving Play mode.
+    const auto identity = s.scene_identity();
+    ok(s.restart());
+    game = s.game();
+    check(game != nullptr && game->phase() == gameplay::GamePhase::Ready && game->hud().ammo == game->hud().magazine && game->hud().score == 0, "restart starts over");
+    check(s.scene_identity() != identity && s.scene().snapshot().entities == authored.entities, "restart restores the scene");
+    check(s.play_state() == PlayState::Playing, "still playing");
+
+    // Stop: the editor scene is untouched, as is its history, and it still works.
+    game->start();
+    for (int i = 0; i < 30; ++i) { game->set_input(input); s.update(fixed_step_of_session()); }
+    ok(s.stop());
+    check(!s.game(), "game gone after Stop");
+    check(s.editor_scene().snapshot() == authored && s.commands().revision() == revision && !s.dirty(), "Stop restores the editor scene");
+    ok(s.create("After")); ok(s.undo());
+    check(s.editor_scene().snapshot().entities == authored.entities, "the editor remains usable");
+    // Empty scenes have no game and depend on nothing of the sample.
+    ok(s.new_scene());
+    ok(s.play());
+    check(!s.game(), "an empty scene runs no game");
+    ok(s.stop());
+}
 int main() {
     try { editing(); persistence(); camera_and_picking(); world_edits(); documents(); play_mode(); components_and_rendering(); hierarchy_editing(); physics_play();
         acceptance_workflow(); external_camera_validation(); asset_workflow();
-        std::cout << "12 editor acceptance groups passed\n"; return 0;
+        materials_workflow(); lighting_settings(); background_import(); resource_lifetime(); shooter_game();
+        std::cout << "17 editor acceptance groups passed\n"; return 0;
     } catch (const std::exception &e) { std::cerr << e.what() << '\n'; return 1; }
 }

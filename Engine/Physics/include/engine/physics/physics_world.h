@@ -81,6 +81,12 @@ public:
 	PhysicsError set_angular_velocity(BodyHandle body, Vec3 velocity);
 	PhysicsError apply_force(BodyHandle body, Vec3 force);
 	PhysicsError apply_linear_impulse(BodyHandle body, Vec3 impulse);
+	// N*s at a world point, so an off-center hit also spins the body. Wakes it. Static and kinematic bodies do not
+	// respond to impulses: InvalidArgument.
+	PhysicsError apply_linear_impulse_at(BodyHandle body, Vec3 impulse, Vec3 world_point);
+	// Closest collider along origin..origin + translation. Reads the world as of the last step; safe at any time
+	// between steps, never during one.
+	[[nodiscard]] RayHit cast_ray(Vec3 origin, Vec3 translation, const RayFilter& filter = {}) const;
 	[[nodiscard]] PhysicsResult<float> mass(BodyHandle body) const;
 	[[nodiscard]] PhysicsResult<bool> is_awake(BodyHandle body) const;
 	[[nodiscard]] PhysicsResult<std::uint64_t> user_key(BodyHandle body) const;

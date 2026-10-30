@@ -127,3 +127,8 @@ variables in PowerShell (`$env:INCLUDE = ...`) and run the cmake commands from t
   configure once with an absolute `-DCMAKE_INSTALL_PREFIX=...`, or use a fresh directory.
 - `could not load cache` / `ninja: error: loading 'build.ninja'` only mean that the configure step for that
   directory never finished; fix the configure error first.
+
+## Running the sample
+
+The Physics Shooter sample is in `Samples/PhysicsShooter`. Start it with `engine_editor --sample`, or from the toolbar's **Project...** menu. See its `README.md`.
+

@@ -1,0 +1,17 @@
+ENGINE_MATERIAL 1
+base_color 0.85 0.2 0.12 1
+metallic 0
+roughness 0.44000000000000006
+emissive 0 0 0
+emissive_strength 1
+normal_scale 1
+occlusion_strength 1
+alpha_mode opaque
+alpha_cutoff 0.5
+double_sided 0
+uv_scale 1 1
+base_color_map -
+metallic_roughness_map -
+normal_map -
+occlusion_map -
+emissive_map -

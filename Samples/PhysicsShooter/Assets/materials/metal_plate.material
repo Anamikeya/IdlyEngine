@@ -1,0 +1,17 @@
+ENGINE_MATERIAL 1
+base_color 1 1 1 1
+metallic 0.3
+roughness 1
+emissive 0 0 0
+emissive_strength 1
+normal_scale 1
+occlusion_strength 1
+alpha_mode opaque
+alpha_cutoff 0.5
+double_sided 0
+uv_scale 1 1
+base_color_map 0221716df446cecb "textures/metal_base.jpg"
+metallic_roughness_map 9d0ad9ce0412bfc2 "textures/metal_arm.jpg"
+normal_map 5fbe410b5c7aff7c "textures/metal_normal.jpg"
+occlusion_map 9d0ad9ce0412bfc2 "textures/metal_arm.jpg"
+emissive_map -

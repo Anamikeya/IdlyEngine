@@ -67,9 +67,18 @@ struct SetColliders {
     EntityId id;
     std::vector<ColliderComponent> colliders;
 };
+struct SetEnvironment {
+    EntityId id;
+    std::optional<EnvironmentComponent> environment;
+};
+// Replaces the entity's whole behavior list; an empty list removes them all.
+struct SetBehaviors {
+    EntityId id;
+    std::vector<BehaviorComponent> behaviors;
+};
 using Command = std::variant<CreateEntity, DeleteEntity, RenameEntity, SetTransform, SetParent,
                              ReplaceScene, SetMesh, SetCamera, SetLight, DuplicateEntity,
-                             SetRigidBody, SetColliders>;
+                             SetRigidBody, SetColliders, SetEnvironment, SetBehaviors>;
 struct CommandDescriptor {
     std::string_view name;
     Capability permission;

@@ -97,6 +97,8 @@ struct BodyDesc {
 	float gravity_scale = 1.0f;
 	bool enable_sleep = true;
 	bool is_bullet = false;
+	// Keeps a dynamic body from rotating, as a character's capsule must be.
+	bool lock_rotation = false;
 	// Opaque engine key echoed in events (e.g. a scene stable id). Physics never interprets it.
 	std::uint64_t user_key = 0;
 };
@@ -139,6 +141,26 @@ struct ColliderDesc {
 	bool enable_contact_events = false;
 	bool enable_hit_events = false;
 	CollisionFilter filter;
+};
+
+// Which colliders a ray can hit. Sensors never block a ray.
+struct RayFilter {
+	// The ray hits a collider when mask has a bit of the collider's category, and the collider's mask has a bit of category.
+	std::uint64_t category_bits = ~std::uint64_t{0};
+	std::uint64_t mask_bits = ~std::uint64_t{0};
+	// Skipped entirely, for example the shooter's own body.
+	BodyHandle ignore_body;
+};
+
+struct RayHit {
+	bool hit = false;
+	BodyHandle body;
+	ColliderHandle collider;
+	std::uint64_t user_key = 0;
+	Vec3 point;
+	Vec3 normal;
+	// Along the ray: point = origin + fraction * translation.
+	float fraction = 1.0f;
 };
 
 // Events below are produced by PhysicsWorld::step()/advance() and are valid until the next call.

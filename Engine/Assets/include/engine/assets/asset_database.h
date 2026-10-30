@@ -46,6 +46,21 @@ struct LoadedAsset {
 
 using MeshAsset = LoadedAsset<MeshData>;
 using TextureAsset = LoadedAsset<TextureData>;
+using MaterialAsset = LoadedAsset<MaterialData>;
+using EnvironmentAsset = LoadedAsset<EnvironmentData>;
+
+// A file decoded away from the database, ready for AssetDatabase::commit_import. Holds no database state.
+struct PreparedImport {
+	std::filesystem::path source;
+	AssetType type = AssetType::Unknown;
+	std::shared_ptr<const MeshData> mesh;
+	std::shared_ptr<const TextureData> texture;
+	std::shared_ptr<const MaterialData> material;
+	std::shared_ptr<const EnvironmentData> environment;
+};
+
+// Reads and decodes a file with default settings. Touches nothing shared, so any thread may call it.
+Result<PreparedImport> prepare_import(const std::filesystem::path& source, const ImportLimits& limits = {});
 
 class AssetDatabase {
 public:
@@ -74,11 +89,20 @@ public:
 	// InvalidArgument for a type mismatch, ParseError for invalid content.
 	Result<MeshAsset> load_mesh(AssetId id);
 	Result<TextureAsset> load_texture(AssetId id);
+	Result<MaterialAsset> load_material(AssetId id);
+	Result<EnvironmentAsset> load_environment(AssetId id);
+
+	// Writes a new .material under a free name based on `path`, with a .meta holding a new random id, and rescans.
+	Result<AssetId> create_material(std::string_view path, const MaterialData& material);
+	// Replaces the file atomically; the cache holds the new value and the revision increases.
+	Result<void> save_material(AssetId id, const MaterialData& material);
 
 	// Copies an outside file into the root under a free name, writes a .meta with a new random id, rescans and
 	// loads it once. Nothing stays behind on failure. A file already under the root is just loaded.
 	// InvalidArgument for unsupported file types, with the supported ones in the message.
 	Result<AssetId> import_file(const std::filesystem::path& source);
+	// The same for a file already decoded by prepare_import: the decoded data goes into the cache.
+	Result<AssetId> commit_import(const PreparedImport& prepared);
 
 	// Imports every catalogued asset without caching it; returns the failures.
 	std::vector<AssetIssue> validate_all();
@@ -95,6 +119,7 @@ public:
 
 private:
 	struct Impl;
+	Result<AssetId> import_source(const std::filesystem::path& source, const PreparedImport* prepared);
 	explicit AssetDatabase(std::unique_ptr<Impl> impl) noexcept;
 	std::unique_ptr<Impl> impl_;
 };

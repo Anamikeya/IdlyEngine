@@ -881,3 +881,111 @@ ENGINE_TEST(application_fixed_step_drives_scene_physics)
 	ENGINE_CHECK(static_cast<bool>(app.shutdown()));
 	ENGINE_CHECK(!client.physics.has_value());
 }
+
+// ---- Runtime queries and forces ------------------------------------------------------------------
+
+ENGINE_TEST(raycast_maps_hits_back_to_entities)
+{
+	Fixture f;
+	const EntityId wall = f.create("wall", at(0, 0, -5), 0, physical(std::nullopt, {box({1, 1, 0.5f})}));
+	const EntityId crate = f.create("crate", at(0, 0, -2), 0, physical(body_of(BodyType::Dynamic), {box({0.5f, 0.5f, 0.5f})}));
+	f.physics.set_simulation_enabled(true);
+	ENGINE_REQUIRE(static_cast<bool>(f.physics.sync(f.scene)));
+	const auto hit = f.physics.raycast({0, 0, 0}, {0, 0, -1}, 20);
+	ENGINE_REQUIRE(hit.has_value());
+	ENGINE_CHECK_EQ(hit->entity, crate);
+	ENGINE_CHECK_NEAR(hit->distance, 1.5f, 1e-3f);
+	ENGINE_CHECK_NEAR(hit->normal.z, 1.0f, 1e-3f);
+	RaycastFilter filter;
+	filter.ignore = crate;
+	const auto past = f.physics.raycast({0, 0, 0}, {0, 0, -1}, 20, filter);
+	ENGINE_REQUIRE(past.has_value());
+	ENGINE_CHECK_EQ(past->entity, wall);
+	ENGINE_CHECK(!f.physics.raycast({0, 0, 0}, {0, 0, 1}, 20).has_value());
+	ENGINE_CHECK(!f.physics.raycast({0, 0, 0}, {0, 0, -1}, 1).has_value()); // Too short.
+	ENGINE_CHECK(!f.physics.raycast({0, 0, 0}, {0, 0, -3}, 20).has_value()); // Not a unit direction.
+}
+
+ENGINE_TEST(raycast_honors_scene_collision_filters)
+{
+	Fixture f;
+	ColliderComponent decor = box({1, 1, 0.5f});
+	decor.category = 4;
+	const EntityId decoration = f.create("decor", at(0, 0, -2), 0, physical(std::nullopt, {decor}));
+	const EntityId wall = f.create("wall", at(0, 0, -5), 0, physical(std::nullopt, {box({1, 1, 0.5f})}));
+	ENGINE_REQUIRE(static_cast<bool>(f.physics.sync(f.scene)));
+	ENGINE_CHECK_EQ(f.physics.raycast({0, 0, 0}, {0, 0, -1}, 20)->entity, decoration);
+	RaycastFilter skip;
+	skip.mask = ~std::uint64_t{4};
+	ENGINE_CHECK_EQ(f.physics.raycast({0, 0, 0}, {0, 0, -1}, 20, skip)->entity, wall);
+}
+
+ENGINE_TEST(impulses_reach_dynamic_bodies_only_and_keep_no_scene_history)
+{
+	Fixture f;
+	const EntityId crate = f.create("crate", at(0, 0.5, 0), 0, physical(body_of(BodyType::Dynamic), {box({0.5f, 0.5f, 0.5f})}));
+	const EntityId wall = f.create("wall", at(5, 1, 0), 0, physical(std::nullopt, {box({0.5f, 1, 2})}));
+	const EntityId platform = f.create("platform", at(-5, 1, 0), 0, physical(body_of(BodyType::Kinematic), {box({1, 0.2f, 1})}));
+	f.ground();
+	f.physics.set_simulation_enabled(true);
+	f.ticks(5);
+	const auto undo_steps = f.editor.undo_size();
+	ENGINE_CHECK(f.physics.apply_impulse(crate, {5000, 0, 0}, {0, 0.5f, 0})); // 5 m/s on 1000 kg.
+	ENGINE_CHECK(!f.physics.apply_impulse(wall, {500, 0, 0}, {5, 1, 0}));
+	ENGINE_CHECK(!f.physics.apply_impulse(platform, {500, 0, 0}, {-5, 1, 0}));
+	ENGINE_CHECK(!f.physics.apply_impulse(EntityId{9999}, {500, 0, 0}, {0, 0, 0}));
+	ENGINE_CHECK(!f.physics.set_linear_velocity(wall, {1, 0, 0}));
+	const float start = f.world_position(crate).x;
+	f.ticks(30);
+	ENGINE_CHECK(f.world_position(crate).x > start + 0.1f);
+	ENGINE_CHECK_NEAR(f.world_position(wall).x, 5.0f, 1e-6f);
+	ENGINE_CHECK_EQ(f.editor.undo_size(), undo_steps);
+}
+
+ENGINE_TEST(forces_after_an_entity_is_removed_are_refused_safely)
+{
+	Fixture f;
+	const EntityId crate = f.create("crate", at(0, 3, 0), 0, physical(body_of(BodyType::Dynamic), {box({0.5f, 0.5f, 0.5f})}));
+	f.physics.set_simulation_enabled(true);
+	f.ticks(2);
+	ENGINE_REQUIRE(static_cast<bool>(f.runtime.execute(f.physics_ctx, f.runtime.revision(), commands::DeleteEntity{crate})));
+	// Before the next sync the body still exists, and touching it is harmless.
+	(void)f.physics.apply_impulse(crate, {1, 0, 0}, {0, 3, 0});
+	f.tick();
+	ENGINE_CHECK(!f.physics.apply_impulse(crate, {1, 0, 0}, {0, 3, 0}));
+	ENGINE_CHECK(!f.physics.body_state(crate).has_value());
+	ENGINE_CHECK(!f.physics.raycast({0, 3, 5}, {0, 0, -1}, 20).has_value());
+}
+
+ENGINE_TEST(hit_events_report_impacts_above_the_threshold)
+{
+	Fixture f;
+	f.ground();
+	const EntityId crate = f.create("crate", at(0, 5, 0), 0, physical(body_of(BodyType::Dynamic), {box({0.5f, 0.5f, 0.5f}, true)}));
+	f.physics.set_simulation_enabled(true);
+	float fastest = 0.0f;
+	for (int i = 0; i < 90; ++i) {
+		f.tick();
+		for (const CollisionEvent& e : f.physics.events()) {
+			if (e.kind == CollisionEvent::Kind::Hit && (e.a == crate || e.b == crate)) {
+				fastest = std::max(fastest, e.approach_speed);
+			}
+		}
+	}
+	ENGINE_CHECK(fastest > 8.0f); // Falling 4.5 m: about 9.4 m/s.
+}
+
+ENGINE_TEST(reset_and_restart_return_bodies_to_the_scene)
+{
+	Fixture f;
+	f.ground();
+	const EntityId crate = f.create("crate", at(0, 3, 0), 0, physical(body_of(BodyType::Dynamic), {box({0.5f, 0.5f, 0.5f})}));
+	const SceneSnapshot authored = f.scene.snapshot();
+	f.physics.set_simulation_enabled(true);
+	f.ticks(60);
+	ENGINE_CHECK(f.world_position(crate).y < 2.0f);
+	ENGINE_REQUIRE(static_cast<bool>(f.runtime.execute(f.physics_ctx, f.runtime.revision(), commands::ReplaceScene{authored})));
+	ENGINE_REQUIRE(static_cast<bool>(f.physics.reset_simulation(f.scene)));
+	ENGINE_CHECK_NEAR(f.physics.body_state(crate)->pose.position.y, 3.0f, 1e-4f);
+	ENGINE_CHECK_NEAR(f.physics.body_state(crate)->linear_velocity.y, 0.0f, 1e-5f);
+}

@@ -35,6 +35,7 @@ struct RigidBody {
 	float gravity_scale = 1.0f;
 	bool enable_sleep = true;
 	bool is_bullet = false;
+	bool lock_rotation = false;
 
 	friend bool operator==(const RigidBody&, const RigidBody&) = default;
 };
@@ -63,6 +64,21 @@ struct CollisionEvent {
 	Vec3 point;
 	Vec3 normal;
 	float approach_speed = 0.0f;
+};
+
+// Which colliders a scene raycast can hit. Sensors never block a ray.
+struct RaycastFilter {
+	std::uint64_t category = ~std::uint64_t{0};
+	std::uint64_t mask = ~std::uint64_t{0};
+	// This entity's body is skipped, for example the shooter.
+	EntityId ignore = 0;
+};
+
+struct RaycastHit {
+	EntityId entity = 0;
+	Vec3 point;
+	Vec3 normal;
+	float distance = 0.0f;
 };
 
 struct BodyState {
@@ -185,6 +201,16 @@ public:
 	// ---- Queries ----
 
 	[[nodiscard]] std::optional<BodyState> body_state(EntityId entity) const;
+	// Closest collider along a unit direction. Sees the world as of the last sync and step. Empty on a miss, or for
+	// a direction that is not unit length.
+	[[nodiscard]] std::optional<RaycastHit> raycast(Vec3 origin, Vec3 direction, float max_distance, const RaycastFilter& filter = {}) const;
+
+	// ---- Runtime forces. These act on the live body and keep no scene state, so they fill no undo history. ----
+
+	// N*s at a world point. False when the entity has no dynamic body (a static wall does not move).
+	bool apply_impulse(EntityId entity, Vec3 impulse, Vec3 world_point);
+	// False when the entity has no body, or a static one.
+	bool set_linear_velocity(EntityId entity, Vec3 velocity);
 	// Events of the last step(). Valid until the next step(), fixed_update or reset_simulation.
 	[[nodiscard]] std::span<const CollisionEvent> events() const noexcept;
 	[[nodiscard]] PhysicsDiagnostics diagnostics() const;

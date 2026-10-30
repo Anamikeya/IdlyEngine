@@ -35,15 +35,33 @@ Result<TextureData> import_ppm(std::span<const std::uint8_t> bytes, const Import
 [[nodiscard]] bool gltf_import_available() noexcept;
 
 // Self-contained binary glTF 2.0. All primitives of the default scene become one mesh with node transforms
-// baked in and one SubMesh per primitive. Base color factor and texture, roughness and metallic factors are
-// kept. Ignored features (skins, animation, morph targets, other maps, non-triangle primitives) are listed
-// in MeshData::warnings. External files, Draco and other required extensions are errors.
+// baked in and one SubMesh per primitive. Factors, the five metallic-roughness maps, alpha mode and
+// double-sidedness are kept. Ignored features (skins, animation, morph targets, secondary UV sets, texture
+// transforms, non-triangle primitives) and unusable secondary maps are listed in MeshData::warnings.
+// External files, Draco and other required extensions are errors.
 Result<MeshData> import_glb(std::span<const std::uint8_t> bytes, const ImportSettings& settings = {},
 	const ImportLimits& limits = {});
 
 // PNG or JPEG, decoded to RGBA8.
 Result<TextureData> import_image(std::span<const std::uint8_t> bytes, const ImportSettings& settings = {},
 	const ImportLimits& limits = {});
+
+// Radiance .hdr, equirectangular (width == 2 * height).
+Result<EnvironmentData> import_hdr(std::span<const std::uint8_t> bytes, const ImportLimits& limits = {});
+
+// Fills MeshVertex::tangent of the given index range from positions and UVs (Lengyel's method). Vertices without
+// usable UVs get an arbitrary frame around the normal.
+void compute_tangents(MeshData& mesh, std::uint32_t first_index, std::uint32_t index_count);
+
+// Material asset text, version 1: "ENGINE_MATERIAL 1", then one "key values" line for each of the fields below.
+// Every key is optional and at most once; unknown keys and out-of-range values are errors.
+//   base_color r g b a | metallic v | roughness v | emissive r g b | emissive_strength v | normal_scale v
+//   occlusion_strength v | alpha_mode opaque|mask|blend | alpha_cutoff v | double_sided 0|1 | uv_scale u v
+//   base_color_map, metallic_roughness_map, normal_map, occlusion_map, emissive_map: - | <16 hex digits> "<path>"
+Result<MaterialData> parse_material(std::string_view text);
+[[nodiscard]] std::string write_material(const MaterialData& material);
+// The same range checks parse_material applies.
+Result<void> validate_material(const MaterialData& material);
 
 // Sidecar "<asset>.meta", version 1:
 //   version = 1

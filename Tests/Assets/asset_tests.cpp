@@ -808,7 +808,274 @@ ENGINE_TEST(glb_reports_ignored_features)
 	ENGINE_CHECK(has_warning(result.value(), "skinning"));
 	ENGINE_CHECK(has_warning(result.value(), "animations"));
 	ENGINE_CHECK(has_warning(result.value(), "cameras"));
-	ENGINE_CHECK(has_warning(result.value(), "transparency"));
+	ENGINE_CHECK(result.value().submeshes[0].material.alpha_mode == AlphaMode::Blend); // Kept since Milestone 4, no longer a warning.
+}
+
+ENGINE_TEST(glb_keeps_alpha_sides_and_factors)
+{
+	if (!gltf_import_available()) {
+		return;
+	}
+	GlbSpec spec;
+	spec.material = R"("alphaMode":"MASK","alphaCutoff":0.25,"doubleSided":true,"emissiveFactor":[0.5,0.25,1])";
+	const auto result = import_glb(triangle_glb(spec));
+	ENGINE_REQUIRE(static_cast<bool>(result));
+	const MeshMaterial& m = result.value().submeshes[0].material;
+	ENGINE_CHECK(m.alpha_mode == AlphaMode::Mask);
+	ENGINE_CHECK_EQ(m.alpha_cutoff, 0.25f);
+	ENGINE_CHECK(m.double_sided);
+	ENGINE_CHECK_EQ(m.emissive[0], 0.5f);
+	ENGINE_CHECK_EQ(m.emissive[2], 1.0f);
+	ENGINE_CHECK_EQ(m.normal_image, -1);
+}
+
+ENGINE_TEST(glb_maps_use_the_color_space_of_their_slot)
+{
+	if (!gltf_import_available()) {
+		return;
+	}
+	// One image in a color slot and a data slot: decoded twice, once for each color space.
+	const auto png = make_png(1, 1, {Rgba{255, 255, 255, 255}});
+	GlbSpec spec;
+	spec.material = R"("pbrMetallicRoughness":{"baseColorTexture":{"index":0},"metallicRoughnessTexture":{"index":0}},"normalTexture":{"index":0,"scale":0.5},"occlusionTexture":{"index":0,"strength":0.25},"emissiveTexture":{"index":0})";
+	spec.extra = ",\"textures\":[{\"source\":0}],\"images\":[{\"uri\":\"data:image/png;base64," + base64(png) + "\"}]";
+	const auto result = import_glb(triangle_glb(spec));
+	ENGINE_REQUIRE(static_cast<bool>(result));
+	const MeshData& mesh = result.value();
+	const MeshMaterial& m = mesh.submeshes[0].material;
+	ENGINE_CHECK_EQ(mesh.images.size(), std::size_t{2});
+	ENGINE_CHECK(m.image >= 0 && mesh.images[static_cast<std::size_t>(m.image)]->srgb);
+	ENGINE_CHECK(m.emissive_image == m.image);
+	ENGINE_CHECK(m.normal_image >= 0 && !mesh.images[static_cast<std::size_t>(m.normal_image)]->srgb);
+	ENGINE_CHECK(m.metallic_roughness_image == m.normal_image && m.occlusion_image == m.normal_image);
+	ENGINE_CHECK_EQ(m.normal_scale, 0.5f);
+	ENGINE_CHECK_EQ(m.occlusion_strength, 0.25f);
+	ENGINE_CHECK(mesh.warnings.empty());
+}
+
+ENGINE_TEST(glb_survives_a_broken_secondary_map)
+{
+	if (!gltf_import_available()) {
+		return;
+	}
+	GlbSpec spec;
+	spec.material = R"("normalTexture":{"index":0})";
+	spec.extra = R"(,"textures":[{"source":0}],"images":[{"uri":"data:image/png;base64,AAAA"}])";
+	const auto result = import_glb(triangle_glb(spec));
+	ENGINE_REQUIRE(static_cast<bool>(result)); // The model still draws; only the map is lost.
+	ENGINE_CHECK_EQ(result.value().submeshes[0].material.normal_image, -1);
+	ENGINE_CHECK(has_warning(result.value(), "normal map skipped"));
+}
+
+// ---- Tangents ----------------------------------------------------------------------------------
+
+ENGINE_TEST(tangents_follow_u_and_the_bitangent_points_at_the_image_top)
+{
+	// A quad in XY facing +Z, with +U along +X and +V (towards the image's last row) along -Y.
+	MeshData mesh;
+	for (const auto& [p, uv] : std::vector<std::pair<std::array<float, 3>, std::array<float, 2>>>{
+			 {{0, 1, 0}, {0, 0}}, {{1, 1, 0}, {1, 0}}, {{1, 0, 0}, {1, 1}}, {{0, 0, 0}, {0, 1}}}) {
+		MeshVertex v;
+		v.position = p;
+		v.uv = uv;
+		v.normal = {0, 0, 1};
+		mesh.vertices.push_back(v);
+	}
+	mesh.indices = {0, 3, 2, 0, 2, 1};
+	compute_tangents(mesh, 0, 6);
+	for (const MeshVertex& v : mesh.vertices) {
+		ENGINE_CHECK_NEAR(v.tangent[0], 1.0f, 1e-5f);
+		ENGINE_CHECK_NEAR(v.tangent[1], 0.0f, 1e-5f);
+		// bitangent = cross(n, t) * w; cross(+Z, +X) = +Y, and +Y is the image's top here.
+		ENGINE_CHECK_EQ(v.tangent[3], 1.0f);
+	}
+	// Mirror the texture's vertical direction: the handedness flips.
+	for (MeshVertex& v : mesh.vertices) {
+		v.uv[1] = 1 - v.uv[1];
+	}
+	compute_tangents(mesh, 0, 6);
+	ENGINE_CHECK_EQ(mesh.vertices[0].tangent[3], -1.0f);
+}
+
+ENGINE_TEST(tangents_without_usable_uvs_are_still_a_valid_frame)
+{
+	MeshData mesh;
+	for (const auto& p : std::vector<std::array<float, 3>>{{0, 0, 0}, {1, 0, 0}, {0, 0, -1}}) {
+		MeshVertex v;
+		v.position = p;
+		v.normal = {0, 1, 0};
+		mesh.vertices.push_back(v);
+	}
+	mesh.indices = {0, 1, 2};
+	compute_tangents(mesh, 0, 3);
+	const auto& t = mesh.vertices[0].tangent;
+	ENGINE_CHECK_NEAR(t[0] * t[0] + t[1] * t[1] + t[2] * t[2], 1.0f, 1e-5f);
+	ENGINE_CHECK_NEAR(t[1], 0.0f, 1e-5f); // Perpendicular to the normal.
+}
+
+ENGINE_TEST(obj_import_fills_tangents)
+{
+	const auto mesh = import_obj("v 0 0 0\nv 1 0 0\nv 1 1 0\nvt 0 1\nvt 1 1\nvt 1 0\nf 1/1 2/2 3/3\n");
+	ENGINE_REQUIRE(static_cast<bool>(mesh));
+	ENGINE_CHECK_NEAR(mesh.value().vertices[0].tangent[0], 1.0f, 1e-5f);
+}
+
+// ---- Material assets ---------------------------------------------------------------------------
+
+ENGINE_TEST(material_text_round_trips_exactly)
+{
+	MaterialData m;
+	m.base_color = {0.1, 0.2, 0.30000000000000004, 0.5};
+	m.metallic = 0.25;
+	m.roughness = 0.75;
+	m.emissive = {1, 0.5, 0};
+	m.emissive_strength = 12.5;
+	m.normal_scale = 0.5;
+	m.occlusion_strength = 0.125;
+	m.alpha_mode = AlphaMode::Mask;
+	m.alpha_cutoff = 0.25;
+	m.double_sided = true;
+	m.uv_scale = {4, 2};
+	m.base_color_map = {AssetId{1}, "textures/a b.png"};
+	m.normal_map = {AssetId{0xffff}, "textures/quote\"d.png"};
+	const std::string text = write_material(m);
+	const auto parsed = parse_material(text);
+	ENGINE_REQUIRE(static_cast<bool>(parsed));
+	ENGINE_CHECK(parsed.value() == m);
+	ENGINE_CHECK_EQ(write_material(parsed.value()), text);
+	// Every key is optional.
+	const auto plain = parse_material("ENGINE_MATERIAL 1\n");
+	ENGINE_REQUIRE(static_cast<bool>(plain));
+	ENGINE_CHECK(plain.value() == MaterialData{});
+}
+
+ENGINE_TEST(material_parser_rejects_malformed_text)
+{
+	for (const char* text : {"", "ENGINE_MATERIAL 2\n", "MATERIAL 1\n", "ENGINE_MATERIAL 1\nnope 1\n", "ENGINE_MATERIAL 1\nmetallic\n",
+			 "ENGINE_MATERIAL 1\nmetallic 2\n", "ENGINE_MATERIAL 1\nmetallic -1\n", "ENGINE_MATERIAL 1\nmetallic nan\n", "ENGINE_MATERIAL 1\nmetallic 1 1\n",
+			 "ENGINE_MATERIAL 1\nroughness 0.5\nroughness 0.5\n", "ENGINE_MATERIAL 1\nbase_color 1 1 1\n", "ENGINE_MATERIAL 1\nbase_color 1 1 1 2\n",
+			 "ENGINE_MATERIAL 1\nalpha_mode glass\n", "ENGINE_MATERIAL 1\ndouble_sided 2\n", "ENGINE_MATERIAL 1\nuv_scale 0 1\n",
+			 "ENGINE_MATERIAL 1\nemissive_strength -1\n", "ENGINE_MATERIAL 1\nnormal_map zz \"a\"\n", "ENGINE_MATERIAL 1\nnormal_map 0000000000000001\n",
+			 "ENGINE_MATERIAL 1\nnormal_map 0000000000000001 \"open\n"}) {
+		ENGINE_CHECK(!parse_material(text));
+	}
+}
+
+ENGINE_TEST(material_assets_are_created_saved_and_reloaded)
+{
+	const fs::path root = scratch("materials");
+	auto opened = AssetDatabase::open(root);
+	ENGINE_REQUIRE(static_cast<bool>(opened));
+	AssetDatabase& db = opened.value();
+	ENGINE_CHECK(!db.create_material("not_material.png", {}));
+	MaterialData invalid;
+	invalid.metallic = 5;
+	ENGINE_CHECK(!db.create_material("materials/bad.material", invalid));
+	ENGINE_CHECK(db.assets().empty());
+
+	MaterialData m;
+	m.roughness = 0.25;
+	const auto id = db.create_material("materials/rust.material", m);
+	ENGINE_REQUIRE(static_cast<bool>(id));
+	ENGINE_CHECK(fs::exists(root / "materials/rust.material") && fs::exists(root / "materials/rust.material.meta"));
+	const auto second = db.create_material("materials/rust.material", m);
+	ENGINE_REQUIRE(static_cast<bool>(second));
+	ENGINE_CHECK(second.value() != id.value());
+	const auto second_meta = db.find(second.value());
+	ENGINE_CHECK_EQ(second_meta->path, std::string("materials/rust_1.material")); // A free name.
+	const auto loaded = db.load_material(id.value());
+	ENGINE_REQUIRE(static_cast<bool>(loaded));
+	ENGINE_CHECK_EQ(loaded.value().data->roughness, 0.25);
+	const auto revision = loaded.value().revision;
+
+	// Saving replaces the file, and the cache sees it without another read.
+	m.roughness = 0.5;
+	ENGINE_REQUIRE(static_cast<bool>(db.save_material(id.value(), m)));
+	const auto saved = db.load_material(id.value());
+	ENGINE_CHECK_EQ(saved.value().data->roughness, 0.5);
+	ENGINE_CHECK(saved.value().revision > revision);
+	ENGINE_CHECK(!db.save_material(id.value(), invalid));
+	ENGINE_CHECK_EQ(db.load_material(id.value()).value().data->roughness, 0.5);
+	ENGINE_CHECK(!db.save_material(AssetId{123}, m));
+
+	// A new database, from the file: same ID, same value.
+	auto reopened = AssetDatabase::open(root);
+	ENGINE_REQUIRE(static_cast<bool>(reopened));
+	ENGINE_REQUIRE(static_cast<bool>(reopened.value().scan()));
+	const auto from_disk = reopened.value().load_material(id.value());
+	ENGINE_REQUIRE(static_cast<bool>(from_disk));
+	ENGINE_CHECK(*from_disk.value().data == m);
+	ENGINE_CHECK(reopened.value().find(id.value())->type == AssetType::Material);
+
+	// A corrupt file fails its load, not the catalogue.
+	{
+		std::ofstream out(root / "materials/rust_1.material", std::ios::binary);
+		out << "garbage";
+	}
+	ENGINE_REQUIRE(static_cast<bool>(reopened.value().scan()));
+	ENGINE_CHECK(!reopened.value().load_material(second.value()));
+	ENGINE_CHECK(reopened.value().state(second.value()) == AssetState::Failed);
+	ENGINE_CHECK_EQ(reopened.value().validate_all().size(), std::size_t{1});
+}
+
+// ---- Environment images ------------------------------------------------------------------------
+
+ENGINE_TEST(hdr_images_decode_and_must_be_equirectangular)
+{
+	if (!gltf_import_available()) {
+		return;
+	}
+	const auto hdr = [](int width, int height) {
+		std::string text = "#?RADIANCE\nFORMAT=32-bit_rle_rgbe\n\n-Y " + std::to_string(height) + " +X " + std::to_string(width) + "\n";
+		for (int i = 0; i < width * height; ++i) {
+			text += "@ "; // 1.0, 0.5, 0.25 at exponent 1.
+		}
+		return std::vector<std::uint8_t>(text.begin(), text.end());
+	};
+	const auto good = import_hdr(hdr(4, 2));
+	ENGINE_REQUIRE(static_cast<bool>(good));
+	ENGINE_CHECK_EQ(good.value().width, 4u);
+	ENGINE_CHECK_EQ(good.value().height, 2u);
+	ENGINE_REQUIRE(good.value().pixels.size() == 24);
+	ENGINE_CHECK(good.value().pixels[0] > good.value().pixels[1] && good.value().pixels[1] > good.value().pixels[2]);
+	ENGINE_CHECK(!import_hdr(hdr(3, 2)));
+	const std::string text = "not an hdr";
+	ENGINE_CHECK(!import_hdr(std::vector<std::uint8_t>(text.begin(), text.end())));
+}
+
+// ---- Background import -------------------------------------------------------------------------
+
+ENGINE_TEST(prepared_imports_land_in_the_cache_and_fail_cleanly)
+{
+	const fs::path root = scratch("prepare");
+	const fs::path outside = scratch("prepare_source");
+	fs::copy_file(editor_root / "meshes/cube.obj", outside / "cube.obj");
+	{
+		std::ofstream out(outside / "broken.obj", std::ios::binary);
+		out << "v 0 0 0\nf 1 2 3\n";
+	}
+	auto opened = AssetDatabase::open(root);
+	ENGINE_REQUIRE(static_cast<bool>(opened));
+	AssetDatabase& db = opened.value();
+
+	// Decoding touches nothing: no database, no folder.
+	const auto prepared = prepare_import(outside / "cube.obj");
+	ENGINE_REQUIRE(static_cast<bool>(prepared));
+	ENGINE_CHECK(prepared.value().mesh != nullptr);
+	ENGINE_CHECK(!fs::exists(root / "cube.obj"));
+
+	const auto id = db.commit_import(prepared.value());
+	ENGINE_REQUIRE(static_cast<bool>(id));
+	ENGINE_CHECK(fs::exists(root / "cube.obj") && fs::exists(root / "cube.obj.meta"));
+	ENGINE_CHECK(db.state(id.value()) == AssetState::Loaded);
+	// No second decode: the cache holds what the worker made.
+	ENGINE_CHECK(db.load_mesh(id.value()).value().data == prepared.value().mesh);
+
+	const auto broken = prepare_import(outside / "broken.obj");
+	ENGINE_CHECK(!broken);
+	ENGINE_CHECK(broken.error().message.find("broken.obj") != std::string::npos);
+	ENGINE_CHECK(!prepare_import(outside / "absent.obj"));
+	ENGINE_CHECK(!prepare_import(fixtures / "tools/generate_textures.py"));
 }
 
 ENGINE_TEST(glb_rejects_invalid_and_unsupported_files)
@@ -875,11 +1142,17 @@ ENGINE_TEST(glb_real_models)
 		const auto mesh = import_glb(read_bytes(helmet));
 		ENGINE_REQUIRE(static_cast<bool>(mesh));
 		ENGINE_CHECK_EQ(mesh.value().submeshes.size(), std::size_t{1});
-		ENGINE_REQUIRE(mesh.value().images.size() == 1); // Only the base color map is decoded.
-		ENGINE_CHECK_EQ(mesh.value().images[0]->width, 2048u);
+		const MeshMaterial& m = mesh.value().submeshes[0].material;
+		ENGINE_REQUIRE(m.image >= 0 && m.metallic_roughness_image >= 0 && m.normal_image >= 0 && m.occlusion_image >= 0 && m.emissive_image >= 0);
+		ENGINE_CHECK_EQ(mesh.value().images[static_cast<std::size_t>(m.image)]->width, 2048u);
+		ENGINE_CHECK(mesh.value().images[static_cast<std::size_t>(m.image)]->srgb);
+		ENGINE_CHECK(mesh.value().images[static_cast<std::size_t>(m.emissive_image)]->srgb);
+		ENGINE_CHECK(!mesh.value().images[static_cast<std::size_t>(m.normal_image)]->srgb);
+		ENGINE_CHECK(!mesh.value().images[static_cast<std::size_t>(m.metallic_roughness_image)]->srgb);
 		ENGINE_CHECK(!mesh.value().missing_uvs);
 		ENGINE_CHECK(!mesh.value().generated_normals);
-		ENGINE_CHECK(has_warning(mesh.value(), "normal, occlusion and emissive"));
+		ENGINE_CHECK(mesh.value().warnings.empty());
+		// The sample's other all-maps model, when present, is checked the same way by the editor's render test.
 	}
 	const fs::path fox = models / "third_party/models/Fox/Fox.glb";
 	if (fs::exists(fox)) {
@@ -899,6 +1172,26 @@ ENGINE_TEST(glb_real_models)
 		ENGINE_REQUIRE(static_cast<bool>(mesh));
 		ENGINE_CHECK(has_warning(mesh.value(), "morph targets"));
 	}
+}
+
+// The sample's freely licensed model: every map it has arrives.
+ENGINE_TEST(glb_sample_model_keeps_all_its_maps)
+{
+	if (!gltf_import_available()) {
+		return;
+	}
+	const fs::path bottle = fs::path(GAMEENGINE_TEST_SAMPLES_DIR) / "PhysicsShooter/Assets/models/WaterBottle.glb";
+	const auto mesh = import_glb(read_bytes(bottle));
+	ENGINE_REQUIRE(static_cast<bool>(mesh));
+	const MeshMaterial& m = mesh.value().submeshes.at(0).material;
+	ENGINE_CHECK(m.image >= 0 && m.metallic_roughness_image >= 0 && m.normal_image >= 0 && m.occlusion_image >= 0 && m.emissive_image >= 0);
+	ENGINE_CHECK(!mesh.value().missing_uvs);
+	ENGINE_CHECK(mesh.value().warnings.empty());
+	// Its file provides tangents; they are unit length and perpendicular to the normals.
+	const MeshVertex& v = mesh.value().vertices.at(0);
+	ENGINE_CHECK_NEAR(v.tangent[0] * v.tangent[0] + v.tangent[1] * v.tangent[1] + v.tangent[2] * v.tangent[2], 1.0f, 1e-3f);
+	ENGINE_CHECK_NEAR(v.tangent[0] * v.normal[0] + v.tangent[1] * v.normal[1] + v.tangent[2] * v.normal[2], 0.0f, 1e-2f);
+	ENGINE_CHECK(v.tangent[3] == 1.0f || v.tangent[3] == -1.0f);
 }
 
 // ---- PNG and JPEG ------------------------------------------------------------------------------

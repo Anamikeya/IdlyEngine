@@ -1,0 +1,50 @@
+// Compiled once per blend mode with matc -TBLENDING=... -TTRANSPARENCY=... Everything else is a MaterialInstance setting.
+material {
+    name: EnginePbr_${BLENDING},
+    shadingModel: lit,
+    blending: ${BLENDING},
+    transparency: ${TRANSPARENCY},
+    doubleSided: true,
+    flipUV: false,
+    specularAntiAliasing: true,
+    specularAmbientOcclusion: simple,
+    requires: [uv0],
+    parameters: [
+        {type: float4, name: baseColor},
+        {type: float, name: roughness},
+        {type: float, name: metallic},
+        {type: float3, name: emissive},
+        {type: float, name: normalScale},
+        {type: float, name: occlusionStrength},
+        {type: float2, name: uvScale},
+        {type: sampler2d, name: baseColorMap},
+        {type: sampler2d, name: metallicRoughnessMap},
+        {type: sampler2d, name: normalMap},
+        {type: sampler2d, name: occlusionMap},
+        {type: sampler2d, name: emissiveMap}
+    ]
+}
+fragment {
+    void material(inout MaterialInputs material) {
+        // Mesh UVs have v = 0 at an image's first row, and that row is v = 0 in the texture too.
+        highp vec2 uv = getUV0() * materialParams.uvScale;
+        vec3 normal = texture(materialParams_normalMap, uv).xyz * 2.0 - 1.0;
+        normal.xy *= materialParams.normalScale;
+        // Filament's tangent frame is not normalized, and a non-uniform scale makes its axes very different lengths, which
+        // would flatten the map on a long wall. Dividing by the lengths gives the same frame as unit axes would.
+        highp mat3 frame = getWorldTangentFrame();
+        material.normal = normal / vec3(length(frame[0]), length(frame[1]), length(frame[2]));
+        prepareMaterial(material);
+        vec4 base = materialParams.baseColor * texture(materialParams_baseColorMap, uv);
+        #if defined(BLEND_MODE_TRANSPARENT)
+            base.rgb *= base.a; // Filament blends premultiplied.
+        #endif
+        material.baseColor = base;
+        vec4 metallicRoughness = texture(materialParams_metallicRoughnessMap, uv);
+        material.roughness = materialParams.roughness * metallicRoughness.g;
+        material.metallic = materialParams.metallic * metallicRoughness.b;
+        material.ambientOcclusion = 1.0 + materialParams.occlusionStrength * (texture(materialParams_occlusionMap, uv).r - 1.0);
+        // Alpha 0: not scaled by the camera's exposure, as in gltfio, so emissive reads the same indoors and outdoors.
+        material.emissive = vec4(materialParams.emissive * texture(materialParams_emissiveMap, uv).rgb, 0.0);
+    }
+}

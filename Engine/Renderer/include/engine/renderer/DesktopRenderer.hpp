@@ -7,6 +7,14 @@
 struct ImDrawData;
 namespace engine::renderer {
 class ResourceRegistry;
+// What the renderer holds, for diagnostics and leak checks.
+struct RendererStats {
+    std::size_t objects = 0, parts = 0, lights = 0; // `parts` is the primitives submitted before culling.
+    std::size_t meshes = 0, textures = 0;           // Asset resources on the GPU, not built-ins.
+    std::size_t material_instances = 0;
+    std::uint64_t environment_builds = 0;           // IBL rebuilds so far.
+    double gpu_frame_ms = 0;                        // Of the latest finished frame; 0 when the driver does not say.
+};
 // Desktop host boundary only; never include this in ECS components or scene files.
 // UI uses an opaque texture token, not a Filament resource handle.
 class DesktopRenderer {
@@ -27,6 +35,10 @@ public:
     // Synchronous diagnostic readback of the whole window (RGBA8, rows top to bottom); acceptance runs only.
     std::vector<std::uint8_t> readback(unsigned width, unsigned height);
     void capture(const std::filesystem::path &ppm, unsigned width, unsigned height);
+    // Draws one material on a sphere for the next render(); the token shows it in the UI. Zero handle: no preview.
+    void set_material_preview(MaterialHandle);
+    std::uint64_t preview_texture() const;
+    RendererStats stats() const;
     std::size_t object_count() const;
     // Scene lights currently mirrored; the built-in editor lights are used only while this is zero.
     std::size_t light_count() const;
