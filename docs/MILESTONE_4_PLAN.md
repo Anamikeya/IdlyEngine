@@ -1,7 +1,12 @@
 # Milestone 4 plan: production rendering, PBR materials, lighting and a playable physics shooter
 
 Branch `integration/milestone-4`, worktree `D:\AI\GameEngine-Integration`, created from `main` at `dc425e5`.
-Results and evidence: `docs/MILESTONE_4_REPORT.md`. Do not merge into `main` without the user's approval.
+**Status: all slices done.** Results, evidence and departures: `docs/MILESTONE_4_REPORT.md`. Do not merge into `main` without
+the user's approval.
+
+Departures made during the work: every shadow quality uses PCF, because DPCF drew nothing on this driver. The gun is built from primitives,
+because Kenney's page has no direct download link. Glass in the sample takes damage so it does not stop every shot. A real-input driver with focus and idle guards
+was added after input reached another application.
 
 ## 1. Audit
 
