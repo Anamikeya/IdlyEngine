@@ -31,7 +31,20 @@ renderer::MeshHandle mesh_handle(BuiltinMesh mesh) {
     default: return renderer::builtin_cube;
     }
 }
-// Nearest t in [0, limit] where the local ray origin + t * ray enters the shape, or a negative value for a miss.
+// Nearest t in [0, limit] where the local ray origin + t * ray enters the box, or a negative value for a miss.
+double box_hit(const glm::dvec3 &low, const glm::dvec3 &high, const glm::dvec3 &origin, const glm::dvec3 &ray, double limit) {
+    double near_t = 0, far_t = limit;
+    for (int axis = 0; axis < 3; ++axis) {
+        if (std::abs(ray[axis]) < 1e-12) {
+            if (origin[axis] < low[axis] || origin[axis] > high[axis]) return -1;
+        } else {
+            const double t0 = (low[axis] - origin[axis]) / ray[axis], t1 = (high[axis] - origin[axis]) / ray[axis];
+            near_t = std::max(near_t, std::min(t0, t1)); far_t = std::min(far_t, std::max(t0, t1));
+        }
+    }
+    return far_t >= near_t ? near_t : -1;
+}
+// The same for a built-in shape.
 double hit(const renderer::MeshHandle &mesh, const glm::dvec3 &origin, const glm::dvec3 &ray, double limit) {
     if (mesh == renderer::builtin_sphere) {
         const double a = glm::dot(ray, ray), b = 2 * glm::dot(origin, ray), c = glm::dot(origin, origin) - 0.25;
@@ -47,16 +60,18 @@ double hit(const renderer::MeshHandle &mesh, const glm::dvec3 &origin, const glm
         const auto p = origin + t * ray;
         return t >= 0 && t <= limit && std::abs(p.x) <= 0.5 && std::abs(p.z) <= 0.5 ? t : -1;
     }
-    double low = 0, high = limit;
-    for (int axis = 0; axis < 3; ++axis) {
-        if (std::abs(ray[axis]) < 1e-12) {
-            if (std::abs(origin[axis]) > 0.5) return -1;
-        } else {
-            const double t0 = (-0.5 - origin[axis]) / ray[axis], t1 = (0.5 - origin[axis]) / ray[axis];
-            low = std::max(low, std::min(t0, t1)); high = std::min(high, std::max(t0, t1));
-        }
+    return box_hit(glm::dvec3(-0.5), glm::dvec3(0.5), origin, ray, limit);
+}
+glm::dvec3 vector(const std::array<float, 3> &v) { return {v[0], v[1], v[2]}; }
+constexpr Vec3 placeholder_color{1, 0, 1}; // Marks an asset that cannot be drawn.
+AssetRef reference(const assets::AssetMetadata &meta) { return {meta.id.value, meta.path}; }
+std::string trimmed_name(std::string name) {
+    if (name.size() > 256) {
+        name.resize(256);
+        while (!name.empty() && (static_cast<unsigned char>(name.back()) & 0xC0) == 0x80) name.pop_back();
+        if (!name.empty() && static_cast<unsigned char>(name.back()) >= 0xC0) name.pop_back();
     }
-    return high >= low ? low : -1;
+    return name;
 }
 }
 void OrbitCamera::orbit(double dx, double dy) {
@@ -236,8 +251,18 @@ Result<commands::Receipt> EditorSession::duplicate(EntityId id) {
 void EditorSession::focus() {
     if (const auto w = scene().world_transform(selected_)) {
         const auto m = glm::make_mat4(w->matrix.data());
-        camera.target = {m[3].x, m[3].y, m[3].z};
-        camera.distance = std::clamp(3.0 * std::max({glm::length(glm::dvec3(m[0])), glm::length(glm::dvec3(m[1])), glm::length(glm::dvec3(m[2]))}), 0.2, 500.0);
+        const double scale = std::max({glm::length(glm::dvec3(m[0])), glm::length(glm::dvec3(m[1])), glm::length(glm::dvec3(m[2]))});
+        glm::dvec3 center(m[3]);
+        double size = 3.0 / 1.75; // Diagonal-like size that puts a unit cube 3 m away.
+        const auto record = scene().inspect(selected_);
+        // A model's origin can be far from its geometry, and its size is anything.
+        if (const auto data = record->components.mesh ? model(record->components.mesh->mesh_asset) : nullptr) {
+            const auto low = vector(data->bounds.min), high = vector(data->bounds.max);
+            center = glm::dvec3(m * glm::dvec4((low + high) / 2.0, 1));
+            size = glm::length(high - low);
+        }
+        camera.target = {center.x, center.y, center.z};
+        camera.distance = std::clamp(1.75 * scale * size, 0.2, 500.0);
     }
 }
 Result<renderer::Frame> EditorSession::frame(double aspect) {
@@ -246,9 +271,26 @@ Result<renderer::Frame> EditorSession::frame(double aspect) {
     const auto entities = shown.snapshot().entities;
     std::vector<renderer::MeshBinding> meshes;
     std::vector<renderer::LightBinding> lights;
+    asset_problems_.clear();
+    const auto problem = [this](const std::string &text) {
+        if (std::find(asset_problems_.begin(), asset_problems_.end(), text) == asset_problems_.end()) asset_problems_.push_back(text);
+    };
     for (const auto &e : entities) {
-        if (const auto &m = e.components.mesh)
-            meshes.push_back({e.id, mesh_handle(m->mesh), renderer::builtin_lit, true, {linear(m->color), m->roughness, m->metallic}});
+        if (const auto &m = e.components.mesh) {
+            renderer::Surface surface{linear(m->color), m->roughness, m->metallic};
+            auto handle = mesh_handle(m->mesh);
+            if (!m->mesh_asset.empty()) {
+                const auto &resolved = resolve(m->mesh_asset, assets::AssetType::Mesh);
+                handle = resolved.mesh.index ? resolved.mesh : renderer::builtin_cube;
+                if (!resolved.mesh.index) { surface.linear_color = placeholder_color; problem(resolved.problem); }
+            }
+            if (!m->texture.empty()) {
+                const auto &resolved = resolve(m->texture, assets::AssetType::Texture);
+                surface.texture = resolved.texture;
+                if (!resolved.texture.index) { surface.linear_color = placeholder_color; problem(resolved.problem); }
+            }
+            meshes.push_back({e.id, handle, renderer::builtin_lit, true, surface});
+        }
         if (const auto &l = e.components.light)
             lights.push_back({e.id, l->type == LightType::Point ? renderer::LightKind::Point : renderer::LightKind::Directional,
                               linear(l->color), l->intensity, l->range});
@@ -342,9 +384,116 @@ EntityId EditorSession::pick(const renderer::FrameSnapshot &frame, double x, dou
         const auto inverse = glm::inverse(glm::make_mat4(object.world.matrix.data()));
         // The local ray is not normalized, so t stays a world-space distance along the pick ray.
         const glm::dvec3 origin(inverse * a), ray(inverse * glm::dvec4(direction, 0));
-        const double t = hit(object.mesh, origin, ray, nearest);
+        // Models pick by their bounding box.
+        const auto data = resources_.find(object.mesh);
+        const double t = data ? box_hit(vector(data->bounds.min), vector(data->bounds.max), origin, ray, nearest)
+                              : hit(object.mesh, origin, ray, nearest);
         if (t >= 0 && t < nearest) { nearest = t; nearest_entity = object.entity; }
     }
     return nearest_entity;
+}
+const EditorSession::Resolved &EditorSession::resolve(const AssetRef &ref, assets::AssetType type) {
+    const auto key = std::make_tuple(ref.id, ref.path, type);
+    if (const auto found = resolved_.find(key); found != resolved_.end()) return found->second;
+    Resolved result;
+    const auto reason = [&]() -> std::string {
+        if (!assets_) return "there is no asset folder at " + asset_folder().generic_string();
+        auto meta = assets_->find(assets::AssetId{ref.id});
+        if (!meta) meta = assets_->find(std::string_view(ref.path));
+        if (!meta) return "it is not in the asset folder";
+        if (type == assets::AssetType::Mesh) {
+            auto loaded = assets_->load_mesh(meta->id);
+            if (!loaded) return loaded.error().message;
+            result.mesh = resources_.mesh(meta->id, loaded.value().revision, loaded.value().data);
+        } else {
+            auto loaded = assets_->load_texture(meta->id);
+            if (!loaded) return loaded.error().message;
+            result.texture = resources_.texture(meta->id, loaded.value().revision, loaded.value().data);
+        }
+        return {};
+    }();
+    if (!reason.empty()) result.problem = (type == assets::AssetType::Mesh ? "Model '" : "Texture '") + ref.path + "' cannot be used: " + reason;
+    return resolved_.emplace(key, std::move(result)).first->second;
+}
+Result<void> EditorSession::open_project(const std::filesystem::path &root) {
+    std::error_code ec;
+    if (!std::filesystem::is_directory(root, ec)) return fail(ErrorCode::NotFound, "Project folder not found: " + root.generic_string());
+    project_ = root;
+    assets_.reset(); resolved_.clear();
+    if (!std::filesystem::is_directory(asset_folder(), ec)) return {};
+    auto database = assets::AssetDatabase::open(asset_folder());
+    if (!database) return database.error();
+    if (auto scanned = database.value().scan(); !scanned) return scanned.error();
+    assets_.emplace(std::move(database.value()));
+    return {};
+}
+Result<ImportedAsset> EditorSession::import_asset(const std::filesystem::path &file) {
+    if (project_.empty()) return fail(ErrorCode::InvalidState, "No project is open");
+    if (!assets_) {
+        std::error_code ec;
+        std::filesystem::create_directories(asset_folder(), ec);
+        if (ec) return fail(ErrorCode::InvalidState, "Cannot create the asset folder: " + ec.message());
+        auto database = assets::AssetDatabase::open(asset_folder());
+        if (!database) return database.error();
+        assets_.emplace(std::move(database.value()));
+    }
+    auto id = assets_->import_file(file);
+    if (!id) return id.error();
+    resolved_.clear(); // A reference that was missing may exist now.
+    const auto meta = assets_->find(id.value());
+    ImportedAsset imported{id.value(), meta->path, meta->type, {}};
+    if (meta->type == assets::AssetType::Mesh) {
+        if (auto mesh = assets_->load_mesh(id.value())) imported.warnings = mesh.value().data->warnings;
+    }
+    return imported;
+}
+Result<void> EditorSession::rescan_assets() {
+    if (project_.empty()) return fail(ErrorCode::InvalidState, "No project is open");
+    if (!assets_) return open_project(project_);
+    if (auto scanned = assets_->scan(); !scanned) return scanned.error();
+    resolved_.clear();
+    return {};
+}
+Result<void> EditorSession::reload_asset(assets::AssetId id) {
+    if (!assets_) return fail(ErrorCode::NotFound, "No asset folder");
+    auto reloaded = assets_->reload(id);
+    resolved_.clear();
+    return reloaded;
+}
+std::vector<assets::AssetMetadata> EditorSession::assets() const { return assets_ ? assets_->assets() : std::vector<assets::AssetMetadata>{}; }
+std::vector<assets::AssetIssue> EditorSession::asset_issues() const {
+    if (!assets_) return {};
+    const auto issues = assets_->issues();
+    return {issues.begin(), issues.end()};
+}
+assets::AssetState EditorSession::asset_state(assets::AssetId id) const { return assets_ ? assets_->state(id) : assets::AssetState::Unknown; }
+Result<commands::Receipt> EditorSession::assign_asset(EntityId id, assets::AssetId asset) {
+    const auto record = scene().inspect(id);
+    if (!record) return fail(ErrorCode::NotFound, "Entity no longer exists");
+    const auto meta = assets_ ? assets_->find(asset) : std::nullopt;
+    if (!meta) return fail(ErrorCode::NotFound, "Asset is not in the asset folder");
+    auto mesh = record->components.mesh.value_or(MeshComponent{});
+    mesh.color = {1, 1, 1};
+    (meta->type == assets::AssetType::Mesh ? mesh.mesh_asset : mesh.texture) = reference(*meta);
+    return execute(commands::SetMesh{id, mesh});
+}
+Result<commands::Receipt> EditorSession::place_asset(assets::AssetId asset) {
+    const auto meta = assets_ ? assets_->find(asset) : std::nullopt;
+    if (!meta) return fail(ErrorCode::NotFound, "Asset is not in the asset folder");
+    if (meta->type != assets::AssetType::Mesh) return fail(ErrorCode::InvalidArgument, meta->path + " is not a model; assign it to an entity instead");
+    const AssetRef ref = reference(*meta);
+    const auto data = model(ref);
+    if (!data) return fail(ErrorCode::ParseError, resolve(ref, assets::AssetType::Mesh).problem);
+    MeshComponent mesh;
+    mesh.color = {1, 1, 1};
+    mesh.mesh_asset = ref;
+    Transform t; t.position.y = -double(data->bounds.min[1]);
+    const auto stem = std::filesystem::path(std::u8string(reinterpret_cast<const char8_t *>(meta->path.data()), meta->path.size())).stem().u8string();
+    auto result = execute(commands::CreateEntity{trimmed_name(std::string(reinterpret_cast<const char *>(stem.data()), stem.size())), t, 0, 0, Components{mesh, {}, {}}});
+    if (result) selected_ = result.value().created.front();
+    return result;
+}
+std::shared_ptr<const assets::MeshData> EditorSession::model(const AssetRef &ref) {
+    return ref.empty() ? nullptr : resources_.find(resolve(ref, assets::AssetType::Mesh).mesh);
 }
 } // namespace engine::editor

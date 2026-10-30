@@ -225,13 +225,13 @@ void physics_components() {
     check(parsed.value().entities[0].components.colliders.size() == 2 && parsed.value().entities[0].components.body,
           "Several colliders and one body per entity");
     // The example in docs/architecture/006-scene-format.md, verbatim: it loads and is what the writer emits.
-    const std::string documented = "ENGINE_SCENE 4 5 4\n"
+    const std::string documented = "ENGINE_SCENE 5 5 4\n"
                                    "ENTITY 1 0 \"Ball\" 0 0.5 0 0 0 0 1 1 1 1\n"
                                    "ENTITY 2 0 \"Sun\" 0 4 0 0 0 0 1 1 1 1\n"
                                    "ENTITY 3 0 \"Camera\" 0 1.5 6 0 0 0 1 1 1 1\n"
                                    "ENTITY 4 0 \"Floor\" 0 0 0 0 0 0 1 10 1 10\n"
                                    "COMPONENTS 6\n"
-                                   "MESH 1 sphere 1 0.25 0.125 0.5 0\n"
+                                   "MESH 1 sphere 1 0.25 0.125 0.5 0 - -\n"
                                    "BODY 1 dynamic 0 0 0 0 0 0 0 0 1 1 0\n"
                                    "COLLIDER 1 sphere 0 0 0 0 0 0 1 0.5 0.5 0.5 0.5 0.5 1000 0.75 0 0 0\n"
                                    "LIGHT 2 directional 1 1 1 100000 10\n"
@@ -339,7 +339,7 @@ void components() {
     // Exact text round trip with every component kind, and a deterministic writer.
     std::ostringstream out;
     ok(write_scene(out, s.snapshot()));
-    check(out.str().find("MESH 1 sphere 1 0 0 0.25 0.5\n") != std::string::npos &&
+    check(out.str().find("MESH 1 sphere 1 0 0 0.25 0.5 - -\n") != std::string::npos &&
               out.str().find("CAMERA 2 45 0.5 200 0\n") != std::string::npos &&
               out.str().find("LIGHT 2 point 1 0.5 0.25 1500 4\n") != std::string::npos,
           "Component lines not written as documented");
@@ -366,11 +366,61 @@ void components() {
               !parsed.value().entities[0].components.light,
           "Component records in any order");
 }
+void asset_references() {
+    Scene s;
+    CommandBus b(s);
+    const auto id = create(b, "Model");
+    MeshComponent model;
+    model.mesh_asset = {0x6a1f0c3e9b2d4a01ull, "models/hel \"met\".glb"};
+    model.texture = {0x0000000000000abcull, "t/wood.png"};
+    ok(b.execute(owner, b.revision(), SetMesh{id, model}));
+    // References are part of the record: undo, snapshot and exact text round trip.
+    std::ostringstream out;
+    ok(write_scene(out, s.snapshot()));
+    check(out.str().find("6a1f0c3e9b2d4a01 \"models/hel \\\"met\\\".glb\" 0000000000000abc \"t/wood.png\"\n") != std::string::npos,
+          "Asset references not written as documented");
+    std::istringstream in(out.str());
+    auto loaded = read_scene(in);
+    ok(loaded);
+    check(loaded.value() == s.snapshot(), "Asset references lost in a round trip");
+    ok(b.undo(owner, b.revision()));
+    check(!s.inspect(id)->components.mesh, "Undo did not remove the reference");
+    ok(b.redo(owner, b.revision()));
+    check(s.inspect(id)->components.mesh->texture.path == "t/wood.png", "Redo did not restore the reference");
+    // Half a reference, control characters and oversized paths are refused by commands and by the reader.
+    const auto revision = b.revision();
+    for (const AssetRef &bad : {AssetRef{1, ""}, AssetRef{0, "a.glb"}, AssetRef{1, "a\nb.glb"},
+                               AssetRef{1, std::string(max_asset_path_bytes + 1, 'a')}}) {
+        MeshComponent wrong;
+        wrong.mesh_asset = bad;
+        error(b.execute(owner, revision, SetMesh{id, wrong}), ErrorCode::InvalidArgument);
+        wrong = {};
+        wrong.texture = bad;
+        error(b.execute(owner, revision, SetMesh{id, wrong}), ErrorCode::InvalidArgument);
+    }
+    const std::string head = "ENGINE_SCENE 5 2 1 ENTITY 1 0 \"A\" 0 0 0 0 0 0 1 1 1 1 COMPONENTS 1 MESH 1 cube 1 1 1 0.5 0 ";
+    for (const std::string &body : std::vector<std::string>
+         {"", "-", "- x", "0000000000000001 - -", "0000000000000001", "1 \"a.glb\" -", "000000000000000g \"a.glb\" -",
+          "0000000000000000 \"a.glb\" -", "- 0000000000000001 \"\"", "00000000000000001 \"a.glb\" -",
+          "0000000000000001 \"" + std::string(max_asset_path_bytes + 1, 'a') + "\" -"}) {
+        std::istringstream bad(head + body);
+        check(!read_scene(bad), "Malformed asset reference accepted");
+    }
+    // Version 4 files have no reference fields.
+    std::istringstream v4("ENGINE_SCENE 4 2 1 ENTITY 1 0 \"A\" 0 0 0 0 0 0 1 1 1 1 COMPONENTS 1 MESH 1 sphere 1 1 1 0.5 0");
+    auto old = read_scene(v4);
+    ok(old);
+    check(old.value().entities[0].components.mesh->mesh == BuiltinMesh::Sphere &&
+              old.value().entities[0].components.mesh->mesh_asset.empty(),
+          "Version 4 mesh record");
+    std::istringstream v4_extra("ENGINE_SCENE 4 2 1 ENTITY 1 0 \"A\" 0 0 0 0 0 0 1 1 1 1 COMPONENTS 1 MESH 1 sphere 1 1 1 0.5 0 - -");
+    check(!read_scene(v4_extra), "Reference fields accepted in a version 4 file");
+}
 void malformed_serialization() {
     for (const auto *text :
          {"WRONG 1 1 0", "ENGINE_SCENE 2 1 0", "ENGINE_SCENE 1 0 0", "ENGINE_SCENE 1 1 100001",
           "ENGINE_SCENE 1 1 0 trailing", "ENGINE_SCENE 1 2 1 ENTITY 1 0 \"x\" 0 0",
-          "ENGINE_SCENE 0 1 0", "ENGINE_SCENE 5 1 0 COMPONENTS 0", "ENGINE_SCENE 2 1 0 COMPONENTS",
+          "ENGINE_SCENE 0 1 0", "ENGINE_SCENE 6 1 0 COMPONENTS 0", "ENGINE_SCENE 2 1 0 COMPONENTS",
           "ENGINE_SCENE 2 1 0 COMPONENTS -1", "ENGINE_SCENE 2 1 0 COMPONENTS 1 MESH 1",
           "ENGINE_SCENE 2 1 0 COMPONENTS 0 trailing", "ENGINE_SCENE 1 1 0 COMPONENTS 0"}) {
         std::istringstream in(text);
@@ -643,6 +693,7 @@ int main() {
         {"components", components},
         {"duplication", duplication},
         {"physics_components", physics_components},
+        {"asset_references", asset_references},
         {"malformed_serialization", malformed_serialization},
         {"history_bound_and_noop", history_bound_and_noop},
         {"thread_boundary", thread_boundary},

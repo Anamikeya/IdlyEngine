@@ -30,6 +30,21 @@ Result<TextureData> import_tga(std::span<const std::uint8_t> bytes, const Import
 Result<TextureData> import_ppm(std::span<const std::uint8_t> bytes, const ImportSettings& settings = {},
 	const ImportLimits& limits = {});
 
+// False when this build was configured without the cgltf and stb_image sources; import_glb and import_image
+// then return an error saying so.
+[[nodiscard]] bool gltf_import_available() noexcept;
+
+// Self-contained binary glTF 2.0. All primitives of the default scene become one mesh with node transforms
+// baked in and one SubMesh per primitive. Base color factor and texture, roughness and metallic factors are
+// kept. Ignored features (skins, animation, morph targets, other maps, non-triangle primitives) are listed
+// in MeshData::warnings. External files, Draco and other required extensions are errors.
+Result<MeshData> import_glb(std::span<const std::uint8_t> bytes, const ImportSettings& settings = {},
+	const ImportLimits& limits = {});
+
+// PNG or JPEG, decoded to RGBA8.
+Result<TextureData> import_image(std::span<const std::uint8_t> bytes, const ImportSettings& settings = {},
+	const ImportLimits& limits = {});
+
 // Sidecar "<asset>.meta", version 1:
 //   version = 1
 //   id = 0123456789abcdef      (optional)

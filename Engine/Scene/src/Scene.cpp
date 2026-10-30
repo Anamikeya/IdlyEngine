@@ -11,12 +11,20 @@ namespace engine {
 namespace {
 bool unit(double v) { return std::isfinite(v) && v >= 0 && v <= 1; }
 bool color(const Vec3 &c) { return unit(c.x) && unit(c.y) && unit(c.z); }
+bool valid_ref(const AssetRef &ref) {
+    if (ref.empty())
+        return ref.path.empty();
+    return !ref.path.empty() && ref.path.size() <= max_asset_path_bytes &&
+           std::none_of(ref.path.begin(), ref.path.end(), [](char c) { return static_cast<unsigned char>(c) < 32; });
+}
 Result<void> validate_components(const Components &c) {
     if (const auto &m = c.mesh) {
         if (m->mesh != BuiltinMesh::Cube && m->mesh != BuiltinMesh::Sphere && m->mesh != BuiltinMesh::Plane)
             return fail(ErrorCode::InvalidArgument, "Unknown built-in mesh");
         if (!color(m->color) || !unit(m->roughness) || !unit(m->metallic))
             return fail(ErrorCode::InvalidArgument, "Mesh color, roughness and metallic must be within [0, 1]");
+        if (!valid_ref(m->mesh_asset) || !valid_ref(m->texture))
+            return fail(ErrorCode::InvalidArgument, "An asset reference needs both an ID and a short path, or neither");
     }
     if (const auto &cam = c.camera) {
         if (!std::isfinite(cam->vertical_fov_degrees) || cam->vertical_fov_degrees < 1 || cam->vertical_fov_degrees > 179 ||

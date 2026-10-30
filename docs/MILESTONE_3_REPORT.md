@@ -3,8 +3,89 @@
 Branch `agent/claude-milestone-3`, worktree `D:\AI\GameEngine-Integration`. Plan: `docs/MILESTONE_3_PLAN.md`
 (approved 2026-10-29).
 
-**Status: in progress. Slices S1–S4 are complete and verified; S5 and S6 are not started.** Milestone 3 is not
-complete: imported assets (GLB, textures) are still missing.
+**Status: in progress. Slices S1–S5 are complete and verified; S6 (final report and polish) is not started.**
+
+## S5: assets (2026-10-30)
+
+### Delivered
+
+| Feature | Implementation |
+|---|---|
+| GLB import | `import_glb` in `Engine/Assets/src/gltf_importer.cpp`, using the cgltf copy Filament ships. Reads self-contained binary glTF 2.0: all triangle primitives of the default scene, node transforms baked in, normals generated when absent, one `SubMesh` per primitive with base color factor and image, roughness and metallic factors |
+| PNG and JPEG | `import_image` with Filament's stb_image, also used for images embedded in a GLB. Dimensions are checked before decoding |
+| Unsupported input | Errors: Draco and other unknown required extensions (WebP included), external buffers or images (a file's content can never make the importer open a path), `.gltf`, corrupt files, limits. Warnings in the Console: skins, animation, morph targets, other maps, transparency, non-triangle primitives |
+| Importing files | `AssetDatabase::import_file` copies into the asset folder under a free name (`model_1.glb`), writes a `.meta` with a random ID, rescans and loads once. On failure nothing stays behind. A file already in the folder is not copied |
+| Scene format v5 | `MESH` gains model and texture references: 16 hex digit ID plus path, or `-`. IDs resolve first, paths second, so a recreated `.meta` still works. Versions 1–4 still load |
+| Resource registry (closes C-5a) | Header-only `renderer::ResourceRegistry` maps `(AssetId, revision)` to `MeshHandle` and the new `TextureHandle`, with a new generation per revision. Frames carry handles only |
+| GPU upload | `DesktopRenderer` uploads a mesh or texture when a frame first draws it, with mipmaps and sRGB per metadata, one material instance per part, and frees what no object uses. A handle gone stale is skipped for that frame. An image above the GPU limit is shown white and reported |
+| Material | `lit.mat` gains `baseColorMap` and UV0, and built-in meshes gain UVs. Color = tint × part color × image. A GLB's own roughness and metallic win over the entity's |
+| Conventions (closes C-5b) | The GPU smoke run imports a two-color image and asserts by readback that its first row is at the far end of a plane seen from above. Its first run failed, showing the image inverted; `lit.mat` now flips v, as gltfio does. Confirmed in a desktop capture too |
+| Session | `open_project` (`<project>/Assets`), `import_asset`, `rescan_assets`, `reload_asset`, `assign_asset` (one undo step, adds a mesh renderer if needed), `place_asset` (named after the file, resting on y = 0). Unresolved references draw as a magenta cube, are listed in `asset_problems()` and stay in the scene unchanged |
+| Asset Browser | Path field with Import, drop files on the window, Rescan, a list with type and state, Assign to selection, Add to scene (or double-click), Reload. Catalogue issues and import results go to the Console |
+| Inspector | Model and Texture combos on the Mesh Renderer. Add Component's fitted collider uses a model's bounds |
+| Picking and focus | Models pick by their bounding box. Focus frames a model's bounds instead of its origin |
+| Console | Scrolls to the newest message (moved up from S6, since an import error could be out of view) |
+| Command line | `engine_editor [--project <folder>]`; the default project is the working directory |
+
+Departures from the plan, made during S5:
+
+- **D4:** one asset per file with `SubMesh` parts instead of one per primitive, and no entity hierarchy from glTF
+  nodes. `.gltf` and external images are rejected instead of being read: following paths named in a file's content is
+  the risk, and the message says to export a self-contained `.glb`.
+- **D5:** the CPU registry is separate from `DesktopRenderer`, so the session and its tests use it without a GPU.
+  `lit.mat` was extended rather than adding `standard.mat`, and there is no `MaterialHandle` per asset. Tangent frames
+  come directly from normals instead of `geometry::SurfaceOrientation`, because no material uses tangent-space maps.
+- **D7:** references arrived in format v5, after the component and physics versions.
+
+### Tests
+
+| Suite | New or changed coverage |
+|---|---|
+| `asset_tests`, 23 → 35 cases | GLB geometry, transform, material, mirroring node, embedded images (data URI and binary chunk), ignored-feature warnings, 12 rejected inputs, real files from the dependency tree when present (Box, DamagedHelmet, Fox, DamagedHelmetWebp, invalid_accessor_type); PNG, JPEG fixture, corrupt and oversized images; `import_file` naming, stable IDs, errors leaving nothing behind |
+| `engine.core.acceptance`, 22 → 23 | New `asset_references`: exact text, round trip, undo, 4 invalid references refused by commands, 11 malformed records refused by the reader, v4 records |
+| `engine.renderer.snapshot` | New `invalid surface texture` |
+| `engine.editor.acceptance`, 11 → 12 groups | New `asset_workflow`: import, unsupported and broken files, place, assign, undo, picking and focus by bounds, save and load in a new session, Play, lookup by path, missing assets as placeholders with references kept, rescan, reload generations, GLB |
+| GPU smoke | Texture orientation by readback (top 166,3,17; bottom 18,3,166) |
+
+Results: `windows-msvc-release` and `windows-msvc-ci` build with no warnings outside `resources/filament` and pass
+146/146 CTest entries, in two consecutive runs. GPU smoke exits 0 on both. The build without cgltf and stb_image that
+Linux CI uses was only checked by compiling `gltf_importer.cpp` that way with MSVC; hosted CI is still unavailable.
+
+### Real-input verification
+
+Real mouse and keyboard through the same driver, on the Release preset editor, in a fresh project folder, with real
+files from the dependency tree. The driver reported no cursor interference.
+
+| Check | Observed | Result |
+|---|---|---|
+| Import GLB | DamagedHelmet.glb (3.7 MB) by path and Enter: listed as `[model] (loaded)`; Console warns about ignored metallic-roughness, normal, occlusion and emissive maps | Pass |
+| Add to scene | Upright, textured helmet resting on the floor; named `DamagedHelmet`; Y 0.901; Inspector says roughness and metallic come from the model | Pass |
+| Unsupported and invalid | DamagedHelmetWebp.glb: "requires unsupported extension EXT_texture_webp". AnimatedTriangle.gltf: "unsupported file type '.gltf' (re-export…". CMakeLists.txt: "unsupported file type '.txt'; supported: …". `C:\no\such\file.png`: "file not found". None left a file in `Assets` | Pass |
+| Warnings | Fox.glb imports with skinning and animation warnings; invalid_accessor_type.glb with a morph target warning | Pass |
+| Textures | two_tone.jpg, material_chart.jpg and NDC.png import; Assign to selection puts the chart on the cube, the combo shows it, the color turns white | Pass |
+| Picking and focus | Clicking the helmet selects it; Focus centers its bounds | Pass |
+| Save, close, reopen, load | File has `ENGINE_SCENE 5` and both references; after a restart Load shows the same scene and marks it clean | Pass |
+| Play and Stop | Models render in Play; Stop returns to the same scene | Pass |
+| Missing asset | With the file moved away, Load gives a magenta cube, "Model 'DamagedHelmet.glb' cannot be used: it is not in the asset folder" and the sidecar issue. File back, **Rescan**: the helmet returns | Pass |
+| OS file drop | A real OLE drag from a helper window to the viewport: imported as `two_tone_1.jpg` beside the existing `two_tone.jpg`, selected in the list | Pass |
+| Orientation on screen | The dropped image on a plane seen from above: red (first row) at the top of the desktop capture, blue below | Pass |
+| Undo and close | Ctrl+Z removes the texture; closing gives the unsaved-changes prompt, Discard exits; a clean close exits with no prompt | Pass |
+
+Not exercised with real input: the **Reload** button, the Inspector's Model and Texture combos, a texture overriding a
+GLB's image, placing Fox, and Add Component's fitted collider for a model. Reload is covered by `asset_workflow` at the
+session level, and the fitted collider has no automated test.
+
+### Limitations
+
+- Only the base color image is used. Normal, metallic-roughness, occlusion and emissive maps are ignored with a
+  warning, and a material with a metallic-roughness map falls back to a non-metal, roughness 0.65.
+- There is no image-based lighting, so a fully metallic surface with no map renders nearly black.
+- Skinned models import in their bind pose, without animation. A file's own scale is kept (Fox is large).
+- No transparency, no shadows, no thumbnails. Models are drawn double-sided, like everything using `lit.mat`.
+- Importing runs on the UI thread; the helmet takes about a second.
+- A plane at y = 0 fights with the grid lines.
+- `ResourceRegistry` keeps CPU data for the session, so nothing imported is freed from RAM until exit.
+- Scene files are not tied to a project: loading one with another project open gives placeholders and problems.
 
 ## S4: physics (2026-10-30)
 

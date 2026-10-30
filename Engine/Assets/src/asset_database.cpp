@@ -5,7 +5,9 @@
 #include <algorithm>
 #include <fstream>
 #include <map>
+#include <random>
 #include <set>
+#include <string_view>
 #include <system_error>
 
 namespace engine::assets {
@@ -42,9 +44,9 @@ bool inside(const fs::path& root, const fs::path& candidate)
 	return !relative.empty() && *relative.begin() != ".." && !relative.is_absolute();
 }
 
-bool is_ppm(const std::string& path)
+bool has_extension(const std::string& path, std::string_view extension)
 {
-	return path.size() >= 4 && lowercase(path.substr(path.size() - 4)) == ".ppm";
+	return path.size() >= extension.size() && lowercase(path.substr(path.size() - extension.size())) == extension;
 }
 
 } // namespace
@@ -126,7 +128,9 @@ struct AssetDatabase::Impl {
 			return bytes.error();
 		}
 		const auto& b = bytes.value();
-		auto mesh = import_obj(std::string_view(reinterpret_cast<const char*>(b.data()), b.size()), meta.settings, limits);
+		auto mesh = has_extension(meta.path, ".glb")
+			? import_glb(b, meta.settings, limits)
+			: import_obj(std::string_view(reinterpret_cast<const char*>(b.data()), b.size()), meta.settings, limits);
 		if (!mesh) {
 			return mesh.error();
 		}
@@ -139,8 +143,9 @@ struct AssetDatabase::Impl {
 		if (!bytes) {
 			return bytes.error();
 		}
-		auto texture = is_ppm(meta.path) ? import_ppm(bytes.value(), meta.settings, limits)
-										 : import_tga(bytes.value(), meta.settings, limits);
+		auto texture = has_extension(meta.path, ".ppm")   ? import_ppm(bytes.value(), meta.settings, limits)
+			: has_extension(meta.path, ".tga") ? import_tga(bytes.value(), meta.settings, limits)
+											   : import_image(bytes.value(), meta.settings, limits);
 		if (!texture) {
 			return texture.error();
 		}
@@ -228,7 +233,7 @@ Result<std::size_t> AssetDatabase::scan()
 		meta.path = std::move(path.value());
 		meta.type = asset_type_for(meta.path);
 		if (meta.type == AssetType::Unknown) {
-			issues.push_back({meta.path, "unsupported format (supported: .obj, .tga, .ppm)"});
+			issues.push_back({meta.path, "unsupported format (supported: .glb, .obj, .png, .jpg, .jpeg, .tga, .ppm)"});
 			continue;
 		}
 		meta.source_bytes = it->file_size(ec);
@@ -348,6 +353,108 @@ Result<TextureAsset> AssetDatabase::load_texture(AssetId id)
 {
 	return impl_->load<TextureData>(id, AssetType::Texture, &Impl::Entry::texture,
 		[this](const AssetMetadata& meta) { return impl_->import_texture(meta); });
+}
+
+Result<AssetId> AssetDatabase::import_file(const fs::path& source)
+{
+	std::error_code ec;
+	if (!fs::is_regular_file(source, ec)) {
+		return fail(ErrorCode::NotFound, "file not found: " + utf8(source));
+	}
+	const std::string name = utf8(source.filename());
+	const AssetType type = asset_type_for(name);
+	if (type == AssetType::Unknown) {
+		const std::string extension = utf8(source.extension());
+		return fail(ErrorCode::InvalidArgument, "unsupported file type '" + extension + "'" +
+			(lowercase(extension) == ".gltf" ? " (re-export the model as a self-contained .glb)" : "") +
+			"; supported: .glb, .obj, .png, .jpg, .jpeg, .tga, .ppm");
+	}
+	const auto load = [&](AssetId id) -> Result<void> {
+		if (type == AssetType::Mesh) {
+			auto mesh = load_mesh(id);
+			return mesh ? Result<void>{} : Result<void>(mesh.error());
+		}
+		auto texture = load_texture(id);
+		return texture ? Result<void>{} : Result<void>(texture.error());
+	};
+	// Already in the asset folder: nothing to copy.
+	const fs::path canonical = fs::weakly_canonical(source, ec);
+	if (!ec && inside(impl_->root, canonical)) {
+		if (auto scanned = scan(); !scanned) {
+			return scanned.error();
+		}
+		const auto existing = find(utf8(canonical.lexically_relative(impl_->root)));
+		if (!existing) {
+			return fail(ErrorCode::InvalidArgument, name + " is in the asset folder but could not be catalogued");
+		}
+		if (auto loaded = load(existing->id); !loaded) {
+			return loaded.error();
+		}
+		return existing->id;
+	}
+	const std::uintmax_t size = fs::file_size(source, ec);
+	if (ec) {
+		return fail(ErrorCode::NotFound, "file cannot be read: " + utf8(source));
+	}
+	if (size > impl_->limits.max_source_bytes) {
+		return fail(ErrorCode::InvalidArgument, name + " exceeds the size limit");
+	}
+	auto normalized = normalize_asset_path(name);
+	if (!normalized) {
+		return fail(ErrorCode::InvalidArgument, "the file name cannot be used for an asset: " + normalized.error().message);
+	}
+	// A free name: "model.glb", then "model_1.glb", ...
+	const fs::path stem = from_utf8(normalized.value()).stem(), extension = from_utf8(normalized.value()).extension();
+	fs::path target = impl_->root / from_utf8(normalized.value());
+	for (int i = 1; fs::exists(target, ec) || fs::exists(fs::path(target) += ".meta", ec); ++i) {
+		target = impl_->root / (fs::path(stem) += "_" + std::to_string(i));
+		target += extension;
+	}
+	fs::path meta_path = target;
+	meta_path += ".meta";
+	const auto undo = [&] {
+		std::error_code ignored;
+		fs::remove(target, ignored);
+		fs::remove(meta_path, ignored);
+		(void)scan();
+	};
+	if (!fs::copy_file(source, target, ec) || ec) {
+		return fail(ErrorCode::InvalidState, "the file could not be copied into the asset folder: " + ec.message());
+	}
+	std::random_device random;
+	AssetId id;
+	do {
+		id.value = (static_cast<std::uint64_t>(random()) << 32) | random();
+	} while (id.is_null() || impl_->by_id.contains(id));
+	{
+		std::ofstream out(meta_path, std::ios::binary);
+		out << write_meta(MetaFile{id, {}});
+		if (!out) {
+			undo();
+			return fail(ErrorCode::InvalidState, "the asset's .meta file could not be written");
+		}
+	}
+	if (auto scanned = scan(); !scanned) {
+		undo();
+		return scanned.error();
+	}
+	if (!find(id)) {
+		const std::string relative = utf8(target.lexically_relative(impl_->root));
+		std::string reason = "it could not be catalogued";
+		for (const AssetIssue& issue : impl_->issues) {
+			if (issue.path == relative) {
+				reason = issue.message;
+			}
+		}
+		undo();
+		return fail(ErrorCode::InvalidArgument, name + ": " + reason);
+	}
+	if (auto loaded = load(id); !loaded) {
+		const Error error = loaded.error();
+		undo();
+		return error;
+	}
+	return id;
 }
 
 std::vector<AssetIssue> AssetDatabase::validate_all()

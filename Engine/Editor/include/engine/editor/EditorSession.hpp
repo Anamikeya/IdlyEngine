@@ -1,10 +1,15 @@
 #pragma once
+#include <engine/assets/asset_database.h>
 #include <engine/commands/CommandBus.hpp>
 #include <engine/physics/scene_physics.h>
 #include <engine/renderer/RenderSnapshot.hpp>
+#include <engine/renderer/ResourceRegistry.hpp>
 #include <chrono>
 #include <filesystem>
+#include <map>
 #include <memory>
+#include <optional>
+#include <tuple>
 
 namespace engine::editor {
 struct OrbitCamera {
@@ -17,6 +22,14 @@ struct OrbitCamera {
 };
 
 enum class PlayState { Editing, Playing, Paused };
+
+// What an import left in the asset folder.
+struct ImportedAsset {
+    assets::AssetId id;
+    std::string path;
+    assets::AssetType type = assets::AssetType::Unknown;
+    std::vector<std::string> warnings; // Features of the source that were ignored.
+};
 
 // Single owner thread. This owns the actual scene, never a competing authoring model.
 //
@@ -44,6 +57,14 @@ class EditorSession {
     mutable bool dirty_ = false;
     EntityId view_camera_ = 0;
     std::string view_camera_issue_;
+    // Project assets: <project>/Assets. References resolve once and stay cached until the catalogue changes.
+    struct Resolved { renderer::MeshHandle mesh; renderer::TextureHandle texture; std::string problem; };
+    std::filesystem::path project_;
+    std::optional<assets::AssetDatabase> assets_;
+    renderer::ResourceRegistry resources_;
+    std::map<std::tuple<std::uint64_t, std::string, assets::AssetType>, Resolved> resolved_;
+    std::vector<std::string> asset_problems_;
+    const Resolved &resolve(const AssetRef &, assets::AssetType);
     void reconcile();
     Result<void> editing_only(const char *action) const;
     // Local TRS that places an entity at `world` under `parent` (0 = root); rejects shear.
@@ -87,7 +108,8 @@ public:
     // Copies the entity and its subtree, components included, as "<name> (copy)": one undo step. Selects the copy.
     Result<commands::Receipt> duplicate(EntityId id);
     void focus();
-    // Extracts the shown scene: mesh components become lit built-in meshes, light components scene lights.
+    // Extracts the shown scene: mesh components become lit meshes, light components scene lights. An asset that
+    // cannot be resolved draws as a magenta cube and is listed in asset_problems(); nothing else changes.
     // Edit mode views through the editor camera. Play mode views through the first primary camera component
     // (by entity ID) and falls back to the editor camera when there is none or it cannot be used.
     Result<renderer::Frame> frame(double aspect);
@@ -117,6 +139,30 @@ public:
     const physics::ScenePhysics &physics_bridge() const;
     // A runtime physics failure that paused Play mode; empty otherwise.
     const std::string &physics_error() const { return physics_error_; }
+
+    // ---- Project assets ----
+    // Uses <root>/Assets as the asset folder, cataloguing it if it exists; the first import creates it.
+    Result<void> open_project(const std::filesystem::path &root);
+    const std::filesystem::path &project() const { return project_; }
+    std::filesystem::path asset_folder() const { return project_ / "Assets"; }
+    // Copies a file into the asset folder; see assets::AssetDatabase::import_file. References are not touched.
+    Result<ImportedAsset> import_asset(const std::filesystem::path &file);
+    Result<void> rescan_assets();
+    // Re-imports from disk; everything drawing the asset picks up the new revision on the next frame.
+    Result<void> reload_asset(assets::AssetId);
+    std::vector<assets::AssetMetadata> assets() const;
+    std::vector<assets::AssetIssue> asset_issues() const;
+    assets::AssetState asset_state(assets::AssetId) const;
+    // Sets the entity's model or texture according to the asset's type, adding a mesh renderer if it has none, and
+    // makes the color white so the asset shows as authored. One undo step.
+    Result<commands::Receipt> assign_asset(EntityId, assets::AssetId);
+    // Creates an entity drawing the model, named after the file and resting on the floor (y = 0), and selects it.
+    Result<commands::Receipt> place_asset(assets::AssetId);
+    // The model a reference names, loading it if needed; null when it cannot be resolved.
+    std::shared_ptr<const assets::MeshData> model(const AssetRef &);
+    // Problems with the references in the last frame().
+    const std::vector<std::string> &asset_problems() const { return asset_problems_; }
+    const renderer::ResourceRegistry &resources() const { return resources_; }
 private:
     void tick();
 };

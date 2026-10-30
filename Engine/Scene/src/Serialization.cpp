@@ -72,7 +72,7 @@ class Reader {
         const auto result = std::from_chars(text.data(), text.data() + text.size(), value);
         return result.ec == std::errc{} && result.ptr == text.data() + text.size();
     }
-    bool name(std::string &value) {
+    bool name(std::string &value, std::size_t limit = 256) {
         if (!whitespace())
             return false;
         char c = 0;
@@ -83,16 +83,37 @@ class Reader {
                 return true;
             if (c == '\\' && !take(c))
                 return false;
-            if (static_cast<unsigned char>(c) < 32 || value.size() >= 256)
+            if (static_cast<unsigned char>(c) < 32 || value.size() >= limit)
                 return false;
             value += c;
         }
         return false;
     }
+    // "-", or 16 hex digits and a quoted path.
+    bool asset_ref(AssetRef &ref) {
+        std::string text;
+        if (!token(text, 16))
+            return false;
+        if (text == "-")
+            return true;
+        const auto result = std::from_chars(text.data(), text.data() + text.size(), ref.id, 16);
+        return text.size() == 16 && result.ec == std::errc{} && result.ptr == text.data() + text.size() &&
+               name(ref.path, max_asset_path_bytes);
+    }
     bool end() {
         return whitespace() && in_.peek() == std::char_traits<char>::eof() && !in_.bad();
     }
 };
+void write_ref(std::ostream &out, const AssetRef &ref) {
+    if (ref.empty()) {
+        out << '-';
+        return;
+    }
+    static constexpr char digits[] = "0123456789abcdef";
+    for (int shift = 60; shift >= 0; shift -= 4)
+        out << digits[(ref.id >> shift) & 15];
+    out << ' ' << std::quoted(ref.path);
+}
 const char *mesh_token(BuiltinMesh mesh) {
     switch (mesh) {
     case BuiltinMesh::Sphere:
@@ -161,9 +182,14 @@ Result<void> write_scene(std::ostream &out, const SceneSnapshot &s) {
         out << "COMPONENTS " << components << '\n';
         for (const auto &e : s.entities) {
             if (const auto &m = e.components.mesh)
+            {
                 out << "MESH " << e.id << ' ' << mesh_token(m->mesh) << ' ' << m->color.x << ' '
-                    << m->color.y << ' ' << m->color.z << ' ' << m->roughness << ' ' << m->metallic
-                    << '\n';
+                    << m->color.y << ' ' << m->color.z << ' ' << m->roughness << ' ' << m->metallic << ' ';
+                write_ref(out, m->mesh_asset);
+                out << ' ';
+                write_ref(out, m->texture);
+                out << '\n';
+            }
             if (const auto &c = e.components.camera)
                 out << "CAMERA " << e.id << ' ' << c->vertical_fov_degrees << ' ' << c->near_plane
                     << ' ' << c->far_plane << ' ' << (c->primary ? 1 : 0) << '\n';
@@ -252,7 +278,8 @@ Result<SceneSnapshot> read_scene(std::istream &in) {
                     parsed = reader.token(word, 16) && parse_mesh(word, m.mesh) &&
                              reader.number(m.color.x) && reader.number(m.color.y) &&
                              reader.number(m.color.z) && reader.number(m.roughness) &&
-                             reader.number(m.metallic);
+                             reader.number(m.metallic) &&
+                             (version < 5 || (reader.asset_ref(m.mesh_asset) && reader.asset_ref(m.texture)));
                     c.mesh = m;
                 } else if (kind == "CAMERA") {
                     CameraComponent cam;

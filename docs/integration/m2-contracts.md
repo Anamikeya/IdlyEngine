@@ -1,11 +1,14 @@
 # Milestone 2 integration contracts (Claude systems ↔ Codex editor/renderer)
 
-> **Status update (Milestone 3, slice S4).** Resolved in `agent/claude-milestone-3`:
+> **Status update (Milestone 3, slice S5).** Resolved in `agent/claude-milestone-3`:
 > **C-1a**: each play session has its own scene and history-free bus, so two buses on one scene are no longer
 > needed in the editor. **C-2a**: physics authoring moved into the scene (`RigidBodyComponent`,
 > `ColliderComponent`, commands `SetRigidBody`/`SetColliders`, scene format v4); the bridge's authoring setters and
 > "detached" bookkeeping are gone. **C-4a**: colliders are drawn as an ImGui viewport overlay from `debug_geometry()`.
-> C-5a and C-5b remain open for slice S5. Sections below are updated where the API changed.
+> **C-5a**: `renderer::ResourceRegistry` maps `(AssetId, revision)` to generation-checked handles and
+> `DesktopRenderer` uploads from it on first use. **C-5b**: the conventions below hold; an imported image's first row
+> shows at the far end of a plane seen from above, asserted by a GPU readback in the smoke run. The lit material
+> flips v for Filament's sampling. Sections below are updated where the API changed.
 
 Status: **proposed by Claude, awaiting Codex confirmation.** Written 2026-10-28 on
 `agent/claude-systems-m2`, branched from `main` at `d876e42` (the M1 integration).
@@ -141,17 +144,18 @@ this data.
 - CPU outputs are `std::shared_ptr<const MeshData>` and `std::shared_ptr<const TextureData>`.
   Each load result carries an `AssetId` and a `revision`, and the revision increments on
   reload.
-- **Renderer boundary (ask C-5a):** Codex's renderer resource registry maps
-  `(AssetId, revision)` to `MeshHandle`/`MaterialHandle`. It uploads from the CPU data and
-  bumps the handle generation when the revision changes. The registry holds the
-  `shared_ptr` for as long as it needs the CPU data. `AssetDatabase::unload_unused()` frees
-  only entries nobody else references. Assets create no GPU objects and define no material
-  model. A texture is RGBA8 rows with a top-left origin, plus an `srgb` flag from metadata.
+- **Renderer boundary (C-5a, closed):** `renderer::ResourceRegistry` maps
+  `(AssetId, revision)` to `MeshHandle`/`TextureHandle` and bumps the handle generation when
+  the revision changes; `DesktopRenderer` uploads from the CPU data when a frame first draws a
+  handle. The registry holds the `shared_ptr` for the session.
+  `AssetDatabase::unload_unused()` frees only entries nobody else references. Assets create no
+  GPU objects. A mesh may carry `SubMesh` parts with a metallic-roughness `MeshMaterial` and
+  embedded images; there is no other material model. A texture is RGBA8 rows with a top-left
+  origin, plus an `srgb` flag from metadata.
 - Mesh layout: an interleaved `MeshVertex {position[3], normal[3], uv[2]}` array, 32-bit
   indices, triangle lists, counter-clockwise front faces, right-handed coordinates, meters,
   and an axis-aligned bounding box. OBJ `vt` is converted to a top-left UV origin
-  (`v' = 1 - v`) to match the texture rows. **Codex to confirm** that this matches the
-  Filament adapter's expectations (C-5b).
+  (`v' = 1 - v`) to match the texture rows, as glTF already is (C-5b, closed).
 
 ## C-6 Build integration for the editor
 

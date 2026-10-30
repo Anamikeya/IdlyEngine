@@ -84,6 +84,8 @@ Result<Frame> extract_frame(const Scene &scene, FrameStamp stamp, const Perspect
         if (!unit(surface.linear_color.x) || !unit(surface.linear_color.y) ||
             !unit(surface.linear_color.z) || !unit(surface.roughness) || !unit(surface.metallic))
             return fail(ErrorCode::InvalidArgument, "Surface parameters must be within [0, 1]");
+        if (!surface.texture.index != !surface.texture.generation)
+            return fail(ErrorCode::InvalidArgument, "Invalid texture handle");
         const auto transform = scene.world_transform(binding.entity);
         if (!transform)
             return fail(ErrorCode::NotFound, "Mesh entity does not exist");

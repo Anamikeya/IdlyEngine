@@ -1,3 +1,4 @@
+#include <engine/assets/importers.h>
 #include <engine/editor/EditorSession.hpp>
 #include <algorithm>
 #include <cmath>
@@ -427,9 +428,198 @@ void hierarchy_editing() {
     ok(s.stop()); check(s.editor_scene().snapshot() == editor_before, "editor scene untouched");
 }
 }
+// A one-triangle binary glTF: 36 bytes of positions and 3 u16 indices, translated up by one meter.
+std::string triangle_glb() {
+    std::string json = R"({"asset":{"version":"2.0"},"scene":0,"scenes":[{"nodes":[0]}],"nodes":[{"mesh":0,"translation":[0,1,0]}],)"
+        R"("meshes":[{"primitives":[{"attributes":{"POSITION":0},"indices":1,"material":0}]}],)"
+        R"("materials":[{"pbrMetallicRoughness":{"baseColorFactor":[0,1,0,1],"roughnessFactor":0.25,"metallicFactor":0}}],)"
+        R"("animations":[{"channels":[],"samplers":[]}],)"
+        R"("buffers":[{"byteLength":44}],"bufferViews":[{"buffer":0,"byteOffset":0,"byteLength":36},{"buffer":0,"byteOffset":36,"byteLength":6}],)"
+        R"("accessors":[{"bufferView":0,"componentType":5126,"count":3,"type":"VEC3","min":[0,0,0],"max":[2,2,0]},)"
+        R"({"bufferView":1,"componentType":5123,"count":3,"type":"SCALAR"}]})";
+    while (json.size() % 4) json += ' ';
+    const float positions[9]{0,0,0, 2,0,0, 0,2,0};
+    const std::uint16_t indices[4]{0, 1, 2, 0};
+    const auto u32 = [](std::uint32_t v) { return std::string(reinterpret_cast<const char *>(&v), 4); };
+    std::string bin(reinterpret_cast<const char *>(positions), sizeof positions);
+    bin.append(reinterpret_cast<const char *>(indices), sizeof indices);
+    return "glTF" + u32(2) + u32(std::uint32_t(12 + 8 + json.size() + 8 + bin.size())) + u32(std::uint32_t(json.size())) + "JSON" + json +
+           u32(std::uint32_t(bin.size())) + std::string("BIN\0", 4) + bin;
+}
+void write_file(const std::filesystem::path &path, const std::string &bytes) {
+    std::filesystem::create_directories(path.parent_path());
+    std::ofstream file(path, std::ios::binary); file << bytes;
+    check(static_cast<bool>(file), "test file written");
+}
+void asset_workflow() {
+    namespace fs = std::filesystem;
+    const auto base = fs::current_path() / "editor-asset-test-files";
+    fs::remove_all(base);
+    const auto project = base / "project", source = base / "source";
+    fs::create_directories(project);
+    const std::string red_pixel = "P6\n1 1\n255\n\xff\x01\x01";
+    write_file(source / "tri.obj", "v -1 0 0\nv 1 0 0\nv 0 3 0\nf 1 2 3\n");
+    write_file(source / "red.ppm", red_pixel);
+    write_file(source / "notes.txt", "not an asset");
+    write_file(source / "bad.obj", "v 0 0 0\nf 1 2 3\n");
+
+    EditorSession s;
+    check(!s.open_project(base / "absent"), "missing project folder rejected");
+    check(!s.import_asset(source / "tri.obj"), "import without a project rejected");
+    ok(s.open_project(project));
+    check(s.assets().empty() && !fs::exists(s.asset_folder()), "opening a project creates nothing");
+
+    // Unsupported and broken files are reported and leave nothing in the catalogue.
+    const auto unsupported = s.import_asset(source / "notes.txt");
+    check(!unsupported && unsupported.error().message.find(".txt") != std::string::npos, "unsupported file type names itself");
+    check(!s.import_asset(source / "bad.obj") && s.assets().empty() && s.asset_issues().empty(), "broken file leaves no asset");
+
+    const auto obj = s.import_asset(source / "tri.obj"); ok(obj);
+    const auto ppm = s.import_asset(source / "red.ppm"); ok(ppm);
+    check(obj.value().type == assets::AssetType::Mesh && ppm.value().type == assets::AssetType::Texture, "asset types");
+    check(s.assets().size() == 2 && fs::exists(s.asset_folder() / "tri.obj") && fs::exists(s.asset_folder() / "red.ppm.meta"), "assets in the folder");
+
+    // Place: named after the file, resting on the floor; one undo step.
+    const auto revision = s.commands().revision();
+    ok(s.place_asset(obj.value().id));
+    const auto placed = s.selection();
+    const auto record = *s.scene().inspect(placed);
+    check(record.name == "tri" && near(record.transform.position.y, 0) && s.commands().revision() == revision + 1, "model placed");
+    check(!s.place_asset(ppm.value().id), "a texture cannot be placed");
+    check(record.components.mesh->mesh_asset == AssetRef{obj.value().id.value, "tri.obj"}, "reference has id and path");
+
+    // Frame: the model has a registry handle that finds its data.
+    auto f = s.frame(1); ok(f);
+    const auto model_handle = f.value()->objects.at(0).mesh;
+    check(model_handle.index >= renderer::ResourceRegistry::first_index && s.asset_problems().empty(), "model handle in the frame");
+    check(s.resources().find(model_handle)->indices.size() == 3, "handle finds the mesh");
+    check(!s.resources().find(renderer::builtin_cube), "built-in handles are not assets");
+
+    // Assign a texture and a model to an existing entity; both are undoable and survive save and load.
+    ok(s.create("Box")); const auto box = s.selection();
+    ok(s.execute(commands::SetMesh{box, MeshComponent{BuiltinMesh::Cube, {1, 0, 0}, 0.5, 0.25}}));
+    ok(s.assign_asset(box, ppm.value().id));
+    auto mesh = *s.scene().inspect(box)->components.mesh;
+    check(mesh.texture.id == ppm.value().id.value && mesh.mesh_asset.empty() && mesh.color == Vec3{1, 1, 1} && mesh.roughness == 0.5, "texture assigned");
+    f = s.frame(1); ok(f);
+    check(f.value()->objects.at(1).surface.texture.index >= renderer::ResourceRegistry::first_index && f.value()->objects.at(1).mesh == renderer::builtin_cube, "textured built-in");
+    ok(s.undo());
+    check(s.scene().inspect(box)->components.mesh->texture.empty() && s.scene().inspect(box)->components.mesh->color == Vec3{1, 0, 0}, "assign undone");
+    ok(s.redo());
+    check(!s.assign_asset(box, assets::AssetId{12345}) && !s.assign_asset(999999, ppm.value().id), "bad assignments rejected");
+    ok(s.create("Empty", 0, {})); const auto empty = s.selection();
+    ok(s.assign_asset(empty, obj.value().id));
+    check(s.scene().inspect(empty)->components.mesh.has_value(), "assigning adds a mesh renderer");
+
+    // Picking uses the model's bounds, focus its center. The placed triangle's box spans x -1..1, y 0..3.
+    s.camera.target = {0, 1.5, 0}; s.camera.yaw = 0; s.camera.pitch = 0; s.camera.distance = 8;
+    ok(s.execute(commands::DeleteEntity{box})); ok(s.execute(commands::DeleteEntity{empty}));
+    f = s.frame(1); ok(f);
+    check(s.pick(*f.value(), 0, 0) == placed, "model picked inside its bounds");
+    s.select(placed); s.focus();
+    check(near(s.camera.target.y, 1.5) && s.camera.distance > 3, "focus frames the model's bounds");
+    ok(s.undo()); ok(s.undo());
+
+    const auto scene_file = base / "assets.scene";
+    const auto saved = s.scene().snapshot().entities;
+    ok(s.save(scene_file));
+    {
+        std::ifstream in(scene_file); const std::string text{std::istreambuf_iterator<char>(in), {}};
+        check(text.find("\"tri.obj\"") != std::string::npos && text.find("\"red.ppm\"") != std::string::npos, "references are in the scene file");
+    }
+
+    // A new session: same project, references resolve; ids came from the sidecars.
+    {
+        EditorSession other;
+        ok(other.open_project(project));
+        ok(other.load(scene_file));
+        check(other.scene().snapshot().entities == saved && !other.dirty(), "references round trip");
+        auto reopened = other.frame(1); ok(reopened);
+        check(other.asset_problems().empty() && other.resources().find(reopened.value()->objects.at(0).mesh), "references resolve after reopen");
+
+        // Play mode copies them and renders the same assets; Stop leaves them.
+        ok(other.play());
+        auto playing = other.frame(1); ok(playing);
+        check(playing.value()->objects.at(0).mesh == reopened.value()->objects.at(0).mesh, "Play mode draws the same asset");
+        ok(other.stop());
+        check(other.scene().snapshot().entities == saved, "Play left the references alone");
+    }
+
+    // The path is the fallback when the id is gone: a recreated .meta gets a new id.
+    {
+        fs::remove(s.asset_folder() / "tri.obj.meta");
+        EditorSession other;
+        ok(other.open_project(project)); ok(other.load(scene_file));
+        auto frame = other.frame(1); ok(frame);
+        check(other.asset_problems().empty() && frame.value()->objects.at(0).mesh.index >= renderer::ResourceRegistry::first_index, "reference found by path");
+    }
+
+    // Missing asset: a magenta cube, a clear problem, and the reference kept for when the file returns.
+    fs::rename(s.asset_folder() / "red.ppm", base / "red.ppm.away");
+    fs::rename(s.asset_folder() / "tri.obj", base / "tri.obj.away");
+    {
+        EditorSession other;
+        ok(other.open_project(project)); ok(other.load(scene_file));
+        auto frame = other.frame(1); ok(frame);
+        const auto &objects = frame.value()->objects;
+        check(objects.at(0).mesh == renderer::builtin_cube && objects.at(0).surface.linear_color == Vec3{1, 0, 1}, "missing model is a magenta cube");
+        check(objects.at(1).surface.linear_color == Vec3{1, 0, 1} && !objects.at(1).surface.texture.index, "missing texture is magenta");
+        check(other.asset_problems().size() == 2 && other.asset_problems()[0].find("tri.obj") != std::string::npos, "problems listed");
+        check(other.scene().snapshot().entities == saved && !other.dirty(), "missing assets leave the references intact");
+        ok(other.save(base / "resaved.scene"));
+        auto text = std::ifstream(base / "resaved.scene"); const std::string body{std::istreambuf_iterator<char>(text), {}};
+        check(body.find("\"tri.obj\"") != std::string::npos, "saving keeps a missing reference");
+
+        // The file returns: a rescan picks it up.
+        fs::rename(base / "tri.obj.away", s.asset_folder() / "tri.obj");
+        fs::rename(base / "red.ppm.away", s.asset_folder() / "red.ppm");
+        ok(other.rescan_assets());
+        frame = other.frame(1); ok(frame);
+        check(other.asset_problems().empty() && frame.value()->objects.at(0).mesh.index >= renderer::ResourceRegistry::first_index, "rescan restores the model");
+    }
+
+    // No asset folder at all: the same placeholder, never a failure.
+    {
+        EditorSession other;
+        ok(other.load(scene_file));
+        auto frame = other.frame(1); ok(frame);
+        check(other.asset_problems().size() == 2 && frame.value()->objects.at(0).mesh == renderer::builtin_cube, "no project gives placeholders");
+    }
+
+    // A file changed on disk: Reload bumps the generation, the old handle goes stale and the new data is drawn.
+    ok(s.rescan_assets());
+    f = s.frame(1); ok(f);
+    const auto before_reload = f.value()->objects.at(0).mesh;
+    write_file(s.asset_folder() / "tri.obj", "v -1 0 0\nv 1 0 0\nv 0 3 0\nv 1 3 0\nf 1 2 3\nf 2 4 3\n");
+    const auto meshes = s.assets();
+    const auto tri = std::find_if(meshes.begin(), meshes.end(), [](const assets::AssetMetadata &a) { return a.path == "tri.obj"; });
+    ok(s.reload_asset(tri->id));
+    f = s.frame(1); ok(f);
+    const auto after_reload = f.value()->objects.at(0).mesh;
+    check(after_reload.index == before_reload.index && after_reload.generation == before_reload.generation + 1, "reload bumps the generation");
+    check(!s.resources().find(before_reload) && s.resources().find(after_reload)->indices.size() == 6, "stale handle finds nothing");
+
+    // GLB through the whole path, where the build has the parser.
+    if (assets::gltf_import_available()) {
+        write_file(source / "tri.glb", triangle_glb());
+        write_file(source / "fake.glb", "not a model");
+        const auto bad = s.import_asset(source / "fake.glb");
+        check(!bad && bad.error().message.find("Invalid GLB") != std::string::npos, "invalid GLB reported");
+        const auto glb = s.import_asset(source / "tri.glb"); ok(glb);
+        check(glb.value().warnings.size() == 1 && glb.value().warnings[0].find("animations") != std::string::npos, "import warnings returned");
+        ok(s.place_asset(glb.value().id));
+        const auto entity = s.selection();
+        check(near(s.scene().inspect(entity)->transform.position.y, -1), "bounds include the node transform");
+        const auto model = s.model(s.scene().inspect(entity)->components.mesh->mesh_asset);
+        check(model && model->submeshes.size() == 1 && model->submeshes[0].material.roughness == 0.25f, "model material kept");
+        f = s.frame(1); ok(f);
+        check(s.asset_problems().empty(), "GLB resolves");
+    }
+    fs::remove_all(base);
+}
 int main() {
     try { editing(); persistence(); camera_and_picking(); world_edits(); documents(); play_mode(); components_and_rendering(); hierarchy_editing(); physics_play();
-        acceptance_workflow(); external_camera_validation();
-        std::cout << "11 editor acceptance groups passed\n"; return 0;
+        acceptance_workflow(); external_camera_validation(); asset_workflow();
+        std::cout << "12 editor acceptance groups passed\n"; return 0;
     } catch (const std::exception &e) { std::cerr << e.what() << '\n'; return 1; }
 }

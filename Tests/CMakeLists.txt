@@ -44,7 +44,8 @@ if(TARGET engine::assets)
 		SOURCES Assets/asset_tests.cpp
 		LIBRARIES engine::assets)
 	# Fixtures are read in place from the source tree; mutating cases copy them to the working directory.
-	target_compile_definitions(asset_tests PRIVATE "GAMEENGINE_TEST_ASSETS_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/Assets\"")
+	target_compile_definitions(asset_tests PRIVATE "GAMEENGINE_TEST_ASSETS_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/Assets\""
+		"GAMEENGINE_TEST_RESOURCES_DIR=\"${GAMEENGINE_RESOURCES_DIR}\"")
 endif()
 
 if(TARGET engine::physics_scene AND TARGET engine::assets AND TARGET engine::renderer)

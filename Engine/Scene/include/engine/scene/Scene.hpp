@@ -43,10 +43,21 @@ struct WorldTransform {
 // undo/redo, play-mode copies and scene files carry them like the transform. Colors are sRGB in [0, 1]
 // as picked in the editor; hosts convert to linear for rendering.
 enum class BuiltinMesh : std::uint8_t { Cube = 1, Sphere = 2, Plane = 3 }; // Unit size, centered at the origin.
+// A reference to an imported asset: its stable ID, and its path in the asset folder for when the ID is gone
+// (a deleted .meta). Both empty, or both set. The scene never loads anything; hosts resolve references.
+struct AssetRef {
+    std::uint64_t id = 0;
+    std::string path;
+    bool empty() const noexcept { return id == 0; }
+    bool operator==(const AssetRef &) const = default;
+};
+inline constexpr std::size_t max_asset_path_bytes = 1024;
 struct MeshComponent {
-    BuiltinMesh mesh = BuiltinMesh::Cube;
+    BuiltinMesh mesh = BuiltinMesh::Cube; // Ignored while mesh_asset is set.
     Vec3 color{0.53, 0.78, 0.96};
-    double roughness = 0.65, metallic = 0;
+    double roughness = 0.65, metallic = 0; // Models carry their own; these apply to built-in meshes and OBJ files.
+    AssetRef mesh_asset; // Empty: draw the built-in mesh.
+    AssetRef texture;    // Empty: the model's own base color image, if any.
     bool operator==(const MeshComponent &) const = default;
 };
 // Looks down the entity's local -Z axis. The entity's world transform must be rigid (no scale) to render.
@@ -136,7 +147,7 @@ class Scene final {
     static Result<void> validate(const SceneSnapshot &);
 };
 // Text scene format, docs/architecture/006-scene-format.md. Writes the current version; reads 1..current.
-inline constexpr unsigned scene_format_version = 4;
+inline constexpr unsigned scene_format_version = 5;
 Result<void> write_scene(std::ostream &, const SceneSnapshot &);
 Result<SceneSnapshot> read_scene(std::istream &);
 } // namespace engine

@@ -14,13 +14,19 @@ struct MaterialHandle {
     std::uint32_t index = 0, generation = 0;
     bool operator==(const MaterialHandle &) const = default;
 };
+struct TextureHandle {
+    std::uint32_t index = 0, generation = 0;
+    bool operator==(const TextureHandle &) const = default;
+};
 // Built-in resources every renderer provides. Unit size, centered at the origin; the plane lies in XZ facing +Y.
 inline constexpr MeshHandle builtin_cube{1, 1}, builtin_sphere{2, 1}, builtin_plane{3, 1};
 inline constexpr MaterialHandle builtin_lit{1, 1}; // Lit PBR material driven by Surface.
-// Per-object parameters of the material. Color is linear, components in [0, 1].
+// Per-object parameters of the material. Color is linear, components in [0, 1]. For a model with its own materials
+// the color tints each part, and the part's roughness and metallic win. A texture replaces every base color image.
 struct Surface {
     Vec3 linear_color{1, 1, 1};
     double roughness = 0.65, metallic = 0;
+    TextureHandle texture; // Zero: none.
     bool operator==(const Surface &) const = default;
 };
 struct MeshBinding {
