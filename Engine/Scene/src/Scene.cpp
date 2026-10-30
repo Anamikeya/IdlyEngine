@@ -23,8 +23,18 @@ Result<void> validate_components(const Components &c) {
             return fail(ErrorCode::InvalidArgument, "Unknown built-in mesh");
         if (!color(m->color) || !unit(m->roughness) || !unit(m->metallic))
             return fail(ErrorCode::InvalidArgument, "Mesh color, roughness and metallic must be within [0, 1]");
-        if (!valid_ref(m->mesh_asset) || !valid_ref(m->texture))
+        if (!valid_ref(m->mesh_asset) || !valid_ref(m->texture) || !valid_ref(m->material))
             return fail(ErrorCode::InvalidArgument, "An asset reference needs both an ID and a short path, or neither");
+        if (!std::isfinite(m->uv_scale_u) || !std::isfinite(m->uv_scale_v) || m->uv_scale_u <= 0 || m->uv_scale_v <= 0)
+            return fail(ErrorCode::InvalidArgument, "Mesh UV scale must be positive");
+        if (m->material_slots.size() > max_material_slots)
+            return fail(ErrorCode::InvalidArgument, "Too many material slots on one mesh");
+        std::uint32_t next_slot = 0;
+        for (const auto &slot : m->material_slots) {
+            if (slot.slot < next_slot || slot.material.empty() || !valid_ref(slot.material))
+                return fail(ErrorCode::InvalidArgument, "Material slots need ascending indices and a material reference");
+            next_slot = slot.slot + 1;
+        }
     }
     if (const auto &cam = c.camera) {
         if (!std::isfinite(cam->vertical_fov_degrees) || cam->vertical_fov_degrees < 1 || cam->vertical_fov_degrees > 179 ||
@@ -33,14 +43,51 @@ Result<void> validate_components(const Components &c) {
             return fail(ErrorCode::InvalidArgument, "Camera needs a 1..179 degree field of view and 0 < near < far");
     }
     if (const auto &l = c.light) {
-        if (l->type != LightType::Directional && l->type != LightType::Point)
+        if (l->type != LightType::Directional && l->type != LightType::Point && l->type != LightType::Spot)
             return fail(ErrorCode::InvalidArgument, "Unknown light type");
+        if (!std::isfinite(l->inner_cone_degrees) || !std::isfinite(l->outer_cone_degrees) || l->inner_cone_degrees < 0 ||
+            l->inner_cone_degrees > l->outer_cone_degrees || l->outer_cone_degrees > 90)
+            return fail(ErrorCode::InvalidArgument, "Spot cones need 0 <= inner <= outer <= 90 degrees");
         if (!color(l->color) || !std::isfinite(l->intensity) || l->intensity < 0 || !std::isfinite(l->range) ||
             l->range <= 0)
             return fail(ErrorCode::InvalidArgument, "Light color must be within [0, 1], intensity >= 0 and range > 0");
     }
     const auto finite = [](const Vec3 &v) { return std::isfinite(v.x) && std::isfinite(v.y) && std::isfinite(v.z); };
     const auto nonnegative = [](double v) { return std::isfinite(v) && v >= 0; };
+    if (const auto &v = c.environment) {
+        if (v->source != EnvironmentSource::None && v->source != EnvironmentSource::Procedural && v->source != EnvironmentSource::Image)
+            return fail(ErrorCode::InvalidArgument, "Unknown environment source");
+        if (!valid_ref(v->image) || (v->source == EnvironmentSource::Image && v->image.empty()))
+            return fail(ErrorCode::InvalidArgument, "An image environment needs an image reference");
+        if (!color(v->sky_color) || !color(v->horizon_color) || !color(v->ground_color) || !nonnegative(v->intensity) ||
+            !std::isfinite(v->rotation_degrees) || !std::isfinite(v->ev100) || v->ev100 < -20 || v->ev100 > 30 ||
+            !(v->shadow_distance > 0) || !std::isfinite(v->shadow_distance))
+            return fail(ErrorCode::InvalidArgument, "Environment colors must be within [0, 1], intensity >= 0, EV100 within [-20, 30] and shadow distance > 0");
+        if (v->tone_mapping < ToneMapping::Aces || v->tone_mapping > ToneMapping::Linear || v->shadow_quality > ShadowQuality::High)
+            return fail(ErrorCode::InvalidArgument, "Unknown tone mapping or shadow quality");
+    }
+    const auto identifier = [](const std::string &text) {
+        return !text.empty() && text.size() <= 32 && std::all_of(text.begin(), text.end(), [](char ch) {
+            return (ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') || ch == '_';
+        });
+    };
+    if (c.behaviors.size() > max_behaviors_per_entity)
+        return fail(ErrorCode::InvalidArgument, "Too many behaviors on one entity");
+    for (std::size_t i = 0; i < c.behaviors.size(); ++i) {
+        const auto &b = c.behaviors[i];
+        if (!identifier(b.type) || b.values.size() > max_behavior_values)
+            return fail(ErrorCode::InvalidArgument, "A behavior needs a type of 1..32 of [a-z0-9_] and at most 32 values");
+        for (std::size_t j = 0; j < i; ++j)
+            if (c.behaviors[j].type == b.type)
+                return fail(ErrorCode::InvalidArgument, "A behavior type appears twice on one entity");
+        for (std::size_t j = 0; j < b.values.size(); ++j) {
+            if (!identifier(b.values[j].first) || !std::isfinite(b.values[j].second))
+                return fail(ErrorCode::InvalidArgument, "Behavior values need a key of 1..32 of [a-z0-9_] and a finite number");
+            for (std::size_t k = 0; k < j; ++k)
+                if (b.values[k].first == b.values[j].first)
+                    return fail(ErrorCode::InvalidArgument, "A behavior key appears twice");
+        }
+    }
     if (const auto &b = c.body) {
         if (b->kind != BodyKind::Static && b->kind != BodyKind::Kinematic && b->kind != BodyKind::Dynamic)
             return fail(ErrorCode::InvalidArgument, "Unknown rigid body kind");
@@ -87,6 +134,16 @@ void mirror(flecs::entity e, const std::vector<ColliderComponent> &colliders) {
 }
 std::vector<ColliderComponent> read_colliders(flecs::entity e) {
     return e.has<ColliderList>() ? e.get<ColliderList>().items : std::vector<ColliderComponent>{};
+}
+struct BehaviorList {
+    std::vector<BehaviorComponent> items;
+    bool operator==(const BehaviorList &) const = default;
+};
+void mirror(flecs::entity e, const std::vector<BehaviorComponent> &behaviors) {
+    mirror(e, behaviors.empty() ? std::nullopt : std::optional<BehaviorList>(BehaviorList{behaviors}));
+}
+std::vector<BehaviorComponent> read_behaviors(flecs::entity e) {
+    return e.has<BehaviorList>() ? e.get<BehaviorList>().items : std::vector<BehaviorComponent>{};
 }
 Result<std::map<EntityId, WorldTransform>> matrices(const SceneSnapshot &s) {
     if (s.entities.size() > Scene::max_entities)
@@ -162,6 +219,8 @@ Scene::Scene() {
     w.component<LightComponent>();
     w.component<RigidBodyComponent>();
     w.component<ColliderList>();
+    w.component<EnvironmentComponent>();
+    w.component<BehaviorList>();
 }
 std::optional<EntityRecord> Scene::inspect(EntityId id) const {
     if (!on_owner_thread())
@@ -172,7 +231,7 @@ std::optional<EntityRecord> Scene::inspect(EntityId id) const {
     const auto e = world_.native().entity(it->second);
     return EntityRecord{id, e.get<Name>().value, e.get<Parent>().value, e.get<Transform>(),
                         {read<MeshComponent>(e), read<CameraComponent>(e), read<LightComponent>(e),
-                         read<RigidBodyComponent>(e), read_colliders(e)}};
+                         read<RigidBodyComponent>(e), read_colliders(e), read<EnvironmentComponent>(e), read_behaviors(e)}};
 }
 SceneSnapshot Scene::snapshot() const {
     if (!on_owner_thread())
@@ -243,6 +302,8 @@ Result<void> Scene::commit(const SceneSnapshot &s) {
         mirror(e, record.components.light);
         mirror(e, record.components.body);
         mirror(e, record.components.colliders);
+        mirror(e, record.components.environment);
+        mirror(e, record.components.behaviors);
         const auto &desired_transform = transforms.value().at(record.id);
         if (!e.has<WorldTransform>() || e.get<WorldTransform>().matrix != desired_transform.matrix)
             e.set<WorldTransform>(desired_transform);

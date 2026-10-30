@@ -330,6 +330,7 @@ struct ScenePhysics::Impl {
 		desc.gravity_scale = e.body.gravity_scale;
 		desc.enable_sleep = e.body.enable_sleep;
 		desc.is_bullet = e.body.is_bullet;
+		desc.lock_rotation = e.body.lock_rotation;
 		desc.user_key = id;
 		auto body = world.create_body(desc);
 		if (!body) {
@@ -480,6 +481,7 @@ RigidBody to_rigid_body(const std::optional<RigidBodyComponent>& body) noexcept
 	out.gravity_scale = static_cast<float>(body->gravity_scale);
 	out.enable_sleep = body->enable_sleep;
 	out.is_bullet = body->is_bullet;
+	out.lock_rotation = body->lock_rotation;
 	return out;
 }
 
@@ -510,6 +512,9 @@ Collider to_collider(const ColliderComponent& collider) noexcept
 	// Box3D needs the sensor-event flag on both the sensor and its visitors.
 	out.enable_sensor_events = collider.events;
 	out.enable_contact_events = collider.events;
+	out.enable_hit_events = collider.events;
+	out.filter.category_bits = collider.category;
+	out.filter.mask_bits = collider.mask;
 	return out;
 }
 
@@ -722,6 +727,35 @@ std::optional<BodyState> ScenePhysics::body_state(EntityId entity) const
 	state.mass = w.mass(e->handle).value();
 	state.awake = w.is_awake(e->handle).value();
 	return state;
+}
+
+std::optional<RaycastHit> ScenePhysics::raycast(Vec3 origin, Vec3 direction, float max_distance, const RaycastFilter& filter) const
+{
+	const float squared = direction.x * direction.x + direction.y * direction.y + direction.z * direction.z;
+	if (!(max_distance > 0.0f) || !std::isfinite(max_distance) || !(std::abs(squared - 1.0f) < 1.0e-3f)) {
+		return std::nullopt;
+	}
+	RayFilter ray{filter.category, filter.mask, {}};
+	if (const auto* ignored = impl_->find(filter.ignore)) {
+		ray.ignore_body = ignored->handle;
+	}
+	const RayHit hit = impl_->world.cast_ray(origin, scale(direction, max_distance), ray);
+	if (!hit.hit) {
+		return std::nullopt;
+	}
+	return RaycastHit{hit.user_key, hit.point, hit.normal, hit.fraction * max_distance};
+}
+
+bool ScenePhysics::apply_impulse(EntityId entity, Vec3 impulse, Vec3 world_point)
+{
+	const auto* e = impl_->find(entity);
+	return e && impl_->world.apply_linear_impulse_at(e->handle, impulse, world_point) == PhysicsError::None;
+}
+
+bool ScenePhysics::set_linear_velocity(EntityId entity, Vec3 velocity)
+{
+	const auto* e = impl_->find(entity);
+	return e && e->body.type != BodyType::Static && impl_->world.set_linear_velocity(e->handle, velocity) == PhysicsError::None;
 }
 
 std::span<const CollisionEvent> ScenePhysics::events() const noexcept

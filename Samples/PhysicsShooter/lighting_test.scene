@@ -1,0 +1,45 @@
+ENGINE_SCENE 6 22 21
+ENTITY 1 0 "Environment" 0 0 0 0 0 0 1 1 1 1
+ENTITY 2 0 "Sun" 0 12 0 -0.39287742804503417 0.23644296300480327 0.10527118956908342 0.8824171510260543 1 1 1
+ENTITY 3 0 "Floor" 0 -0.5 0 0 0 0 1 24 1 24
+ENTITY 4 0 "Camera" 0 2.6 8.5 -0.12186934340514748 0.0 0.0 0.992546151641322 1 1 1
+ENTITY 5 0 "Sphere m0" -3.75 2.4 -1.5 0 0 0 1 1 1 1
+ENTITY 6 0 "Sphere r0" -3.75 0.8999999999999999 -1.5 0 0 0 1 1 1 1
+ENTITY 7 0 "Sphere m1" -2.25 2.4 -1.5 0 0 0 1 1 1 1
+ENTITY 8 0 "Sphere r1" -2.25 0.8999999999999999 -1.5 0 0 0 1 1 1 1
+ENTITY 9 0 "Sphere m2" -0.75 2.4 -1.5 0 0 0 1 1 1 1
+ENTITY 10 0 "Sphere r2" -0.75 0.8999999999999999 -1.5 0 0 0 1 1 1 1
+ENTITY 11 0 "Sphere m3" 0.75 2.4 -1.5 0 0 0 1 1 1 1
+ENTITY 12 0 "Sphere r3" 0.75 0.8999999999999999 -1.5 0 0 0 1 1 1 1
+ENTITY 13 0 "Sphere m4" 2.25 2.4 -1.5 0 0 0 1 1 1 1
+ENTITY 14 0 "Sphere r4" 2.25 0.8999999999999999 -1.5 0 0 0 1 1 1 1
+ENTITY 15 0 "Sphere m5" 3.75 2.4 -1.5 0 0 0 1 1 1 1
+ENTITY 16 0 "Sphere r5" 3.75 0.8999999999999999 -1.5 0 0 0 1 1 1 1
+ENTITY 17 0 "Textured Wood" -3.2 0.75 2 0 0 0 1 1.4 1.5 1.4
+ENTITY 18 0 "Textured Metal" -1.4000000000000001 0.75 2 0 0 0 1 1.4 1.5 1.4
+ENTITY 19 0 "Textured Plaster" 0.3999999999999999 0.75 2 0 0 0 1 1.4 1.5 1.4
+ENTITY 20 0 "Glass Panel" 3.2 1 2 0 0 0 1 2 2 0.1
+ENTITY 21 0 "Water Bottle" 5.6 0.65 2 0 0 0 1 5 5 5
+COMPONENTS 22
+ENVIRONMENT 1 image 26d86673787c1453 "environments/sky_1k.hdr" 0.32 0.5 0.82 0.78 0.84 0.92 0.3 0.27 0.24 22000 0 1 14.6 aces high 30 1 1
+LIGHT 2 directional 1 0.96 0.9 80000 10 25 35 1
+MESH 3 cube 1 1 1 0.65 0 - - 2bfd8d78f387bc8d "materials/concrete_floor.material" 8 8
+COLLIDER 3 box 0 0 0 0 0 0 1 0.5 0.5 0.5 0.5 0.5 1000 0.8 0 0 0 18446744073709551615 18446744073709551615
+CAMERA 4 50 0.1 200 1
+MESH 5 sphere 1 1 1 0.65 0 - - 6d07b7f1e50569df "materials/test_m0.material" 1 1
+MESH 6 sphere 1 1 1 0.65 0 - - bc583dc866fd4481 "materials/test_r0.material" 1 1
+MESH 7 sphere 1 1 1 0.65 0 - - 13e306f232fcca21 "materials/test_m1.material" 1 1
+MESH 8 sphere 1 1 1 0.65 0 - - 5437fc72109712cf "materials/test_r1.material" 1 1
+MESH 9 sphere 1 1 1 0.65 0 - - de8d19a8dbee5458 "materials/test_m2.material" 1 1
+MESH 10 sphere 1 1 1 0.65 0 - - 4973780b476a6447 "materials/test_r2.material" 1 1
+MESH 11 sphere 1 1 1 0.65 0 - - 2e4cb7b4ef9ac433 "materials/test_m3.material" 1 1
+MESH 12 sphere 1 1 1 0.65 0 - - 073af6447a0e3a03 "materials/test_r3.material" 1 1
+MESH 13 sphere 1 1 1 0.65 0 - - 6927e919b2927e92 "materials/test_m4.material" 1 1
+MESH 14 sphere 1 1 1 0.65 0 - - 9e8764be9123ad60 "materials/test_r4.material" 1 1
+MESH 15 sphere 1 1 1 0.65 0 - - 6209b43df378d9e3 "materials/test_m5.material" 1 1
+MESH 16 sphere 1 1 1 0.65 0 - - 22b39d97eb5aa9ad "materials/test_r5.material" 1 1
+MESH 17 cube 1 1 1 0.65 0 - - e720d6c5b2bef5f9 "materials/wood_crate.material" 1 1
+MESH 18 cube 1 1 1 0.65 0 - - ba69f0b1c0390008 "materials/metal_plate.material" 1 1
+MESH 19 cube 1 1 1 0.65 0 - - 3dd476cd8eddbb89 "materials/plaster_wall.material" 1 1
+MESH 20 cube 1 1 1 0.65 0 - - 8167b41c20f16e69 "materials/glass.material" 1 1
+MESH 21 cube 1 1 1 0.65 0 6a2acfb8df4bd25e "models/WaterBottle.glb" - - 1 1

@@ -75,12 +75,16 @@ struct AssetDatabase::Impl {
 		std::uint32_t revision = 1;
 		std::shared_ptr<const MeshData> mesh;
 		std::shared_ptr<const TextureData> texture;
+		std::shared_ptr<const MaterialData> material;
+		std::shared_ptr<const EnvironmentData> environment;
 
-		[[nodiscard]] bool cached() const noexcept { return mesh || texture; }
+		[[nodiscard]] bool cached() const noexcept { return mesh || texture || material || environment; }
 		void drop() noexcept
 		{
 			mesh.reset();
 			texture.reset();
+			material.reset();
+			environment.reset();
 		}
 	};
 
@@ -150,6 +154,77 @@ struct AssetDatabase::Impl {
 			return texture.error();
 		}
 		return std::make_shared<const TextureData>(std::move(texture.value()));
+	}
+
+	Result<std::shared_ptr<const MaterialData>> import_material(const AssetMetadata& meta) const
+	{
+		auto bytes = read(source_of(meta), 1024 * 1024);
+		if (!bytes) {
+			return bytes.error();
+		}
+		const auto& b = bytes.value();
+		auto material = parse_material(std::string_view(reinterpret_cast<const char*>(b.data()), b.size()));
+		if (!material) {
+			return material.error();
+		}
+		return std::make_shared<const MaterialData>(std::move(material.value()));
+	}
+
+	Result<std::shared_ptr<const EnvironmentData>> import_environment(const AssetMetadata& meta) const
+	{
+		auto bytes = read(source_of(meta), limits.max_source_bytes);
+		if (!bytes) {
+			return bytes.error();
+		}
+		auto environment = import_hdr(bytes.value(), limits);
+		if (!environment) {
+			return environment.error();
+		}
+		return std::make_shared<const EnvironmentData>(std::move(environment.value()));
+	}
+
+	// Writes bytes beside the target and moves them over it, so a failure leaves the old file.
+	Result<void> write_atomic(const fs::path& target, std::string_view text) const
+	{
+		fs::path temporary = target;
+		temporary += ".tmp";
+		{
+			std::ofstream out(temporary, std::ios::binary | std::ios::trunc);
+			out.write(text.data(), static_cast<std::streamsize>(text.size()));
+			if (!out) {
+				return fail(ErrorCode::InvalidState, "cannot write " + utf8(temporary));
+			}
+		}
+		std::error_code ec;
+		fs::rename(temporary, target, ec);
+		if (ec) {
+			fs::remove(temporary, ec);
+			return fail(ErrorCode::InvalidState, "cannot replace " + utf8(target));
+		}
+		return {};
+	}
+
+	AssetId new_id() const
+	{
+		std::random_device random;
+		AssetId id;
+		do {
+			id.value = (static_cast<std::uint64_t>(random()) << 32) | random();
+		} while (id.is_null() || by_id.contains(id));
+		return id;
+	}
+
+	// A free name beside `wanted`: "model.glb", then "model_1.glb", ...
+	fs::path free_name(const fs::path& wanted) const
+	{
+		std::error_code ec;
+		const fs::path stem = wanted.stem(), extension = wanted.extension(), folder = wanted.parent_path();
+		fs::path target = wanted;
+		for (int i = 1; fs::exists(target, ec) || fs::exists(fs::path(target) += ".meta", ec); ++i) {
+			target = folder / (fs::path(stem) += "_" + std::to_string(i));
+			target += extension;
+		}
+		return target;
 	}
 
 	template <typename T, typename Import>
@@ -233,7 +308,7 @@ Result<std::size_t> AssetDatabase::scan()
 		meta.path = std::move(path.value());
 		meta.type = asset_type_for(meta.path);
 		if (meta.type == AssetType::Unknown) {
-			issues.push_back({meta.path, "unsupported format (supported: .glb, .obj, .png, .jpg, .jpeg, .tga, .ppm)"});
+			issues.push_back({meta.path, "unsupported format (supported: .glb, .obj, .png, .jpg, .jpeg, .tga, .ppm, .material, .hdr)"});
 			continue;
 		}
 		meta.source_bytes = it->file_size(ec);
@@ -355,7 +430,95 @@ Result<TextureAsset> AssetDatabase::load_texture(AssetId id)
 		[this](const AssetMetadata& meta) { return impl_->import_texture(meta); });
 }
 
+Result<MaterialAsset> AssetDatabase::load_material(AssetId id)
+{
+	return impl_->load<MaterialData>(id, AssetType::Material, &Impl::Entry::material,
+		[this](const AssetMetadata& meta) { return impl_->import_material(meta); });
+}
+
+Result<EnvironmentAsset> AssetDatabase::load_environment(AssetId id)
+{
+	return impl_->load<EnvironmentData>(id, AssetType::Environment, &Impl::Entry::environment,
+		[this](const AssetMetadata& meta) { return impl_->import_environment(meta); });
+}
+
+Result<AssetId> AssetDatabase::create_material(std::string_view path, const MaterialData& material)
+{
+	if (auto valid = validate_material(material); !valid) {
+		return valid.error();
+	}
+	auto normalized = normalize_asset_path(path);
+	if (!normalized) {
+		return fail(ErrorCode::InvalidArgument, "the material name cannot be used: " + normalized.error().message);
+	}
+	if (asset_type_for(normalized.value()) != AssetType::Material) {
+		return fail(ErrorCode::InvalidArgument, "a material's file name must end in .material");
+	}
+	const fs::path target = impl_->free_name(impl_->root / from_utf8(normalized.value()));
+	std::error_code ec;
+	fs::create_directories(target.parent_path(), ec);
+	if (ec) {
+		return fail(ErrorCode::InvalidState, "cannot create the folder for " + normalized.value());
+	}
+	fs::path meta_path = target;
+	meta_path += ".meta";
+	const AssetId id = impl_->new_id();
+	const auto undo = [&] {
+		std::error_code ignored;
+		fs::remove(target, ignored);
+		fs::remove(meta_path, ignored);
+		(void)scan();
+	};
+	if (auto written = impl_->write_atomic(target, write_material(material)); !written) {
+		return written.error();
+	}
+	if (auto written = impl_->write_atomic(meta_path, write_meta(MetaFile{id, {}})); !written) {
+		undo();
+		return written.error();
+	}
+	if (auto scanned = scan(); !scanned) {
+		undo();
+		return scanned.error();
+	}
+	if (!find(id)) {
+		undo();
+		return fail(ErrorCode::InvalidArgument, normalized.value() + " could not be catalogued");
+	}
+	return id;
+}
+
+Result<void> AssetDatabase::save_material(AssetId id, const MaterialData& material)
+{
+	const auto it = impl_->by_id.find(id);
+	if (it == impl_->by_id.end()) {
+		return fail(ErrorCode::NotFound, "unknown asset id " + to_string(id));
+	}
+	if (it->second.meta.type != AssetType::Material) {
+		return fail(ErrorCode::InvalidArgument, it->second.meta.path + " is not a material");
+	}
+	if (auto valid = validate_material(material); !valid) {
+		return valid.error();
+	}
+	if (auto written = impl_->write_atomic(impl_->source_of(it->second.meta), write_material(material)); !written) {
+		return written.error();
+	}
+	it->second.material = std::make_shared<const MaterialData>(material);
+	it->second.state = AssetState::Loaded;
+	++it->second.revision;
+	return {};
+}
+
 Result<AssetId> AssetDatabase::import_file(const fs::path& source)
+{
+	return import_source(source, nullptr);
+}
+
+Result<AssetId> AssetDatabase::commit_import(const PreparedImport& prepared)
+{
+	return import_source(prepared.source, &prepared);
+}
+
+Result<AssetId> AssetDatabase::import_source(const fs::path& source, const PreparedImport* prepared)
 {
 	std::error_code ec;
 	if (!fs::is_regular_file(source, ec)) {
@@ -367,15 +530,32 @@ Result<AssetId> AssetDatabase::import_file(const fs::path& source)
 		const std::string extension = utf8(source.extension());
 		return fail(ErrorCode::InvalidArgument, "unsupported file type '" + extension + "'" +
 			(lowercase(extension) == ".gltf" ? " (re-export the model as a self-contained .glb)" : "") +
-			"; supported: .glb, .obj, .png, .jpg, .jpeg, .tga, .ppm");
+			"; supported: .glb, .obj, .png, .jpg, .jpeg, .tga, .ppm, .material, .hdr");
 	}
 	const auto load = [&](AssetId id) -> Result<void> {
-		if (type == AssetType::Mesh) {
-			auto mesh = load_mesh(id);
-			return mesh ? Result<void>{} : Result<void>(mesh.error());
+		if (prepared && prepared->type == type) {
+			// Decoded already; the settings are the defaults a fresh import uses.
+			auto& entry = impl_->by_id.at(id);
+			if (entry.meta.settings == ImportSettings{}) {
+				entry.mesh = prepared->mesh;
+				entry.texture = prepared->texture;
+				entry.material = prepared->material;
+				entry.environment = prepared->environment;
+				entry.state = AssetState::Loaded;
+				return {};
+			}
 		}
-		auto texture = load_texture(id);
-		return texture ? Result<void>{} : Result<void>(texture.error());
+		const auto done = [](const auto& loaded) { return loaded ? Result<void>{} : Result<void>(loaded.error()); };
+		switch (type) {
+		case AssetType::Mesh:
+			return done(load_mesh(id));
+		case AssetType::Material:
+			return done(load_material(id));
+		case AssetType::Environment:
+			return done(load_environment(id));
+		default:
+			return done(load_texture(id));
+		}
 	};
 	// Already in the asset folder: nothing to copy.
 	const fs::path canonical = fs::weakly_canonical(source, ec);
@@ -403,13 +583,7 @@ Result<AssetId> AssetDatabase::import_file(const fs::path& source)
 	if (!normalized) {
 		return fail(ErrorCode::InvalidArgument, "the file name cannot be used for an asset: " + normalized.error().message);
 	}
-	// A free name: "model.glb", then "model_1.glb", ...
-	const fs::path stem = from_utf8(normalized.value()).stem(), extension = from_utf8(normalized.value()).extension();
-	fs::path target = impl_->root / from_utf8(normalized.value());
-	for (int i = 1; fs::exists(target, ec) || fs::exists(fs::path(target) += ".meta", ec); ++i) {
-		target = impl_->root / (fs::path(stem) += "_" + std::to_string(i));
-		target += extension;
-	}
+	const fs::path target = impl_->free_name(impl_->root / from_utf8(normalized.value()));
 	fs::path meta_path = target;
 	meta_path += ".meta";
 	const auto undo = [&] {
@@ -421,11 +595,7 @@ Result<AssetId> AssetDatabase::import_file(const fs::path& source)
 	if (!fs::copy_file(source, target, ec) || ec) {
 		return fail(ErrorCode::InvalidState, "the file could not be copied into the asset folder: " + ec.message());
 	}
-	std::random_device random;
-	AssetId id;
-	do {
-		id.value = (static_cast<std::uint64_t>(random()) << 32) | random();
-	} while (id.is_null() || impl_->by_id.contains(id));
+	const AssetId id = impl_->new_id();
 	{
 		std::ofstream out(meta_path, std::ios::binary);
 		out << write_meta(MetaFile{id, {}});
@@ -463,12 +633,24 @@ std::vector<AssetIssue> AssetDatabase::validate_all()
 	for (const auto& [path, id] : impl_->by_path) {
 		const AssetMetadata& meta = impl_->by_id.at(id).meta;
 		std::optional<Error> error;
-		if (meta.type == AssetType::Mesh) {
-			if (auto r = impl_->import_mesh(meta); !r) {
+		const auto check = [&](const auto& r) {
+			if (!r) {
 				error = r.error();
 			}
-		} else if (auto r = impl_->import_texture(meta); !r) {
-			error = r.error();
+		};
+		switch (meta.type) {
+		case AssetType::Mesh:
+			check(impl_->import_mesh(meta));
+			break;
+		case AssetType::Material:
+			check(impl_->import_material(meta));
+			break;
+		case AssetType::Environment:
+			check(impl_->import_environment(meta));
+			break;
+		default:
+			check(impl_->import_texture(meta));
+			break;
 		}
 		if (error) {
 			failures.push_back({path, error->message});
@@ -517,7 +699,9 @@ std::size_t AssetDatabase::unload_unused()
 		(void)id;
 		const bool mesh_unused = e.mesh && e.mesh.use_count() == 1;
 		const bool texture_unused = e.texture && e.texture.use_count() == 1;
-		if (mesh_unused || texture_unused) {
+		const bool material_unused = e.material && e.material.use_count() == 1;
+		const bool environment_unused = e.environment && e.environment.use_count() == 1;
+		if (mesh_unused || texture_unused || material_unused || environment_unused) {
 			e.drop();
 			if (e.state == AssetState::Loaded) {
 				e.state = AssetState::Unloaded;
@@ -537,6 +721,74 @@ std::size_t AssetDatabase::cached_count() const noexcept
 const fs::path& AssetDatabase::root() const noexcept
 {
 	return impl_->root;
+}
+
+Result<PreparedImport> prepare_import(const fs::path& source, const ImportLimits& limits)
+{
+	std::error_code ec;
+	if (!fs::is_regular_file(source, ec)) {
+		return fail(ErrorCode::NotFound, "file not found: " + utf8(source));
+	}
+	const std::string name = utf8(source.filename());
+	PreparedImport prepared{source, asset_type_for(name), {}, {}, {}, {}};
+	if (prepared.type == AssetType::Unknown) {
+		return fail(ErrorCode::InvalidArgument, "unsupported file type '" + utf8(source.extension()) + "'");
+	}
+	const std::uintmax_t size = fs::file_size(source, ec);
+	if (ec) {
+		return fail(ErrorCode::NotFound, "file cannot be read: " + utf8(source));
+	}
+	if (size > limits.max_source_bytes) {
+		return fail(ErrorCode::InvalidArgument, name + " exceeds the size limit");
+	}
+	std::vector<std::uint8_t> bytes(static_cast<std::size_t>(size));
+	std::ifstream in(source, std::ios::binary);
+	if (!in || !in.read(reinterpret_cast<char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()))) {
+		return fail(ErrorCode::NotFound, "file cannot be read: " + utf8(source));
+	}
+	const std::string_view text(reinterpret_cast<const char*>(bytes.data()), bytes.size());
+	const auto failed = [&](const Error& error) {
+		Error named = error;
+		named.message = name + ": " + error.message;
+		return named;
+	};
+	switch (prepared.type) {
+	case AssetType::Mesh: {
+		auto mesh = has_extension(name, ".glb") ? import_glb(bytes, {}, limits) : import_obj(text, {}, limits);
+		if (!mesh) {
+			return failed(mesh.error());
+		}
+		prepared.mesh = std::make_shared<const MeshData>(std::move(mesh.value()));
+		break;
+	}
+	case AssetType::Material: {
+		auto material = parse_material(text);
+		if (!material) {
+			return failed(material.error());
+		}
+		prepared.material = std::make_shared<const MaterialData>(std::move(material.value()));
+		break;
+	}
+	case AssetType::Environment: {
+		auto environment = import_hdr(bytes, limits);
+		if (!environment) {
+			return failed(environment.error());
+		}
+		prepared.environment = std::make_shared<const EnvironmentData>(std::move(environment.value()));
+		break;
+	}
+	default: {
+		auto texture = has_extension(name, ".ppm")   ? import_ppm(bytes, {}, limits)
+			: has_extension(name, ".tga") ? import_tga(bytes, {}, limits)
+										  : import_image(bytes, {}, limits);
+		if (!texture) {
+			return failed(texture.error());
+		}
+		prepared.texture = std::make_shared<const TextureData>(std::move(texture.value()));
+		break;
+	}
+	}
+	return prepared;
 }
 
 } // namespace engine::assets

@@ -36,6 +36,8 @@ enum class AssetType : std::uint8_t {
 	Unknown,
 	Mesh,    // .glb, .obj
 	Texture, // .png, .jpg, .jpeg, .tga, .ppm
+	Material, // .material: text, see parse_material
+	Environment, // .hdr: equirectangular radiance
 };
 
 [[nodiscard]] const char* to_string(AssetType type) noexcept;
@@ -74,6 +76,9 @@ struct MeshVertex {
 	std::array<float, 3> position{};
 	std::array<float, 3> normal{};
 	std::array<float, 2> uv{};
+	// xyz points along +u. w is the handedness: cross(normal, xyz) * w is the bitangent, which points at the top of
+	// the image (glTF's convention), so a normal map's +Y leans towards the image's first row.
+	std::array<float, 4> tangent{1.0f, 0.0f, 0.0f, 1.0f};
 
 	friend bool operator==(const MeshVertex&, const MeshVertex&) = default;
 };
@@ -83,13 +88,29 @@ struct Bounds {
 	std::array<float, 3> max{};
 };
 
-// Metallic-roughness values of one part of a model. Colors are linear, as glTF stores them.
+enum class AlphaMode : std::uint8_t {
+	Opaque,
+	Mask,  // Fragments below the cutoff are discarded.
+	Blend, // Alpha blended; does not cast shadows.
+};
+
+// Metallic-roughness material of one part of a model. Colors are linear, as glTF stores them.
 struct MeshMaterial {
 	std::array<float, 4> base_color{1.0f, 1.0f, 1.0f, 1.0f};
 	float roughness = 1.0f;
 	float metallic = 1.0f;
-	// Index into MeshData::images, or -1.
-	int image = -1;
+	std::array<float, 3> emissive{0.0f, 0.0f, 0.0f}; // Emissive factor times KHR_materials_emissive_strength.
+	float normal_scale = 1.0f;
+	float occlusion_strength = 1.0f;
+	AlphaMode alpha_mode = AlphaMode::Opaque;
+	float alpha_cutoff = 0.5f;
+	bool double_sided = false;
+	// Indices into MeshData::images, or -1. Base color and emissive images are sRGB, the others linear.
+	int image = -1; // Base color.
+	int metallic_roughness_image = -1;
+	int normal_image = -1;
+	int occlusion_image = -1;
+	int emissive_image = -1;
 };
 
 // A run of the index list drawn with one material.
@@ -106,7 +127,7 @@ struct MeshData {
 	std::vector<MeshVertex> vertices;
 	std::vector<std::uint32_t> indices;
 	Bounds bounds;
-	// GLB models: the parts and their embedded base color images. Empty for sources without materials (OBJ).
+	// GLB models: the parts and their embedded images. Empty for sources without materials (OBJ).
 	std::vector<SubMesh> submeshes;
 	std::vector<std::shared_ptr<const TextureData>> images;
 	// Features of the source that were ignored, for the host to show when the asset is imported.
@@ -128,6 +149,44 @@ struct TextureData {
 	TextureFormat format = TextureFormat::Rgba8;
 	bool srgb = true;
 	std::vector<std::uint8_t> pixels;
+};
+
+// Equirectangular radiance, width == 2 * height, rows top to bottom, 3 linear floats per pixel.
+struct EnvironmentData {
+	std::uint32_t width = 0;
+	std::uint32_t height = 0;
+	std::vector<float> pixels;
+};
+
+// A texture a material names: stable id, and the path for when the id is gone. Both empty, or both set.
+struct MaterialTexture {
+	AssetId id;
+	std::string path;
+
+	[[nodiscard]] bool empty() const noexcept { return id.is_null(); }
+	friend bool operator==(const MaterialTexture&, const MaterialTexture&) = default;
+};
+
+// A reusable material asset (.material). Colors are sRGB in [0, 1] as picked in the editor; hosts convert them.
+struct MaterialData {
+	std::array<double, 4> base_color{1.0, 1.0, 1.0, 1.0}; // Alpha is linear.
+	double metallic = 0.0;
+	double roughness = 0.65;
+	std::array<double, 3> emissive{0.0, 0.0, 0.0};
+	double emissive_strength = 1.0; // Multiplies emissive; above 1 it blooms.
+	double normal_scale = 1.0;
+	double occlusion_strength = 1.0;
+	AlphaMode alpha_mode = AlphaMode::Opaque;
+	double alpha_cutoff = 0.5;
+	bool double_sided = false;
+	std::array<double, 2> uv_scale{1.0, 1.0};
+	MaterialTexture base_color_map;
+	MaterialTexture metallic_roughness_map;
+	MaterialTexture normal_map;
+	MaterialTexture occlusion_map;
+	MaterialTexture emissive_map;
+
+	friend bool operator==(const MaterialData&, const MaterialData&) = default;
 };
 
 } // namespace engine::assets

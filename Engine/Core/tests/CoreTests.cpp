@@ -42,7 +42,7 @@ void creation_and_flecs() {
         ++count;
     });
     check(count == 1, "Entity not stored in Flecs");
-    check(registry().size() == 12, "Registry incomplete");
+    check(registry().size() == 14, "Registry incomplete");
     check(describe(Command{DeleteEntity{id}}).name == "entity.delete", "Typed registry mismatch");
 }
 void permissions_and_revision() {
@@ -197,9 +197,9 @@ void physics_components() {
     // Text round trip, written as documented.
     std::ostringstream out;
     ok(write_scene(out, s.snapshot()));
-    check(out.str().find("BODY 1 kinematic 1 0.5 0 0 0 0 0 0.25 1 0 0\n") != std::string::npos &&
-              out.str().find("COLLIDER 1 box 0 0 0 0 0 0 1 5 0.5 5 0.5 0.5 1000 0.75 0 0 0\n") != std::string::npos &&
-              out.str().find("COLLIDER 1 capsule 0 1 0 0 0 0 1 0.5 0.5 0.5 0.25 0.5 1000 0.59999999999999998 0 1 1\n") != std::string::npos,
+    check(out.str().find("BODY 1 kinematic 1 0.5 0 0 0 0 0 0.25 1 0 0 0\n") != std::string::npos &&
+              out.str().find("COLLIDER 1 box 0 0 0 0 0 0 1 5 0.5 5 0.5 0.5 1000 0.75 0 0 0 18446744073709551615 18446744073709551615\n") != std::string::npos &&
+              out.str().find("COLLIDER 1 capsule 0 1 0 0 0 0 1 0.5 0.5 0.5 0.25 0.5 1000 0.59999999999999998 0 1 1 18446744073709551615 18446744073709551615\n") != std::string::npos,
           "Physics records not written as documented");
     std::istringstream in(out.str());
     auto loaded = read_scene(in);
@@ -225,18 +225,18 @@ void physics_components() {
     check(parsed.value().entities[0].components.colliders.size() == 2 && parsed.value().entities[0].components.body,
           "Several colliders and one body per entity");
     // The example in docs/architecture/006-scene-format.md, verbatim: it loads and is what the writer emits.
-    const std::string documented = "ENGINE_SCENE 5 5 4\n"
+    const std::string documented = "ENGINE_SCENE 6 5 4\n"
                                    "ENTITY 1 0 \"Ball\" 0 0.5 0 0 0 0 1 1 1 1\n"
                                    "ENTITY 2 0 \"Sun\" 0 4 0 0 0 0 1 1 1 1\n"
                                    "ENTITY 3 0 \"Camera\" 0 1.5 6 0 0 0 1 1 1 1\n"
                                    "ENTITY 4 0 \"Floor\" 0 0 0 0 0 0 1 10 1 10\n"
                                    "COMPONENTS 6\n"
-                                   "MESH 1 sphere 1 0.25 0.125 0.5 0 - -\n"
-                                   "BODY 1 dynamic 0 0 0 0 0 0 0 0 1 1 0\n"
-                                   "COLLIDER 1 sphere 0 0 0 0 0 0 1 0.5 0.5 0.5 0.5 0.5 1000 0.75 0 0 0\n"
-                                   "LIGHT 2 directional 1 1 1 100000 10\n"
+                                   "MESH 1 sphere 1 0.25 0.125 0.5 0 - - - 1 1\n"
+                                   "BODY 1 dynamic 0 0 0 0 0 0 0 0 1 1 0 0\n"
+                                   "COLLIDER 1 sphere 0 0 0 0 0 0 1 0.5 0.5 0.5 0.5 0.5 1000 0.75 0 0 0 18446744073709551615 18446744073709551615\n"
+                                   "LIGHT 2 directional 1 1 1 100000 10 25 35 0\n"
                                    "CAMERA 3 60 0.10000000000000001 1000 1\n"
-                                   "COLLIDER 4 box 0 -0.5 0 0 0 0 1 0.5 0.5 0.5 0.5 0.5 1000 0.75 0 0 0\n";
+                                   "COLLIDER 4 box 0 -0.5 0 0 0 0 1 0.5 0.5 0.5 0.5 0.5 1000 0.75 0 0 0 18446744073709551615 18446744073709551615\n";
     std::istringstream example(documented);
     auto example_scene = read_scene(example);
     ok(example_scene);
@@ -339,9 +339,9 @@ void components() {
     // Exact text round trip with every component kind, and a deterministic writer.
     std::ostringstream out;
     ok(write_scene(out, s.snapshot()));
-    check(out.str().find("MESH 1 sphere 1 0 0 0.25 0.5 - -\n") != std::string::npos &&
+    check(out.str().find("MESH 1 sphere 1 0 0 0.25 0.5 - - - 1 1\n") != std::string::npos &&
               out.str().find("CAMERA 2 45 0.5 200 0\n") != std::string::npos &&
-              out.str().find("LIGHT 2 point 1 0.5 0.25 1500 4\n") != std::string::npos,
+              out.str().find("LIGHT 2 point 1 0.5 0.25 1500 4 25 35 0\n") != std::string::npos,
           "Component lines not written as documented");
     std::istringstream in(out.str());
     auto loaded = read_scene(in);
@@ -377,7 +377,7 @@ void asset_references() {
     // References are part of the record: undo, snapshot and exact text round trip.
     std::ostringstream out;
     ok(write_scene(out, s.snapshot()));
-    check(out.str().find("6a1f0c3e9b2d4a01 \"models/hel \\\"met\\\".glb\" 0000000000000abc \"t/wood.png\"\n") != std::string::npos,
+    check(out.str().find("6a1f0c3e9b2d4a01 \"models/hel \\\"met\\\".glb\" 0000000000000abc \"t/wood.png\" - 1 1\n") != std::string::npos,
           "Asset references not written as documented");
     std::istringstream in(out.str());
     auto loaded = read_scene(in);
@@ -416,11 +416,144 @@ void asset_references() {
     std::istringstream v4_extra("ENGINE_SCENE 4 2 1 ENTITY 1 0 \"A\" 0 0 0 0 0 0 1 1 1 1 COMPONENTS 1 MESH 1 sphere 1 1 1 0.5 0 - -");
     check(!read_scene(v4_extra), "Reference fields accepted in a version 4 file");
 }
+void format_v6() {
+    Scene scene;
+    CommandBus b(scene);
+    Components all;
+    MeshComponent mesh;
+    mesh.material = {0x1122334455667788, "materials/a b.material"};
+    mesh.material_slots = {{0, {1, "materials/one.material"}}, {3, {2, "materials/two.material"}}};
+    mesh.uv_scale_u = 2;
+    mesh.uv_scale_v = 0.5;
+    all.mesh = mesh;
+    LightComponent spot;
+    spot.type = LightType::Spot;
+    spot.inner_cone_degrees = 10;
+    spot.outer_cone_degrees = 20;
+    spot.cast_shadows = true;
+    all.light = spot;
+    RigidBodyComponent body;
+    body.lock_rotation = true;
+    all.body = body;
+    ColliderComponent collider;
+    collider.category = 4;
+    collider.mask = 3;
+    all.colliders = {collider};
+    EnvironmentComponent environment;
+    environment.source = EnvironmentSource::Image;
+    environment.image = {9, "environments/sky.hdr"};
+    environment.tone_mapping = ToneMapping::PbrNeutral;
+    environment.shadow_quality = ShadowQuality::High;
+    environment.ev100 = 7.5;
+    environment.bloom = false;
+    all.environment = environment;
+    all.behaviors = {{"health", {{"max", 50}, {"regen", 0.25}}}, {"target", {}}};
+    auto created = b.execute(owner, 0, CreateEntity{"All", {}, 0, 0, all});
+    ok(created);
+    const auto id = created.value().created.front();
+    check(scene.inspect(id)->components == all, "Every new component is stored");
+    // Round trip, exact and deterministic.
+    std::ostringstream out;
+    ok(write_scene(out, scene.snapshot()));
+    const std::string text = out.str();
+    for (const char *expected : {"ENGINE_SCENE 6 ", "MATSLOT 1 3 0000000000000002 \"materials/two.material\"\n",
+                                 "LIGHT 1 spot 1 1 1 100000 10 10 20 1\n", " 1 0 1\n", "ENVIRONMENT 1 image 0000000000000009 \"environments/sky.hdr\" ",
+                                 " 7.5 pbr_neutral high 60 1 0\n", "BEHAVIOR 1 health 2 max 50 regen 0.25\n", "BEHAVIOR 1 target 0\n", " 0 0 4 3\n"})
+        check(text.find(expected) != std::string::npos, expected);
+    std::istringstream in(text);
+    auto parsed = read_scene(in);
+    ok(parsed);
+    check(parsed.value().entities[0].components == all, "Format 6 round trip");
+    std::ostringstream again;
+    ok(write_scene(again, parsed.value()));
+    check(again.str() == text, "Format 6 writes the same text twice");
+    // Records in any order: a slot before its mesh.
+    std::istringstream shuffled("ENGINE_SCENE 6 2 1 ENTITY 1 0 \"A\" 0 0 0 0 0 0 1 1 1 1 COMPONENTS 2 MATSLOT 1 2 0000000000000002 \"b\" MESH 1 cube 1 1 1 0.5 0 - - - 1 1");
+    auto reordered = read_scene(shuffled);
+    ok(reordered);
+    check(reordered.value().entities[0].components.mesh->material_slots.size() == 1, "A slot record may come first");
+    // New commands, undoable.
+    ok(b.execute(owner, b.revision(), SetBehaviors{id, {}}));
+    check(scene.inspect(id)->components.behaviors.empty(), "Behaviors removed");
+    ok(b.undo(owner, b.revision()));
+    check(scene.inspect(id)->components.behaviors.size() == 2, "Behaviors restored by undo");
+    ok(b.execute(owner, b.revision(), SetEnvironment{id, std::nullopt}));
+    check(!scene.inspect(id)->components.environment, "Environment removed");
+    ok(b.undo(owner, b.revision()));
+    check(scene.inspect(id)->components.environment == environment, "Environment restored by undo");
+    // Validation guards commands.
+    const auto rejected = [&](Components c) { error(b.execute(owner, b.revision(), CreateEntity{"Bad", {}, 0, 0, std::move(c)}), ErrorCode::InvalidArgument); };
+    MeshComponent bad_uv; bad_uv.uv_scale_u = 0;
+    rejected({bad_uv, {}, {}});
+    MeshComponent bad_slots; bad_slots.material_slots = {{1, {1, "a"}}, {1, {2, "b"}}};
+    rejected({bad_slots, {}, {}});
+    MeshComponent empty_slot; empty_slot.material_slots = {{0, {}}};
+    rejected({empty_slot, {}, {}});
+    MeshComponent half_ref; half_ref.material = {0, "a"};
+    rejected({half_ref, {}, {}});
+    LightComponent wide; wide.type = LightType::Spot; wide.outer_cone_degrees = 100;
+    rejected({{}, {}, wide});
+    LightComponent crossed; crossed.inner_cone_degrees = 40; crossed.outer_cone_degrees = 30;
+    rejected({{}, {}, crossed});
+    const auto with_environment = [&](EnvironmentComponent e) { Components c; c.environment = e; rejected(c); };
+    EnvironmentComponent no_image; no_image.source = EnvironmentSource::Image;
+    with_environment(no_image);
+    EnvironmentComponent dark; dark.intensity = -1;
+    with_environment(dark);
+    EnvironmentComponent far_ev; far_ev.ev100 = 99;
+    with_environment(far_ev);
+    EnvironmentComponent no_distance; no_distance.shadow_distance = 0;
+    with_environment(no_distance);
+    const auto with_behaviors = [&](std::vector<BehaviorComponent> list) { Components c; c.behaviors = std::move(list); rejected(c); };
+    with_behaviors({{"Bad Type", {}}});
+    with_behaviors({{"", {}}});
+    with_behaviors({{"same", {}}, {"same", {}}});
+    with_behaviors({{"a", {{"k", 1}, {"k", 2}}}});
+    with_behaviors({{"a", {{"k", std::nan("")}}}});
+    with_behaviors({{"a", {{"Bad Key", 1}}}});
+    // Malformed records are refused by the reader.
+    const std::string head = "ENGINE_SCENE 6 2 1 ENTITY 1 0 \"A\" 0 0 0 0 0 0 1 1 1 1 ";
+    for (const std::string &record : std::vector<std::string>{
+             "COMPONENTS 1 MESH 1 cube 1 1 1 0.5 0 - -",                         // Version 5's fields only.
+             "COMPONENTS 1 MESH 1 cube 1 1 1 0.5 0 - - - 0 1",                   // UV scale.
+             "COMPONENTS 1 LIGHT 1 cone 1 1 1 1 1 10 20 0",
+             "COMPONENTS 1 LIGHT 1 spot 1 1 1 1 1 10 20",
+             "COMPONENTS 1 LIGHT 1 spot 1 1 1 1 1 10 20 2",
+             "COMPONENTS 1 BODY 1 dynamic 0 0 0 0 0 0 0 0 1 1 0",                // No lock flag.
+             "COMPONENTS 1 COLLIDER 1 box 0 0 0 0 0 0 1 1 1 1 1 1 1000 0.6 0 0 0", // No filter.
+             "COMPONENTS 1 MATSLOT 1 0 -",
+             "COMPONENTS 2 MATSLOT 1 0 0000000000000001 \"a\" MATSLOT 1 0 0000000000000002 \"b\"",
+             "COMPONENTS 1 ENVIRONMENT 1 candle - 1 1 1 1 1 1 1 1 1 1 0 1 15 aces medium 60 1 1",
+             "COMPONENTS 1 ENVIRONMENT 1 procedural - 1 1 1 1 1 1 1 1 1 1 0 1 15 blurry medium 60 1 1",
+             "COMPONENTS 1 ENVIRONMENT 1 procedural - 1 1 1 1 1 1 1 1 1 1 0 1 15 aces ultra 60 1 1",
+             "COMPONENTS 1 ENVIRONMENT 1 procedural - 1 1 1",
+             "COMPONENTS 2 ENVIRONMENT 1 procedural - 1 1 1 1 1 1 1 1 1 1 0 1 15 aces medium 60 1 1 ENVIRONMENT 1 procedural - 1 1 1 1 1 1 1 1 1 1 0 1 15 aces medium 60 1 1",
+             "COMPONENTS 1 BEHAVIOR 1 a 1 k",
+             "COMPONENTS 1 BEHAVIOR 1 a 99 k 1",
+             "COMPONENTS 1 BEHAVIOR 1 a 1 k nan",
+             "COMPONENTS 1 BEHAVIOR 7 a 0"}) {
+        std::istringstream bad(head + record);
+        check(!read_scene(bad), ("Malformed version 6 record accepted: " + record).c_str());
+    }
+    // New records and values do not exist in older versions.
+    for (const char *old : {"ENGINE_SCENE 5 2 1 ENTITY 1 0 \"A\" 0 0 0 0 0 0 1 1 1 1 COMPONENTS 1 BEHAVIOR 1 a 0",
+                            "ENGINE_SCENE 5 2 1 ENTITY 1 0 \"A\" 0 0 0 0 0 0 1 1 1 1 COMPONENTS 1 MATSLOT 1 0 0000000000000001 \"a\"",
+                            "ENGINE_SCENE 5 2 1 ENTITY 1 0 \"A\" 0 0 0 0 0 0 1 1 1 1 COMPONENTS 1 LIGHT 1 spot 1 1 1 1 1"}) {
+        std::istringstream bad(old);
+        check(!read_scene(bad), old);
+    }
+    // Version 5 records keep their meaning, and the defaults fill the new fields.
+    std::istringstream v5("ENGINE_SCENE 5 2 1 ENTITY 1 0 \"A\" 0 0 0 0 0 0 1 1 1 1 COMPONENTS 3 MESH 1 cube 1 1 1 0.5 0 - - BODY 1 dynamic 0 0 0 0 0 0 0 0 1 1 0 LIGHT 1 point 1 1 1 5 6");
+    auto loaded = read_scene(v5);
+    ok(loaded);
+    const auto &old_components = loaded.value().entities[0].components;
+    check(old_components.mesh->material.empty() && old_components.mesh->uv_scale_u == 1 && !old_components.body->lock_rotation && !old_components.light->cast_shadows, "Version 5 defaults");
+}
 void malformed_serialization() {
     for (const auto *text :
          {"WRONG 1 1 0", "ENGINE_SCENE 2 1 0", "ENGINE_SCENE 1 0 0", "ENGINE_SCENE 1 1 100001",
           "ENGINE_SCENE 1 1 0 trailing", "ENGINE_SCENE 1 2 1 ENTITY 1 0 \"x\" 0 0",
-          "ENGINE_SCENE 0 1 0", "ENGINE_SCENE 6 1 0 COMPONENTS 0", "ENGINE_SCENE 2 1 0 COMPONENTS",
+          "ENGINE_SCENE 0 1 0", "ENGINE_SCENE 7 1 0 COMPONENTS 0", "ENGINE_SCENE 2 1 0 COMPONENTS",
           "ENGINE_SCENE 2 1 0 COMPONENTS -1", "ENGINE_SCENE 2 1 0 COMPONENTS 1 MESH 1",
           "ENGINE_SCENE 2 1 0 COMPONENTS 0 trailing", "ENGINE_SCENE 1 1 0 COMPONENTS 0"}) {
         std::istringstream in(text);
@@ -683,6 +816,7 @@ void timing_extremes() {
 int main() {
     const std::pair<const char *, std::function<void()>> tests[] = {
         {"creation_and_flecs", creation_and_flecs},
+        {"format_v6", format_v6},
         {"permissions_and_revision", permissions_and_revision},
         {"atomic_batch", atomic_batch},
         {"hierarchy_and_cycles", hierarchy_and_cycles},

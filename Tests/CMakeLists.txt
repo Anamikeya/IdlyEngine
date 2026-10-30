@@ -21,6 +21,15 @@ if(TARGET engine::physics_scene)
 		LIBRARIES engine::physics_scene)
 endif()
 
+# The game without a window: real Scene, CommandBus and Box3D, and the sample's real scene file.
+if(TARGET engine::gameplay)
+	gameengine_add_test_executable(gameplay_tests
+		LABELS gameplay integration
+		SOURCES Gameplay/gameplay_tests.cpp
+		LIBRARIES engine::gameplay)
+	target_compile_definitions(gameplay_tests PRIVATE "GAMEENGINE_SAMPLES_DIR=\"${CMAKE_SOURCE_DIR}/Samples\"")
+endif()
+
 if(TARGET engine::networking)
 	gameengine_add_test_executable(networking_tests
 		LABELS networking unit
@@ -45,7 +54,7 @@ if(TARGET engine::assets)
 		LIBRARIES engine::assets)
 	# Fixtures are read in place from the source tree; mutating cases copy them to the working directory.
 	target_compile_definitions(asset_tests PRIVATE "GAMEENGINE_TEST_ASSETS_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/Assets\""
-		"GAMEENGINE_TEST_RESOURCES_DIR=\"${GAMEENGINE_RESOURCES_DIR}\"")
+		"GAMEENGINE_TEST_RESOURCES_DIR=\"${GAMEENGINE_RESOURCES_DIR}\"" "GAMEENGINE_TEST_SAMPLES_DIR=\"${CMAKE_SOURCE_DIR}/Samples\"")
 endif()
 
 if(TARGET engine::physics_scene AND TARGET engine::assets AND TARGET engine::renderer)

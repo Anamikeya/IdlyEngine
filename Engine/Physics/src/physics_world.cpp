@@ -401,6 +401,9 @@ PhysicsResult<BodyHandle> PhysicsWorld::create_body(const BodyDesc& desc)
 	def.gravityScale = desc.gravity_scale;
 	def.enableSleep = desc.enable_sleep;
 	def.isBullet = desc.is_bullet;
+	def.motionLocks.angularX = desc.lock_rotation;
+	def.motionLocks.angularY = desc.lock_rotation;
+	def.motionLocks.angularZ = desc.lock_rotation;
 
 	const b3BodyId id = b3CreateBody(impl_->world, &def);
 	if (B3_IS_NULL(id)) {
@@ -616,6 +619,83 @@ PhysicsError PhysicsWorld::apply_linear_impulse(BodyHandle body, Vec3 impulse)
 	}
 	b3Body_ApplyLinearImpulseToCenter(id, to_b3(impulse), true);
 	return PhysicsError::None;
+}
+
+PhysicsError PhysicsWorld::apply_linear_impulse_at(BodyHandle body, Vec3 impulse, Vec3 world_point)
+{
+	const b3BodyId id = decode(body);
+	if (!valid() || !impl_->owns(id)) {
+		return PhysicsError::InvalidBody;
+	}
+	if (!is_finite(impulse) || !is_finite(world_point) || b3Body_GetType(id) != b3_dynamicBody) {
+		return PhysicsError::InvalidArgument;
+	}
+	b3Body_ApplyLinearImpulse(id, to_b3(impulse), b3ToPos(to_b3(world_point)), true);
+	return PhysicsError::None;
+}
+
+namespace {
+
+// b3World_CastRay reports every candidate; returning the fraction clips the ray there, -1 skips the shape.
+struct ClosestRay {
+	b3BodyId ignore = b3_nullBodyId;
+	bool has_ignore = false;
+	b3ShapeId shape = b3_nullShapeId;
+	b3Pos point{};
+	b3Vec3 normal{};
+	float fraction = 1.0f;
+	bool hit = false;
+
+	static float report(b3ShapeId shape_id, b3Pos point, b3Vec3 normal, float fraction, std::uint64_t, int, int, void* context)
+	{
+		auto& self = *static_cast<ClosestRay*>(context);
+		if (b3Shape_IsSensor(shape_id)) {
+			return -1.0f;
+		}
+		if (self.has_ignore) {
+			const b3BodyId body = b3Shape_GetBody(shape_id);
+			if (body.index1 == self.ignore.index1 && body.world0 == self.ignore.world0 && body.generation == self.ignore.generation) {
+				return -1.0f;
+			}
+		}
+		self.shape = shape_id;
+		self.point = point;
+		self.normal = normal;
+		self.fraction = fraction;
+		self.hit = true;
+		return fraction;
+	}
+};
+
+} // namespace
+
+RayHit PhysicsWorld::cast_ray(Vec3 origin, Vec3 translation, const RayFilter& filter) const
+{
+	RayHit out;
+	if (!valid() || !is_finite(origin) || !is_finite(translation)) {
+		return out;
+	}
+	b3QueryFilter query = b3DefaultQueryFilter();
+	query.categoryBits = filter.category_bits;
+	query.maskBits = filter.mask_bits;
+	ClosestRay closest;
+	if (!filter.ignore_body.is_null()) {
+		closest.ignore = decode(filter.ignore_body);
+		closest.has_ignore = true;
+	}
+	b3World_CastRay(impl_->world, b3ToPos(to_b3(origin)), to_b3(translation), query, &ClosestRay::report, &closest);
+	if (!closest.hit) {
+		return out;
+	}
+	const b3BodyId body = b3Shape_GetBody(closest.shape);
+	out.hit = true;
+	out.body = encode(body);
+	out.collider = encode(closest.shape);
+	out.user_key = impl_->key_of(body);
+	out.point = from_b3(b3ToVec3(closest.point));
+	out.normal = from_b3(closest.normal);
+	out.fraction = closest.fraction;
+	return out;
 }
 
 PhysicsResult<float> PhysicsWorld::mass(BodyHandle body) const
