@@ -3,24 +3,26 @@
 #include <engine/commands/CommandBus.hpp>
 #include <limits>
 #include <map>
+#include <optional>
+#include <string>
 #include <type_traits>
 namespace engine::commands {
 namespace {
 constexpr std::array<CommandDescriptor, 14> descriptors{
-    {{"entity.create", Capability::Edit, "name, transform, parent, optional new stable ID, components"},
-     {"entity.delete", Capability::Edit, "stable ID; deletes subtree"},
-     {"entity.rename", Capability::Edit, "stable ID, name"},
-     {"transform.set", Capability::Edit, "stable ID, finite local TRS"},
-     {"hierarchy.reparent", Capability::Edit, "stable ID, parent; preserves local transform"},
-     {"scene.replace", Capability::Edit, "validated versioned snapshot"},
-     {"component.mesh.set", Capability::Edit, "stable ID, built-in mesh and surface, or none to remove"},
-     {"component.camera.set", Capability::Edit, "stable ID, perspective lens and primary flag, or none to remove"},
-     {"component.light.set", Capability::Edit, "stable ID, light type, color, intensity, range, or none to remove"},
-     {"entity.duplicate", Capability::Edit, "stable ID, optional name for the copy; copies the subtree with new IDs"},
-     {"component.body.set", Capability::Edit, "stable ID, rigid body kind and initial motion, or none to remove"},
-     {"component.colliders.set", Capability::Edit, "stable ID, complete collider list (empty removes all)"},
-     {"component.environment.set", Capability::Edit, "stable ID, environment lighting, exposure and shadow settings, or none to remove"},
-     {"component.behaviors.set", Capability::Edit, "stable ID, complete behavior list (empty removes all)"}}};
+    {{"entity.create", Capability::Edit, "name, transform, parent, optional new stable ID, components", "Create Entity"},
+     {"entity.delete", Capability::Edit, "stable ID; deletes subtree", "Delete Entity"},
+     {"entity.rename", Capability::Edit, "stable ID, name", "Rename Entity"},
+     {"transform.set", Capability::Edit, "stable ID, finite local TRS", "Change Transform"},
+     {"hierarchy.reparent", Capability::Edit, "stable ID, parent; preserves local transform", "Reparent Entity"},
+     {"scene.replace", Capability::Edit, "validated versioned snapshot", "Replace Scene"},
+     {"component.mesh.set", Capability::Edit, "stable ID, built-in mesh and surface, or none to remove", "Change Mesh"},
+     {"component.camera.set", Capability::Edit, "stable ID, perspective lens and primary flag, or none to remove", "Change Camera"},
+     {"component.light.set", Capability::Edit, "stable ID, light type, color, intensity, range, or none to remove", "Change Light"},
+     {"entity.duplicate", Capability::Edit, "stable ID, optional name for the copy; copies the subtree with new IDs", "Duplicate Entity"},
+     {"component.body.set", Capability::Edit, "stable ID, rigid body kind and initial motion, or none to remove", "Change Rigid Body"},
+     {"component.colliders.set", Capability::Edit, "stable ID, complete collider list (empty removes all)", "Change Colliders"},
+     {"component.environment.set", Capability::Edit, "stable ID, environment lighting, exposure and shadow settings, or none to remove", "Change Environment"},
+     {"component.behaviors.set", Capability::Edit, "stable ID, complete behavior list (empty removes all)", "Change Behaviors"}}};
 struct Guard {
     bool &busy;
     explicit Guard(bool &b) : busy(b) {
@@ -80,8 +82,66 @@ Result<SceneSnapshot> CommandBus::inspect(const Context &c) const {
         return auth.error();
     return scene_.snapshot();
 }
+void CommandBus::merge(History &into, std::vector<Delta> deltas) {
+    for (auto &delta : deltas) {
+        const auto existing = std::ranges::find(into.deltas, delta.id, &Delta::id);
+        if (existing == into.deltas.end())
+            into.deltas.push_back(std::move(delta));
+        else
+            existing->after = std::move(delta.after);
+    }
+}
+void CommandBus::record(History history) {
+    redo_.clear();
+    if (!history_limit_)
+        return;
+    undo_.push_back(std::move(history));
+    ++recorded_;
+    while (undo_.size() > history_limit_)
+        undo_.pop_front();
+}
+Result<void> CommandBus::begin_transaction(std::string name) {
+    if (open_)
+        return fail(ErrorCode::InvalidState, "A transaction is already open");
+    open_ = History{std::move(name), {}};
+    return {};
+}
+Result<void> CommandBus::end_transaction() {
+    if (!open_)
+        return fail(ErrorCode::InvalidState, "No transaction is open");
+    auto history = std::move(*open_);
+    open_.reset();
+    std::erase_if(history.deltas, [](const Delta &d) { return d.before == d.after; });
+    if (!history.deltas.empty())
+        record(std::move(history));
+    return {};
+}
+Result<Receipt> CommandBus::abort_transaction(const Context &ctx) {
+    auto auth = authorize(ctx, Capability::Edit);
+    if (!auth)
+        return auth.error();
+    if (!open_)
+        return fail(ErrorCode::InvalidState, "No transaction is open");
+    if (!history_limit_)
+        return fail(ErrorCode::InvalidState, "A bus without history cannot restore a transaction");
+    auto history = std::move(*open_);
+    open_.reset();
+    Guard lock(executing_);
+    const auto current = scene_.snapshot();
+    auto staged = records(current);
+    for (const auto &d : history.deltas) {
+        if (d.before)
+            staged[d.id] = *d.before;
+        else
+            staged.erase(d.id);
+    }
+    auto applied = scene_.commit(snapshot(staged, current.next_id));
+    if (!applied)
+        return applied.error();
+    return Receipt{++revision_, {}, history.deltas.size()};
+}
 Result<Receipt> CommandBus::execute(const Context &ctx, std::uint64_t expected,
-                                    std::span<const Command> batch) {
+                                    std::span<const Command> batch, std::string_view name) {
     auto auth = authorize(ctx, Capability::Edit);
     if (!auth)
         return auth.error();
@@ -204,7 +264,7 @@ Result<Receipt> CommandBus::execute(const Context &ctx, std::uint64_t expected,
         err.operation = batch.size() - 1;
         return err;
     }
-    History history;
+    History history{std::string(name.empty() ? describe(batch.front()).label : name), {}};
     for (const auto &[id, e] : original) {
         auto dest = get(staged, id);
         if (!dest || *dest != e)
@@ -222,12 +282,12 @@ Result<Receipt> CommandBus::execute(const Context &ctx, std::uint64_t expected,
         return applied.error();
     receipt.revision = ++revision_;
     receipt.changed_entities = history.deltas.size();
-    redo_.clear();
-    if (history_limit_) {
-        undo_.push_back(std::move(history));
-        while (undo_.size() > history_limit_)
-            undo_.pop_front();
-    }
+    if (open_) {
+        // Physics publishes through a history-free bus every tick, so nothing is kept where it cannot be used.
+        if (history_limit_)
+            merge(*open_, std::move(history.deltas));
+    } else
+        record(std::move(history));
     return receipt;
 }
 Result<Receipt> CommandBus::replay(const Context &ctx, std::uint64_t expected, bool is_undo) {
@@ -236,6 +296,8 @@ Result<Receipt> CommandBus::replay(const Context &ctx, std::uint64_t expected, b
         return auth.error();
     if (expected != revision_)
         return fail(ErrorCode::Conflict, "Stale scene revision");
+    if (open_)
+        return fail(ErrorCode::InvalidState, "Finish the transaction before undo or redo");
     auto &from = is_undo ? undo_ : redo_;
     auto &to = is_undo ? redo_ : undo_;
     if (from.empty())
