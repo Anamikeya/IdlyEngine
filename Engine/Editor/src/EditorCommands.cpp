@@ -1,0 +1,272 @@
+#include <engine/editor/EditorCommands.hpp>
+#include <algorithm>
+#include <array>
+#include <cctype>
+#include <sstream>
+
+namespace engine::editor {
+namespace {
+constexpr std::size_t key_count = std::size_t(Key::Count);
+constexpr std::array<std::string_view, key_count> key_names{
+    "", "A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z",
+    "0", "1", "2", "3", "4", "5", "6", "7", "8", "9",
+    "F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8", "F9", "F10", "F11", "F12",
+    "Space", "Enter", "Esc", "Tab", "Backspace", "Delete", "Insert", "Home", "End", "PageUp", "PageDown", "Left", "Right", "Up", "Down",
+    "`", "[", "]", "-", "=", ";", "'", ",", ".", "/", "\\"};
+bool same_text(std::string_view a, std::string_view b) {
+    return std::ranges::equal(a, b, [](char x, char y) { return std::tolower(static_cast<unsigned char>(x)) == std::tolower(static_cast<unsigned char>(y)); });
+}
+std::string_view trim(std::string_view text) {
+    while (!text.empty() && std::isspace(static_cast<unsigned char>(text.front()))) text.remove_prefix(1);
+    while (!text.empty() && std::isspace(static_cast<unsigned char>(text.back()))) text.remove_suffix(1);
+    return text;
+}
+bool overlap(std::string_view a, std::string_view b) { return a == b || a == context::global || b == context::global; }
+std::string chord_list(const std::vector<KeyChord> &chords) {
+    std::string text;
+    for (const auto chord : chords) text += (text.empty() ? "" : ", ") + to_string(chord);
+    return text;
+}
+}
+std::string to_string(KeyChord chord) {
+    std::string text;
+    if (chord.modifiers & modifier::ctrl) text += "Ctrl+";
+    if (chord.modifiers & modifier::shift) text += "Shift+";
+    if (chord.modifiers & modifier::alt) text += "Alt+";
+    return text + std::string(key_names[std::size_t(chord.key)]);
+}
+std::optional<KeyChord> parse_chord(std::string_view text) {
+    KeyChord chord;
+    text = trim(text);
+    while (!text.empty()) {
+        const auto plus = text.find('+');
+        const auto part = trim(text.substr(0, plus));
+        if (plus == std::string_view::npos) {
+            for (std::size_t i = 1; i < key_count; ++i) if (same_text(part, key_names[i])) chord.key = Key(i);
+            return chord.empty() ? std::nullopt : std::optional(chord);
+        }
+        if (same_text(part, "ctrl")) chord.modifiers |= modifier::ctrl;
+        else if (same_text(part, "shift")) chord.modifiers |= modifier::shift;
+        else if (same_text(part, "alt")) chord.modifiers |= modifier::alt;
+        else return std::nullopt;
+        text.remove_prefix(plus + 1);
+    }
+    return std::nullopt;
+}
+EditorCommand *CommandRegistry::mutable_find(std::string_view id) {
+    const auto found = index_.find(id);
+    return found == index_.end() ? nullptr : &commands_[found->second];
+}
+const EditorCommand *CommandRegistry::find(std::string_view id) const {
+    const auto found = index_.find(id);
+    return found == index_.end() ? nullptr : &commands_[found->second];
+}
+Result<void> CommandRegistry::add(CommandInfo info) {
+    if (info.id.empty() || info.label.empty() || info.context.empty()) return fail(ErrorCode::InvalidArgument, "A command needs an id, a label and a context");
+    if (index_.contains(info.id)) return fail(ErrorCode::InvalidArgument, "Command already registered: " + info.id);
+    index_.emplace(info.id, commands_.size());
+    auto chords = info.default_chords;
+    commands_.push_back(EditorCommand{std::move(info), std::move(chords), {}, {}, {}});
+    return {};
+}
+Result<void> CommandRegistry::bind(std::string_view id, std::function<void()> execute, std::function<bool()> can_execute, std::function<bool()> is_checked) {
+    auto *command = mutable_find(id);
+    if (!command) return fail(ErrorCode::NotFound, "No such command: " + std::string(id));
+    command->execute = std::move(execute);
+    command->can_execute = std::move(can_execute);
+    command->is_checked = std::move(is_checked);
+    return {};
+}
+std::vector<std::string> CommandRegistry::unbound() const {
+    std::vector<std::string> ids;
+    for (const auto &command : commands_) if (!command.execute) ids.push_back(command.info.id);
+    return ids;
+}
+bool CommandRegistry::enabled(std::string_view id) const {
+    const auto *command = find(id);
+    return command && command->execute && (!command->can_execute || command->can_execute());
+}
+bool CommandRegistry::checked(std::string_view id) const {
+    const auto *command = find(id);
+    return command && command->is_checked && command->is_checked();
+}
+bool CommandRegistry::run(std::string_view id) const {
+    if (!enabled(id)) return false;
+    find(id)->execute();
+    return true;
+}
+std::string CommandRegistry::shortcut(std::string_view id) const {
+    const auto *command = find(id);
+    return command && !command->chords.empty() ? to_string(command->chords.front()) : std::string{};
+}
+std::string CommandRegistry::tooltip(std::string_view id) const {
+    const auto *command = find(id);
+    if (!command) return {};
+    auto text = command->info.label;
+    if (const auto keys = shortcut(id); !keys.empty()) text += " (" + keys + ")";
+    if (!command->info.tooltip.empty()) text += "\n" + command->info.tooltip;
+    return text;
+}
+Result<void> CommandRegistry::set_chords(std::string_view id, std::vector<KeyChord> chords) {
+    auto *command = mutable_find(id);
+    if (!command) return fail(ErrorCode::NotFound, "No such command: " + std::string(id));
+    if (std::ranges::any_of(chords, [](KeyChord chord) { return chord.empty(); })) return fail(ErrorCode::InvalidArgument, "A binding needs a key");
+    command->chords = std::move(chords);
+    return {};
+}
+Result<void> CommandRegistry::reset_chords(std::string_view id) {
+    auto *command = mutable_find(id);
+    if (!command) return fail(ErrorCode::NotFound, "No such command: " + std::string(id));
+    command->chords = command->info.default_chords;
+    return {};
+}
+void CommandRegistry::reset_all_chords() {
+    for (auto &command : commands_) command.chords = command.info.default_chords;
+}
+bool CommandRegistry::overridden(std::string_view id) const {
+    const auto *command = find(id);
+    return command && command->chords != command->info.default_chords;
+}
+std::vector<const EditorCommand *> CommandRegistry::conflicts(std::string_view id, KeyChord chord) const {
+    std::vector<const EditorCommand *> found;
+    const auto *self = find(id);
+    if (!self || chord.empty()) return found;
+    for (const auto &command : commands_)
+        if (command.info.id != id && overlap(command.info.context, self->info.context) && std::ranges::find(command.chords, chord) != command.chords.end())
+            found.push_back(&command);
+    return found;
+}
+const EditorCommand *CommandRegistry::resolve(KeyChord chord, std::span<const std::string_view> contexts) const {
+    if (chord.empty()) return nullptr;
+    const auto in_context = [&](std::string_view context) -> const EditorCommand * {
+        for (const auto &command : commands_)
+            if (command.info.context == context && std::ranges::find(command.chords, chord) != command.chords.end() && enabled(command.info.id))
+                return &command;
+        return nullptr;
+    };
+    for (const auto context : contexts)
+        if (const auto *command = in_context(context)) return command;
+    return in_context(context::global);
+}
+bool CommandRegistry::dispatch(KeyChord chord, std::span<const std::string_view> contexts, const InputBlock &block) const {
+    if (block.any()) return false;
+    const auto *command = resolve(chord, contexts);
+    if (!command) return false;
+    command->execute();
+    return true;
+}
+std::string CommandRegistry::save_keymap() const {
+    std::string text = "# Editor keymap: only what differs from the defaults. An empty value unbinds a command.\n";
+    for (const auto &command : commands_)
+        if (command.chords != command.info.default_chords) text += command.info.id + " = " + chord_list(command.chords) + "\n";
+    return text;
+}
+Result<KeymapReport> CommandRegistry::load_keymap(std::string_view text) {
+    std::vector<std::pair<std::string, std::vector<KeyChord>>> parsed;
+    KeymapReport report;
+    std::size_t number = 0;
+    while (!text.empty()) {
+        ++number;
+        const auto end = text.find('\n');
+        const auto line = trim(text.substr(0, end));
+        text.remove_prefix(end == std::string_view::npos ? text.size() : end + 1);
+        if (line.empty() || line.front() == '#') continue;
+        const auto equals = line.find('=');
+        const auto malformed = [&](const std::string &why) { return fail(ErrorCode::ParseError, "Keymap line " + std::to_string(number) + ": " + why); };
+        if (equals == std::string_view::npos) return malformed("expected 'command = keys'");
+        const auto id = std::string(trim(line.substr(0, equals)));
+        auto keys = trim(line.substr(equals + 1));
+        std::vector<KeyChord> chords;
+        // "=" and "," are keys as well as separators, so a chord ending in one is taken before splitting on commas.
+        while (!keys.empty()) {
+            auto comma = keys.find(',', keys.size() > 1 && keys[0] == ',' ? 1 : 0);
+            while (comma != std::string_view::npos && comma > 0 && keys[comma - 1] == '+') comma = keys.find(',', comma + 1);
+            const auto chord = parse_chord(keys.substr(0, comma));
+            if (!chord) return malformed("'" + std::string(trim(keys.substr(0, comma))) + "' is not a key");
+            chords.push_back(*chord);
+            if (comma == std::string_view::npos) break;
+            keys = trim(keys.substr(comma + 1));
+        }
+        parsed.emplace_back(id, std::move(chords));
+    }
+    reset_all_chords();
+    for (auto &[id, chords] : parsed) {
+        if (auto *command = mutable_find(id)) { command->chords = std::move(chords); ++report.applied; }
+        else report.unknown.push_back(id);
+    }
+    return report;
+}
+std::vector<CommandInfo> default_command_table() {
+    using namespace modifier;
+    const auto chord = [](Key key, std::uint8_t modifiers = none) { return KeyChord{key, modifiers}; };
+    const std::string global(context::global), viewport(context::viewport), outliner(context::outliner);
+    std::vector<CommandInfo> table{
+        {"File.NewScene", "New Scene", "Start an empty scene.", "File", global, {chord(Key::N, ctrl)}},
+        {"File.OpenScene", "Open Scene...", "Choose a scene file and load it.", "File", global, {chord(Key::O, ctrl)}},
+        {"File.LoadFromPath", "Load", "Load the scene named in the Scene file field.", "File", global, {}},
+        {"File.Save", "Save", "Save the scene to the Scene file field's path.", "File", global, {chord(Key::S, ctrl)}},
+        {"File.SaveAs", "Save As...", "Choose a file and save the scene there.", "File", global, {}},
+        {"File.SaveAll", "Save All", "Save the scene. Materials save themselves when a control is released.", "File", global, {chord(Key::S, ctrl | shift)}},
+        {"File.OpenSample", "Open Physics Shooter Sample", "Open the sample project and its scene.", "File", global, {}},
+        {"File.NewProject", "New Empty Project...", "Create a project folder with an empty scene.", "File", global, {}},
+        {"File.OpenProject", "Open Project...", "Open a project folder.", "File", global, {}},
+        {"File.Quit", "Exit", "Close the editor, asking first if there are unsaved changes.", "File", global, {}},
+
+        {"Edit.Undo", "Undo", "Undo the latest edit.", "Edit", global, {chord(Key::Z, ctrl)}, true},
+        {"Edit.Redo", "Redo", "Redo the edit just undone.", "Edit", global, {chord(Key::Y, ctrl), chord(Key::Z, ctrl | shift)}, true},
+        {"Edit.Duplicate", "Duplicate", "Copy the selection and its children.", "Edit", global, {chord(Key::D, ctrl)}},
+        {"Edit.Delete", "Delete", "Delete the selection and its children.", "Edit", global, {chord(Key::Delete)}},
+        {"Edit.MoveToRoot", "Move to Root", "Take the selection out of its parent, keeping its place in the world.", "Edit", global, {}},
+        {"Edit.SelectAll", "Select All", "Select every entity.", "Edit", global, {chord(Key::A, ctrl)}},
+        {"Edit.Deselect", "Deselect", "Clear the selection.", "Edit", global, {chord(Key::Escape)}},
+
+        {"Create.Cube", "Cube", "Add a cube.", "Create", global, {}},
+        {"Create.Sphere", "Sphere", "Add a sphere.", "Create", global, {}},
+        {"Create.Plane", "Plane", "Add a 10 m plane.", "Create", global, {}},
+        {"Create.Empty", "Empty", "Add an entity with no components.", "Create", global, {}},
+        {"Create.DirectionalLight", "Directional Light", "Add a directional light.", "Create", global, {}},
+        {"Create.PointLight", "Point Light", "Add a point light sized for the scene's exposure.", "Create", global, {}},
+        {"Create.SpotLight", "Spot Light", "Add a spot light that casts shadows.", "Create", global, {}},
+        {"Create.Camera", "Camera", "Add a camera. Play mode looks through the first primary one.", "Create", global, {}},
+        {"Create.FallingCube", "Falling Cube", "Add a cube with a dynamic body and a collider.", "Create", global, {}},
+        {"Create.FallingSphere", "Falling Sphere", "Add a sphere with a dynamic body and a collider.", "Create", global, {}},
+        {"Create.Floor", "Floor", "Add a plane with a static collider.", "Create", global, {}},
+        {"Create.ChildEmpty", "Empty", "Add an empty entity under the selection.", "Create", outliner, {}},
+        {"Create.ChildCube", "Cube", "Add a cube under the selection.", "Create", outliner, {}},
+        {"Create.ChildSphere", "Sphere", "Add a sphere under the selection.", "Create", outliner, {}},
+        {"Create.ChildPointLight", "Point Light", "Add a point light under the selection.", "Create", outliner, {}},
+
+        {"Viewport.FocusSelected", "Focus Selected", "Frame the selection in the viewport.", "Viewport", viewport, {chord(Key::F)}},
+        {"Viewport.ToggleColliders", "Show Colliders", "Draw collider outlines over the view.", "Viewport", viewport, {}},
+
+        {"Play.Play", "Play", "Run a copy of the scene. Changes are discarded on Stop.", "Play", global, {}},
+        {"Play.Resume", "Resume", "Continue the paused run.", "Play", global, {}},
+        {"Play.Pause", "Pause", "Freeze the run.", "Play", global, {}},
+        {"Play.Step", "Step", "Advance the paused run by one tick.", "Play", global, {}},
+        {"Play.Stop", "Stop", "Discard the run and return to the editor scene.", "Play", global, {}},
+
+        {"Window.UndoHistory", "Undo History", "Show every edit and jump to any of them.", "Window", global, {}},
+        {"Window.KeyboardShortcuts", "Keyboard Shortcuts", "Search and change every shortcut.", "Window", global, {}},
+    };
+    return table;
+}
+std::string shortcuts_markdown(std::span<const CommandInfo> commands) {
+    std::ostringstream out;
+    out << "# Editor shortcuts\n\nGenerated by `engine_editor --dump-shortcuts docs/EDITOR_SHORTCUTS.md`; a test fails when this file is out of date.\n"
+           "Every key can be changed in Window > Keyboard Shortcuts. A shortcut works in its context, and Global ones work everywhere.\n"
+           "None fire while a text field has the keyboard, a dialog is open, a drag is in progress or the game holds the mouse.\n";
+    std::vector<std::string> categories;
+    for (const auto &command : commands)
+        if (std::ranges::find(categories, command.category) == categories.end()) categories.push_back(command.category);
+    for (const auto &category : categories) {
+        out << "\n## " << category << "\n\n| Command | Keys | Context | ID |\n|---|---|---|---|\n";
+        for (const auto &command : commands) {
+            if (command.category != category) continue;
+            std::string keys;
+            for (const auto chord : command.default_chords) keys += (keys.empty() ? "" : ", ") + ("`" + to_string(chord) + "`");
+            out << "| " << command.label << " | " << keys << " | " << command.context << " | `" << command.id << "` |\n";
+        }
+    }
+    return out.str();
+}
+} // namespace engine::editor

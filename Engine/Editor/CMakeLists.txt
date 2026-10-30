@@ -50,7 +50,7 @@ target_include_directories(editor_imgui SYSTEM PUBLIC "${IMGUI_ROOT}" "${IMGUI_R
     "${GAMEENGINE_RESOURCES_DIR}/box3d/extern/imguizmo")
 target_link_libraries(editor_imgui PUBLIC glfw)
 
-add_library(engine_editor_session STATIC src/EditorSession.cpp)
+add_library(engine_editor_session STATIC src/EditorSession.cpp src/EditorCommands.cpp)
 target_include_directories(engine_editor_session PUBLIC include)
 target_include_directories(engine_editor_session SYSTEM PRIVATE "${GAMEENGINE_RESOURCES_DIR}/glm")
 # Play mode simulates physics, so the editor needs the physics bridge (GAMEENGINE_WITH_PHYSICS=ON).
