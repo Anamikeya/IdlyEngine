@@ -42,19 +42,19 @@ bool unit(double value) {
 Result<Frame> extract_frame(const Scene &scene, FrameStamp stamp, const PerspectiveCamera &camera,
                             std::span<const MeshBinding> meshes,
                             std::span<const LightBinding> lights,
-                            const RenderEnvironment &environment, bool show_grid) {
+                            const RenderEnvironment &environment, bool show_grid, double grid_spacing) {
     if (!scene.on_owner_thread())
         return fail(ErrorCode::WrongThread, "Frame extraction requires the scene owner thread");
     const auto camera_world = scene.world_transform(camera.entity);
     if (!camera_world)
         return fail(ErrorCode::NotFound, "Camera entity does not exist");
-    return extract_frame(scene, stamp, camera, *camera_world, meshes, lights, environment, show_grid);
+    return extract_frame(scene, stamp, camera, *camera_world, meshes, lights, environment, show_grid, grid_spacing);
 }
 Result<Frame> extract_frame(const Scene &scene, FrameStamp stamp, const PerspectiveCamera &camera,
                             const WorldTransform &camera_world,
                             std::span<const MeshBinding> meshes,
                             std::span<const LightBinding> lights,
-                            const RenderEnvironment &environment, bool show_grid) {
+                            const RenderEnvironment &environment, bool show_grid, double grid_spacing) {
     if (!scene.on_owner_thread())
         return fail(ErrorCode::WrongThread, "Frame extraction requires the scene owner thread");
     if (!stamp.scene || meshes.size() > Scene::max_entities || lights.size() > Scene::max_entities)
@@ -63,21 +63,26 @@ Result<Frame> extract_frame(const Scene &scene, FrameStamp stamp, const Perspect
         camera.vertical_fov_radians >= std::numbers::pi ||
         !std::isfinite(camera.aspect_ratio) || camera.aspect_ratio <= 0 ||
         !std::isfinite(camera.near_plane) || !std::isfinite(camera.far_plane) ||
-        camera.near_plane <= 0 || camera.far_plane <= camera.near_plane)
+        camera.near_plane <= 0 || camera.far_plane <= camera.near_plane ||
+        !std::isfinite(camera.orthographic_half_height) || camera.orthographic_half_height < 0)
         return fail(ErrorCode::InvalidArgument, "Invalid perspective camera lens");
+    if (!std::isfinite(grid_spacing) || grid_spacing <= 0)
+        return fail(ErrorCode::InvalidArgument, "Grid spacing must be positive");
     const auto world = glm::make_mat4(camera_world.matrix.data());
     if (!finite(camera_world) || !rigid(world))
         return fail(ErrorCode::InvalidArgument, "Camera world transform must be rigid and unreflected");
     const auto view = matrix(glm::inverse(world));
-    const auto projection = matrix(glm::perspectiveRH_NO(camera.vertical_fov_radians,
-        camera.aspect_ratio, camera.near_plane, camera.far_plane));
+    const double half_height = camera.orthographic_half_height, half_width = half_height * camera.aspect_ratio;
+    const auto projection = matrix(half_height > 0
+        ? glm::orthoRH_NO(-half_width, half_width, -half_height, half_height, camera.near_plane, camera.far_plane)
+        : glm::perspectiveRH_NO(camera.vertical_fov_radians, camera.aspect_ratio, camera.near_plane, camera.far_plane));
     if (!finite(view) || !finite(projection) || projection.matrix[0] <= 0 ||
         projection.matrix[5] <= 0 || projection.matrix[14] >= 0)
         return fail(ErrorCode::InvalidArgument, "Camera matrix is not numerically representable");
     if (!nonnegative(environment.intensity) || !std::isfinite(environment.rotation_radians) || !std::isfinite(environment.ev100) ||
         !(environment.shadow_distance > 0) || !std::isfinite(environment.shadow_distance))
         return fail(ErrorCode::InvalidArgument, "Invalid environment parameters");
-    FrameSnapshot frame{stamp, {camera, camera_world, view, projection}, {}, {}, environment, show_grid};
+    FrameSnapshot frame{stamp, {camera, camera_world, view, projection}, {}, {}, environment, show_grid, grid_spacing};
     frame.objects.reserve(meshes.size());
     frame.lights.reserve(lights.size());
     std::set<EntityId> seen;

@@ -195,6 +195,7 @@ struct DesktopRenderer::Impl {
     RenderTarget *target = nullptr;
     utils::Entity camera_entity, grid, sun, fill;
     bool editor_lights = true, grid_shown = true;
+    double grid_spacing = 1;
     Mesh grid_mesh;
     std::map<uint32_t, GpuMesh> meshes; // By handle index: the built-ins, then uploaded assets.
     std::map<uint32_t, GpuTexture> textures;
@@ -608,6 +609,13 @@ struct DesktopRenderer::Impl {
         if (frame.show_grid != grid_shown) {
             if (frame.show_grid) scene->addEntity(grid); else scene->remove(grid);
             grid_shown = frame.show_grid;
+        }
+        if (frame.grid_spacing != grid_spacing) {
+            auto &transforms = engine->getTransformManager();
+            if (!transforms.hasComponent(grid)) transforms.create(grid);
+            const auto spacing = float(frame.grid_spacing);
+            transforms.setTransform(transforms.getInstance(grid), filament::math::mat4f::scaling(filament::math::float3{spacing, 1.f, spacing}));
+            grid_spacing = frame.grid_spacing;
         }
     }
     // Builds the cubemaps from an equirectangular image with Filament's GPU prefilter. Outside beginFrame/endFrame.
