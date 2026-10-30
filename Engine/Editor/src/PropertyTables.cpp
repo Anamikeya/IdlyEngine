@@ -1,4 +1,6 @@
 #include <engine/editor/PropertyMeta.hpp>
+#include <cstdio>
+#include <sstream>
 #include <utility>
 
 namespace engine::editor {
@@ -37,6 +39,16 @@ template<class T> Property<T> asset(std::string_view id, std::string_view name, 
     p.asset_type = type;
     return p;
 }
+// A mesh renderer's assets: choosing one also whitens the tint, so the asset shows as authored.
+Property<MeshComponent> mesh_asset(std::string_view id, std::string_view name, std::string_view category, std::string_view tooltip, AssetRef MeshComponent::*at, std::string_view type) {
+    auto p = asset<MeshComponent>(id, name, category, tooltip, at, type);
+    p.set = [at](MeshComponent &owner, const PropertyValue &value) {
+        const auto &ref = std::get<AssetRef>(value);
+        if (!ref.empty() && owner.*at != ref) owner.color = {1, 1, 1};
+        owner.*at = ref;
+    };
+    return p;
+}
 template<class T> Property<T> when(Property<T> p, std::function<bool(const T &)> condition, bool hides = true) {
     p.condition = std::move(condition);
     p.condition_hides = hides;
@@ -55,10 +67,10 @@ PropertyTable<MeshComponent> make_mesh() {
     const auto builtin = [](const T &m) { return m.mesh_asset.empty(); };
     const auto no_material = [](const T &m) { return m.material.empty(); };
     return {"Mesh Renderer", {
-        asset<T>("mesh_asset", "Model", "Mesh", "An imported model. Empty draws the built-in mesh.", &T::mesh_asset, "mesh"),
+        mesh_asset("mesh_asset", "Model", "Mesh", "An imported model. Empty draws the built-in mesh.", &T::mesh_asset, "mesh"),
         when(choice<T>("mesh", "Mesh", "Mesh", "The built-in shape.", &T::mesh, 1, {"Cube", "Sphere", "Plane"}), std::function<bool(const T &)>(builtin)),
-        asset<T>("material", "Material", "Surface", "A material asset for the whole mesh. Empty uses the model's own, or the values below.", &T::material, "material"),
-        asset<T>("texture", "Texture", "Surface", "Replaces every base color image.", &T::texture, "texture"),
+        mesh_asset("material", "Material", "Surface", "A material asset for the whole mesh. Empty uses the model's own, or the values below.", &T::material, "material"),
+        mesh_asset("texture", "Texture", "Surface", "Replaces every base color image.", &T::texture, "texture"),
         field<T>("color", "Color", "Surface", "Tints the material.", PropertyType::Color, &T::color),
         when(field<T>("roughness", "Roughness", "Surface", "0 is a mirror, 1 is fully rough. Models and materials carry their own.", PropertyType::Number, &T::roughness, {0, 1, 0.01}), std::function<bool(const T &)>(no_material), false),
         when(field<T>("metallic", "Metallic", "Surface", "0 is a dielectric, 1 a metal. Models and materials carry their own.", PropertyType::Number, &T::metallic, {0, 1, 0.01}), std::function<bool(const T &)>(no_material), false),
@@ -148,6 +160,37 @@ PropertyTable<EnvironmentComponent> make_environment() {
         field<T>("shadow_distance", "Distance (m)", "Shadows", "How far from the camera directional shadows reach.", PropertyType::Number, &T::shadow_distance, {1, 1000, 1, "%.0f"}),
     }};
 }
+}
+std::string property_to_text(const PropertyValue &value) {
+    std::ostringstream out;
+    out.precision(17);
+    std::visit([&](const auto &v) {
+        using V = std::decay_t<decltype(v)>;
+        if constexpr (std::is_same_v<V, bool>) out << "bool " << (v ? 1 : 0);
+        else if constexpr (std::is_same_v<V, double>) out << "number " << v;
+        else if constexpr (std::is_same_v<V, Vec3>) out << "vector " << v.x << ' ' << v.y << ' ' << v.z;
+        else if constexpr (std::is_same_v<V, Quaternion>) out << "rotation " << v.x << ' ' << v.y << ' ' << v.z << ' ' << v.w;
+        else if constexpr (std::is_same_v<V, int>) out << "choice " << v;
+        else if constexpr (std::is_same_v<V, AssetRef>) out << "asset " << v.id << ' ' << v.path;
+        else out << "bits " << v;
+    }, value);
+    return out.str();
+}
+std::optional<PropertyValue> property_from_text(std::string_view text) {
+    std::istringstream in{std::string(text)};
+    std::string kind;
+    in >> kind;
+    if (kind == "bool") { int v = 0; if (in >> v) return PropertyValue(v != 0); }
+    else if (kind == "number") { double v = 0; if (in >> v) return PropertyValue(v); }
+    else if (kind == "vector") { Vec3 v; if (in >> v.x >> v.y >> v.z) return PropertyValue(v); }
+    else if (kind == "rotation") { Quaternion v; if (in >> v.x >> v.y >> v.z >> v.w) return PropertyValue(v); }
+    else if (kind == "choice") { int v = 0; if (in >> v) return PropertyValue(v); }
+    else if (kind == "asset") {
+        AssetRef v;
+        if (in >> v.id) { std::getline(in >> std::ws, v.path); return PropertyValue(v); }
+        return std::nullopt;
+    } else if (kind == "bits") { std::uint64_t v = 0; if (in >> v) return PropertyValue(v); }
+    return std::nullopt;
 }
 const PropertyTable<Transform> &transform_properties() { static const auto table = make_transform(); return table; }
 const PropertyTable<MeshComponent> &mesh_properties() { static const auto table = make_mesh(); return table; }

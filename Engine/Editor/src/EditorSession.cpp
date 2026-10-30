@@ -88,9 +88,13 @@ std::string write_view_state(const EditorViewState &state) {
     out.precision(17);
     out << "EDITORVIEW 1\n";
     for (const auto id : state.hidden) out << "HIDDEN " << id << '\n';
+    for (const auto id : state.locked) out << "LOCKED " << id << '\n';
     for (std::size_t slot = 0; slot < state.bookmarks.size(); ++slot)
         if (const auto &b = state.bookmarks[slot])
             out << "BOOKMARK " << slot << ' ' << b->target.x << ' ' << b->target.y << ' ' << b->target.z << ' ' << b->yaw << ' ' << b->pitch << ' ' << b->distance << ' ' << (b->orthographic ? 1 : 0) << '\n';
+    if (!state.folders.folders.empty()) out << "NEXTFOLDER " << state.folders.next_id << '\n';
+    for (const auto &folder : state.folders.folders) out << "FOLDER " << folder.id << ' ' << folder.parent << ' ' << folder.name << '\n';
+    for (const auto &[entity, folder] : state.folders.members) out << "MEMBER " << entity << ' ' << folder << '\n';
     return out.str();
 }
 Result<EditorViewState> read_view_state(std::string_view text) {
@@ -100,10 +104,10 @@ Result<EditorViewState> read_view_state(std::string_view text) {
     if (!(in >> word >> version) || word != "EDITORVIEW" || version != 1) return fail(ErrorCode::ParseError, "Not an editor view state file");
     EditorViewState state;
     while (in >> word) {
-        if (word == "HIDDEN") {
+        if (word == "HIDDEN" || word == "LOCKED") {
             EntityId id = 0;
-            if (!(in >> id) || !id) return fail(ErrorCode::ParseError, "Bad HIDDEN record");
-            state.hidden.insert(id);
+            if (!(in >> id) || !id) return fail(ErrorCode::ParseError, "Bad " + word + " record");
+            (word == "HIDDEN" ? state.hidden : state.locked).insert(id);
         } else if (word == "BOOKMARK") {
             std::size_t slot = 0;
             CameraBookmark b;
@@ -112,6 +116,19 @@ Result<EditorViewState> read_view_state(std::string_view text) {
                 return fail(ErrorCode::ParseError, "Bad BOOKMARK record");
             b.orthographic = flat != 0;
             state.bookmarks[slot] = b;
+        } else if (word == "NEXTFOLDER") {
+            if (!(in >> state.folders.next_id)) return fail(ErrorCode::ParseError, "Bad NEXTFOLDER record");
+        } else if (word == "FOLDER") {
+            SceneFolder folder;
+            if (!(in >> folder.id >> folder.parent) || !folder.id) return fail(ErrorCode::ParseError, "Bad FOLDER record");
+            std::getline(in >> std::ws, folder.name); // The rest of the line: names have spaces.
+            if (!folder.name.empty() && folder.name.back() == '\r') folder.name.pop_back();
+            state.folders.folders.push_back(std::move(folder));
+        } else if (word == "MEMBER") {
+            EntityId entity = 0;
+            std::uint64_t folder = 0;
+            if (!(in >> entity >> folder) || !entity) return fail(ErrorCode::ParseError, "Bad MEMBER record");
+            state.folders.members[entity] = folder;
         } else return fail(ErrorCode::ParseError, "Unknown record " + word);
     }
     return state;
@@ -161,16 +178,18 @@ std::vector<EntityId> EditorSession::selection_roots() const {
 void EditorSession::sync_history() {
     if (bus_.recorded() == bus_recorded_) return;
     bus_recorded_ = bus_.recorded();
-    undo_steps_.push_back({std::string(bus_.latest_name()), std::nullopt});
+    undo_steps_.push_back({std::string(bus_.latest_name()), std::nullopt, std::nullopt, true});
     redo_steps_.clear();
     // The bus forgets its oldest step past its limit, so its name has to go too.
-    auto scene_steps = std::size_t(std::ranges::count_if(undo_steps_, [](const HistoryStep &step) { return !step.material; }));
+    auto scene_steps = std::size_t(std::ranges::count_if(undo_steps_, [](const HistoryStep &step) { return step.scene; }));
     for (auto it = undo_steps_.begin(); it != undo_steps_.end() && scene_steps > bus_.undo_size();)
-        if (!it->material) { it = undo_steps_.erase(it); --scene_steps; } else ++it;
+        if (it->scene) { it = undo_steps_.erase(it); --scene_steps; } else ++it;
 }
 Result<void> EditorSession::begin_transaction(std::string name) {
     if (transaction_depth_++ == 0 && !runtime_) {
         transaction_cancelled_ = false;
+        transaction_name_ = name;
+        transaction_folders_.reset();
         if (auto begun = bus_.begin_transaction(std::move(name)); !begun) { --transaction_depth_; return begun; }
     }
     return {};
@@ -178,15 +197,28 @@ Result<void> EditorSession::begin_transaction(std::string name) {
 Result<void> EditorSession::end_transaction() {
     if (!transaction_depth_) return fail(ErrorCode::InvalidState, "No transaction is open");
     if (--transaction_depth_ || !bus_.in_transaction()) return {};
+    const auto folders_before = std::exchange(transaction_folders_, std::nullopt);
     if (std::exchange(transaction_cancelled_, false)) {
         auto restored = bus_.abort_transaction(context_);
+        if (folders_before) { view_state_.folders = *folders_before; store_view_state(); }
         reconcile();
         if (!restored) return restored.error();
         return {};
     }
+    const auto recorded = bus_.recorded();
     auto ended = bus_.end_transaction();
     sync_history();
     reconcile();
+    if (folders_before && *folders_before != view_state_.folders) {
+        // Filed with the scene's step when there is one, so one undo restores both.
+        if (bus_.recorded() != recorded) undo_steps_.back().folders = FolderEdit{*folders_before, view_state_.folders};
+        else {
+            undo_steps_.push_back({transaction_name_, std::nullopt, FolderEdit{*folders_before, view_state_.folders}, false});
+            redo_steps_.clear();
+            bus_.discard_redo();
+        }
+        store_view_state();
+    }
     return ended;
 }
 std::vector<std::string> EditorSession::history_names() const {
@@ -243,38 +275,42 @@ Result<commands::Receipt> EditorSession::undo() {
     if (in_transaction()) return fail(ErrorCode::InvalidState, "Finish the drag before undoing");
     if (undo_steps_.empty()) return fail(ErrorCode::InvalidState, "History is empty");
     auto &step = undo_steps_.back();
+    commands::Receipt receipt{bus_.revision(), {}, 0};
+    if (step.scene) {
+        auto r = bus_.undo(context_, bus_.revision());
+        reconcile();
+        if (!r) return r;
+        receipt = r.value();
+    }
     if (step.material) {
         if (auto saved = assets_->save_material(step.material->id, step.material->before); !saved) return saved.error();
         forget_materials();
-        redo_steps_.push_back(std::move(step));
-        undo_steps_.pop_back();
-        return commands::Receipt{bus_.revision(), {}, 0};
     }
-    auto r = bus_.undo(context_, bus_.revision());
-    reconcile();
-    if (!r) return r;
+    if (step.folders) { view_state_.folders = step.folders->before; store_view_state(); }
     redo_steps_.push_back(std::move(step));
     undo_steps_.pop_back();
-    return r;
+    return receipt;
 }
 Result<commands::Receipt> EditorSession::redo() {
     if (auto allowed = editing_only("Redo"); !allowed) return allowed.error();
     if (in_transaction()) return fail(ErrorCode::InvalidState, "Finish the drag before redoing");
     if (redo_steps_.empty()) return fail(ErrorCode::InvalidState, "History is empty");
     auto &step = redo_steps_.back();
+    commands::Receipt receipt{bus_.revision(), {}, 0};
+    if (step.scene) {
+        auto r = bus_.redo(context_, bus_.revision());
+        reconcile();
+        if (!r) return r;
+        receipt = r.value();
+    }
     if (step.material) {
         if (auto saved = assets_->save_material(step.material->id, step.material->after); !saved) return saved.error();
         forget_materials();
-        undo_steps_.push_back(std::move(step));
-        redo_steps_.pop_back();
-        return commands::Receipt{bus_.revision(), {}, 0};
     }
-    auto r = bus_.redo(context_, bus_.revision());
-    reconcile();
-    if (!r) return r;
+    if (step.folders) { view_state_.folders = step.folders->after; store_view_state(); }
     undo_steps_.push_back(std::move(step));
     redo_steps_.pop_back();
-    return r;
+    return receipt;
 }
 Result<void> EditorSession::new_scene() {
     if (auto allowed = editing_only("New Scene"); !allowed) return allowed;
@@ -605,6 +641,244 @@ void EditorSession::unhide_all() {
     view_state_.hidden.clear();
     store_view_state();
 }
+void EditorSession::set_flag_on_subtree(std::set<EntityId> &flags, EntityId id, bool on) {
+    const auto entities = scene().snapshot().entities;
+    std::set<EntityId> subtree{id};
+    // Entities are in ID order, and a child may have a lower ID than its parent after a reparent, so walk up from each.
+    for (const auto &e : entities)
+        for (EntityId p = e.parent; p; p = scene().inspect(p)->parent)
+            if (p == id) { subtree.insert(e.id); break; }
+    for (const auto entity : subtree) { if (on) flags.insert(entity); else flags.erase(entity); }
+    store_view_state();
+}
+void EditorSession::set_hidden(EntityId id, bool on) {
+    set_flag_on_subtree(view_state_.hidden, id, on);
+    if (on) for (const auto entity : view_state_.hidden) selection_.remove(entity);
+}
+void EditorSession::set_locked(EntityId id, bool on) { set_flag_on_subtree(view_state_.locked, id, on); }
+Result<void> EditorSession::commit_folders(EditorFolders next, std::string name) {
+    if (auto allowed = editing_only("Changing folders"); !allowed) return allowed;
+    if (next == view_state_.folders) return {};
+    if (in_transaction()) {
+        if (!transaction_folders_) transaction_folders_ = view_state_.folders;
+        view_state_.folders = std::move(next);
+        return {};
+    }
+    undo_steps_.push_back({std::move(name), std::nullopt, FolderEdit{view_state_.folders, next}, false});
+    redo_steps_.clear();
+    bus_.discard_redo();
+    view_state_.folders = std::move(next);
+    store_view_state();
+    return {};
+}
+Result<std::uint64_t> EditorSession::create_folder(const std::string &name, std::uint64_t parent) {
+    if (name.empty()) return fail(ErrorCode::InvalidArgument, "A folder needs a name");
+    auto next = view_state_.folders;
+    if (parent && !next.find(parent)) return fail(ErrorCode::NotFound, "That folder no longer exists");
+    const auto id = next.next_id++;
+    next.folders.push_back({id, parent, name});
+    if (auto done = commit_folders(std::move(next), "Create Folder " + name); !done) return done.error();
+    return id;
+}
+Result<void> EditorSession::rename_folder(std::uint64_t id, const std::string &name) {
+    if (name.empty()) return fail(ErrorCode::InvalidArgument, "A folder needs a name");
+    auto next = view_state_.folders;
+    const auto at = std::ranges::find(next.folders, id, &SceneFolder::id);
+    if (at == next.folders.end()) return fail(ErrorCode::NotFound, "That folder no longer exists");
+    at->name = name;
+    return commit_folders(std::move(next), "Rename Folder");
+}
+Result<void> EditorSession::delete_folder(std::uint64_t id) {
+    auto next = view_state_.folders;
+    const auto at = std::ranges::find(next.folders, id, &SceneFolder::id);
+    if (at == next.folders.end()) return fail(ErrorCode::NotFound, "That folder no longer exists");
+    const auto parent = at->parent;
+    const auto name = at->name;
+    next.folders.erase(at);
+    for (auto &folder : next.folders) if (folder.parent == id) folder.parent = parent;
+    for (auto it = next.members.begin(); it != next.members.end();) {
+        if (it->second != id) { ++it; continue; }
+        if (parent) { it->second = parent; ++it; } else it = next.members.erase(it);
+    }
+    return commit_folders(std::move(next), "Delete Folder " + name);
+}
+Result<void> EditorSession::move_folder(std::uint64_t id, std::uint64_t parent) {
+    auto next = view_state_.folders;
+    const auto at = std::ranges::find(next.folders, id, &SceneFolder::id);
+    if (at == next.folders.end()) return fail(ErrorCode::NotFound, "That folder no longer exists");
+    for (auto p = parent; p; ) {
+        if (p == id) return fail(ErrorCode::Cycle, "Cannot put a folder inside itself");
+        const auto *up = next.find(p);
+        if (!up) return fail(ErrorCode::NotFound, "That folder no longer exists");
+        p = up->parent;
+    }
+    at->parent = parent;
+    return commit_folders(std::move(next), "Move Folder");
+}
+Result<void> EditorSession::file_entity(EntityId id, std::uint64_t folder) {
+    const auto record = scene().inspect(id);
+    if (!record) return fail(ErrorCode::NotFound, "Entity no longer exists");
+    auto next = view_state_.folders;
+    if (folder && !next.find(folder)) return fail(ErrorCode::NotFound, "That folder no longer exists");
+    if (folder) next.members[id] = folder; else next.members.erase(id);
+    ScopedTransaction transaction(*this, "Move " + record->name + " to Folder");
+    if (record->parent)
+        if (auto moved = reparent(id, 0); !moved) { transaction.cancel(); return moved.error(); }
+    if (auto filed = commit_folders(std::move(next), {}); !filed) { transaction.cancel(); return filed; }
+    return {};
+}
+std::uint64_t EditorSession::folder_of(EntityId id) const {
+    const auto found = view_state_.folders.members.find(id);
+    return found == view_state_.folders.members.end() ? 0 : found->second;
+}
+Result<std::string> EditorSession::copy_selection() const {
+    const auto roots = selection_roots();
+    if (roots.empty()) return fail(ErrorCode::InvalidState, "Nothing is selected");
+    const auto all = selection_subtrees();
+    SceneSnapshot copied;
+    for (const auto &e : scene().snapshot().entities) {
+        if (!all.contains(e.id)) continue;
+        auto entity = e;
+        if (std::ranges::find(roots, e.id) != roots.end()) {
+            // Without its parent, a root takes its place in the world as its own transform.
+            entity.parent = 0;
+            if (const auto local = local_from_world(0, *scene().world_transform(e.id))) entity.transform = local.value();
+        } else if (!all.contains(e.parent)) entity.parent = 0;
+        copied.entities.push_back(std::move(entity));
+        copied.next_id = std::max(copied.next_id, e.id + 1);
+    }
+    std::ostringstream out;
+    if (auto written = write_scene(out, copied); !written) return written.error();
+    return out.str();
+}
+Result<void> EditorSession::paste(std::string_view text) {
+    std::istringstream in{std::string(text)};
+    const auto copied = read_scene(in);
+    if (!copied || copied.value().entities.empty()) return fail(ErrorCode::ParseError, "The clipboard holds no entities");
+    const auto &entities = copied.value().entities;
+    ScopedTransaction transaction(*this, entities.size() == 1 ? "Paste " + entities.front().name : "Paste " + std::to_string(entities.size()) + " Entities");
+    std::map<EntityId, EntityId> created;
+    std::vector<EntityId> roots;
+    // Parents first, however the IDs happen to be ordered.
+    std::vector<const EntityRecord *> waiting;
+    for (const auto &e : entities) waiting.push_back(&e);
+    while (!waiting.empty()) {
+        const auto before = waiting.size();
+        std::erase_if(waiting, [&](const EntityRecord *e) {
+            if (e->parent && !created.contains(e->parent)) return false;
+            const auto made = execute(commands::CreateEntity{e->name, e->transform, e->parent ? created.at(e->parent) : 0, 0, e->components});
+            if (!made) return false;
+            created[e->id] = made.value().created.front();
+            if (!e->parent) roots.push_back(made.value().created.front());
+            return true;
+        });
+        if (waiting.size() == before) { transaction.cancel(); return fail(ErrorCode::InvalidArgument, "The clipboard's entities could not be added"); }
+    }
+    selection_.set(std::span<const EntityId>(roots));
+    return {};
+}
+Result<EntityId> EditorSession::group_selection() {
+    const auto roots = selection_roots();
+    if (roots.empty()) return fail(ErrorCode::InvalidState, "Nothing is selected");
+    const auto center = selection_center();
+    Transform t;
+    t.position = *center;
+    ScopedTransaction transaction(*this, roots.size() == 1 ? "Group " + scene().inspect(roots.front())->name : "Group " + std::to_string(roots.size()) + " Entities");
+    const auto group = execute(commands::CreateEntity{"Group", t, 0, 0, Components{}});
+    if (!group) { transaction.cancel(); return group.error(); }
+    const auto id = group.value().created.front();
+    for (const auto root : roots) {
+        const auto moved = reparent(root, id);
+        if (!moved) { transaction.cancel(); return moved.error(); }
+    }
+    selection_.set(id);
+    return id;
+}
+Result<void> EditorSession::rename_asset(assets::AssetId id, const std::string &new_path) {
+    if (auto allowed = editing_only("Renaming an asset"); !allowed) return allowed;
+    if (!assets_) return fail(ErrorCode::NotFound, "No asset folder");
+    if (auto moved = assets_->move(id, new_path); !moved) return moved;
+    const auto meta = assets_->find(id);
+    if (!meta) return fail(ErrorCode::NotFound, "The asset could not be found after moving it");
+    resolved_.clear();
+    const auto fix = [&](AssetRef &ref) {
+        if (ref.id != id.value || ref.path == meta->path) return false;
+        ref.path = meta->path;
+        return true;
+    };
+    std::vector<commands::Command> edits;
+    for (const auto &e : scene_.snapshot().entities) {
+        if (auto mesh = e.components.mesh) {
+            bool changed = fix(mesh->mesh_asset);
+            changed |= fix(mesh->texture);
+            changed |= fix(mesh->material);
+            for (auto &slot : mesh->material_slots) changed |= fix(slot.material);
+            if (changed) edits.emplace_back(commands::SetMesh{e.id, std::move(mesh)});
+        }
+        if (auto environment = e.components.environment; environment && fix(environment->image)) edits.emplace_back(commands::SetEnvironment{e.id, std::move(environment)});
+    }
+    ScopedTransaction transaction(*this, "Update References to " + meta->path);
+    for (std::size_t at = 0; at < edits.size(); at += commands::CommandBus::max_transaction) {
+        const auto count = std::min(edits.size() - at, commands::CommandBus::max_transaction);
+        if (auto done = execute(std::span<const commands::Command>(edits).subspan(at, count), {}); !done) return done.error();
+    }
+    // Materials name their maps too. These are not scene edits, so they are saved straight away.
+    for (const auto &other : assets_->assets()) {
+        if (other.type != assets::AssetType::Material) continue;
+        auto data = material(other.id);
+        if (!data) continue;
+        bool changed = false;
+        for (auto *map : {&data->base_color_map, &data->metallic_roughness_map, &data->normal_map, &data->occlusion_map, &data->emissive_map})
+            if (map->id == id && map->path != meta->path) { map->path = meta->path; changed = true; }
+        if (changed) if (auto saved = assets_->save_material(other.id, *data); !saved) return saved;
+    }
+    forget_materials();
+    return {};
+}
+void EditorSession::request_thumbnail_data(assets::AssetId id) {
+    const auto meta = assets_ ? assets_->find(id) : std::nullopt;
+    if (!meta || (meta->type != assets::AssetType::Mesh && meta->type != assets::AssetType::Texture)) return;
+    auto source = asset_folder() / std::filesystem::path(std::u8string(reinterpret_cast<const char8_t *>(meta->path.data()), meta->path.size()));
+    // The worker touches only its own copy of the path, like an import.
+    thumbnail_jobs_.push_back({id, meta->type, std::async(std::launch::async, [source = std::move(source)]() -> std::shared_ptr<const assets::PreparedImport> {
+        auto prepared = assets::prepare_import(source);
+        return prepared ? std::make_shared<const assets::PreparedImport>(std::move(prepared.value())) : nullptr;
+    })});
+}
+std::vector<EditorSession::ThumbnailData> EditorSession::poll_thumbnail_data() {
+    std::vector<ThumbnailData> done;
+    for (std::size_t i = 0; i < thumbnail_jobs_.size();) {
+        auto &job = thumbnail_jobs_[i];
+        if (job.result.wait_for(std::chrono::seconds(0)) != std::future_status::ready) { ++i; continue; }
+        ThumbnailData data;
+        data.id = job.id; data.type = job.type;
+        const auto prepared = job.result.get();
+        thumbnail_jobs_.erase(thumbnail_jobs_.begin() + std::ptrdiff_t(i));
+        if (prepared && prepared->mesh && assets_ && assets_->find(data.id)) {
+            data.mesh = resources_.mesh(data.id, assets_->revision(data.id), prepared->mesh);
+            data.vertices = prepared->mesh->vertices.size();
+            data.triangles = prepared->mesh->indices.size() / 3;
+        } else if (prepared && prepared->texture && prepared->texture->width && prepared->texture->height) {
+            const auto &image = *prepared->texture;
+            data.source_width = image.width; data.source_height = image.height;
+            const auto longest = std::max(image.width, image.height);
+            const double step = std::max(double(longest) / thumbnail_size, 1.0);
+            data.width = std::max(std::uint32_t(image.width / step), 1u);
+            data.height = std::max(std::uint32_t(image.height / step), 1u);
+            data.pixels.resize(std::size_t(data.width) * data.height * 4);
+            const auto stride = image.pixels.size() / (std::size_t(image.width) * image.height);
+            for (std::uint32_t y = 0; y < data.height; ++y)
+                for (std::uint32_t x = 0; x < data.width; ++x) {
+                    const auto source_x = std::min(std::uint32_t(x * step), image.width - 1), source_y = std::min(std::uint32_t(y * step), image.height - 1);
+                    const auto *from = image.pixels.data() + (std::size_t(source_y) * image.width + source_x) * stride;
+                    auto *to = data.pixels.data() + (std::size_t(y) * data.width + x) * 4;
+                    to[0] = from[0]; to[1] = stride > 1 ? from[1] : from[0]; to[2] = stride > 2 ? from[2] : from[0]; to[3] = stride > 3 ? from[3] : 255;
+                }
+        } else data.failed = true;
+        done.push_back(std::move(data));
+    }
+    return done;
+}
 void EditorSession::set_bookmark(std::size_t slot) {
     if (slot >= view_state_.bookmarks.size()) return;
     view_state_.bookmarks[slot] = CameraBookmark{camera.target, camera.yaw, camera.pitch, camera.distance, camera.orthographic};
@@ -842,7 +1116,8 @@ EntityId EditorSession::pick(const renderer::FrameSnapshot &frame, double x, dou
     const auto segment = glm::dvec3(b - a);
     const double length = glm::length(segment);
     const auto direction = segment / length;
-    return cast_ray(frame, {a.x, a.y, a.z}, {direction.x, direction.y, direction.z}, length, {}).first;
+    // A locked entity cannot be picked, and what is behind it can.
+    return cast_ray(frame, {a.x, a.y, a.z}, {direction.x, direction.y, direction.z}, length, runtime_ ? std::set<EntityId>{} : view_state_.locked).first;
 }
 const EditorSession::Resolved &EditorSession::resolve(const AssetRef &ref, assets::AssetType type) const {
     const auto key = std::make_tuple(ref.id, ref.path, type);
@@ -1039,7 +1314,7 @@ Result<void> EditorSession::save_material(assets::AssetId id, const assets::Mate
     if (before != data) {
         const auto meta = assets_->find(id);
         const auto stem = std::filesystem::path(std::u8string(reinterpret_cast<const char8_t *>(meta->path.data()), meta->path.size())).stem().u8string();
-        undo_steps_.push_back({"Edit Material " + std::string(reinterpret_cast<const char *>(stem.data()), stem.size()), MaterialEdit{id, before, data}});
+        undo_steps_.push_back({"Edit Material " + std::string(reinterpret_cast<const char *>(stem.data()), stem.size()), MaterialEdit{id, before, data}, std::nullopt, false});
         redo_steps_.clear();
         bus_.discard_redo();
         if (std::ranges::count_if(undo_steps_, [](const HistoryStep &step) { return step.material.has_value(); }) > 128)

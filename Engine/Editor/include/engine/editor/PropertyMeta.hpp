@@ -1,6 +1,8 @@
 #pragma once
 #include <engine/scene/Scene.hpp>
 #include <functional>
+#include <optional>
+#include <string>
 #include <string_view>
 #include <variant>
 #include <vector>
@@ -48,6 +50,36 @@ template<class T> struct PropertyTable {
         return nullptr;
     }
 };
+// One value as text, for the clipboard. A value pastes only into a property of the same kind.
+std::string property_to_text(const PropertyValue &);
+std::optional<PropertyValue> property_from_text(std::string_view);
+// A whole component: its name, then one "id value" a line.
+template<class T> std::string component_to_text(const PropertyTable<T> &table, const T &value) {
+    std::string text = "COMPONENT " + std::string(table.name) + "\n";
+    for (const auto &property : table.properties) text += std::string(property.id) + ' ' + property_to_text(property.get(value)) + "\n";
+    return text;
+}
+// Applies what the text says to `value`. False, and no change, when the text is not this kind of component.
+template<class T> bool component_from_text(const PropertyTable<T> &table, std::string_view text, T &value) {
+    const auto next_line = [&] {
+        const auto end = text.find('\n');
+        const auto line = text.substr(0, end);
+        text.remove_prefix(end == std::string_view::npos ? text.size() : end + 1);
+        return line;
+    };
+    if (next_line() != "COMPONENT " + std::string(table.name)) return false;
+    T result = value;
+    while (!text.empty()) {
+        const auto line = next_line();
+        const auto space = line.find(' ');
+        if (space == std::string_view::npos) continue;
+        const auto *property = table.find(line.substr(0, space));
+        const auto parsed = property_from_text(line.substr(space + 1));
+        if (property && parsed && parsed->index() == property->get(result).index()) property->set(result, *parsed);
+    }
+    value = result;
+    return true;
+}
 const PropertyTable<Transform> &transform_properties();
 const PropertyTable<MeshComponent> &mesh_properties();
 const PropertyTable<CameraComponent> &camera_properties();

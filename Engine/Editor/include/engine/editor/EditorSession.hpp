@@ -31,9 +31,26 @@ struct CameraBookmark {
     bool orthographic = false;
     bool operator==(const CameraBookmark &) const = default;
 };
+// Folders in the hierarchy. They organize the editor's view and mean nothing to the scene or to gameplay.
+struct SceneFolder {
+    std::uint64_t id = 0, parent = 0; // Parent 0 is the root.
+    std::string name;
+    bool operator==(const SceneFolder &) const = default;
+};
+struct EditorFolders {
+    std::vector<SceneFolder> folders;
+    std::map<EntityId, std::uint64_t> members; // Root entities filed in a folder; children follow their parent.
+    std::uint64_t next_id = 1;
+    bool operator==(const EditorFolders &) const = default;
+    const SceneFolder *find(std::uint64_t id) const {
+        for (const auto &folder : folders) if (folder.id == id) return &folder;
+        return nullptr;
+    }
+};
 struct EditorViewState {
-    std::set<EntityId> hidden;
+    std::set<EntityId> hidden, locked; // Locked: cannot be picked in the viewport.
     std::array<std::optional<CameraBookmark>, 10> bookmarks;
+    EditorFolders folders;
     bool operator==(const EditorViewState &) const = default;
     bool empty() const { return *this == EditorViewState{}; }
 };
@@ -110,11 +127,20 @@ class EditorSession {
     std::map<assets::AssetId, assets::MaterialData> material_drafts_;
     // One ordered history of named steps. A scene step's data lives in the command bus; a material edit carries its own.
     struct MaterialEdit { assets::AssetId id; assets::MaterialData before, after; };
-    struct HistoryStep { std::string name; std::optional<MaterialEdit> material; };
+    struct FolderEdit { EditorFolders before, after; };
+    // `scene`: the command bus holds a matching step. A transaction can change the scene and folders together.
+    struct HistoryStep { std::string name; std::optional<MaterialEdit> material; std::optional<FolderEdit> folders; bool scene = true; };
     std::vector<HistoryStep> undo_steps_, redo_steps_;
     std::uint64_t bus_recorded_ = 0;
     int transaction_depth_ = 0;
     bool transaction_cancelled_ = false;
+    std::string transaction_name_;
+    std::optional<EditorFolders> transaction_folders_; // Folders as they were when the open transaction first changed them.
+    Result<void> commit_folders(EditorFolders next, std::string name);
+    void set_flag_on_subtree(std::set<EntityId> &flags, EntityId id, bool on);
+    // A worker decoding an asset for its thumbnail.
+    struct ThumbnailJob { assets::AssetId id; assets::AssetType type; std::future<std::shared_ptr<const assets::PreparedImport>> result; };
+    std::vector<ThumbnailJob> thumbnail_jobs_;
     // A gizmo drag in progress: where each moved entity started.
     std::vector<std::pair<EntityId, WorldTransform>> drag_start_;
     EditorViewState view_state_;
@@ -178,6 +204,13 @@ public:
     bool in_transaction() const { return transaction_depth_ > 0; }
     // The history as a list, oldest first. The first history_position() entries are applied, the rest can be redone.
     std::vector<std::string> history_names() const;
+    // ---- Whole-selection operations, each one undo step ----
+    // The selection and its children as scene text, for the clipboard. Roots keep their place in the world.
+    Result<std::string> copy_selection() const;
+    // Adds what copy_selection() wrote, with new IDs, at the root, and selects it.
+    Result<void> paste(std::string_view text);
+    // A new empty entity at the middle of the selection, with the selection under it. Selected afterwards.
+    Result<EntityId> group_selection();
     std::size_t history_position() const { return undo_steps_.size(); }
     // Undoes or redoes until exactly `position` entries are applied.
     Result<void> jump_history(std::size_t position);
@@ -234,6 +267,19 @@ public:
     // Hides the selection and its children in the editor, and deselects them. Saved with the view state.
     void hide_selection();
     void unhide_all();
+    // The entity and its children.
+    void set_hidden(EntityId id, bool hidden);
+    bool locked(EntityId id) const { return view_state_.locked.contains(id); }
+    void set_locked(EntityId id, bool locked);
+    // ---- Folders in the hierarchy; undoable, and kept in the view state, never in the scene ----
+    Result<std::uint64_t> create_folder(const std::string &name, std::uint64_t parent = 0);
+    Result<void> rename_folder(std::uint64_t id, const std::string &name);
+    // What the folder held moves up to its parent. No entity is deleted.
+    Result<void> delete_folder(std::uint64_t id);
+    Result<void> move_folder(std::uint64_t id, std::uint64_t parent);
+    // Takes the entity out of any parent, keeping its place in the world, and files it. Folder 0 is the root.
+    Result<void> file_entity(EntityId id, std::uint64_t folder);
+    std::uint64_t folder_of(EntityId id) const;
     void set_bookmark(std::size_t slot);
     std::optional<OrbitCamera> bookmark(std::size_t slot) const;
     // A view state file that could not be read since the last call, for the host to report.
@@ -287,6 +333,25 @@ public:
     Result<void> rescan_assets();
     // Re-imports from disk; everything drawing the asset picks up the new revision on the next frame.
     Result<void> reload_asset(assets::AssetId);
+    // Moves or renames the file, keeping its ID, and updates the paths stored in the scene (one undo step) and in
+    // materials (saved at once). References find assets by ID first, so a stale path would still resolve.
+    Result<void> rename_asset(assets::AssetId, const std::string &new_path);
+    // What a thumbnail needs, from a worker. A mesh is ready to draw; a texture comes reduced to at most `thumbnail_size`.
+    static constexpr std::uint32_t thumbnail_size = 128;
+    struct ThumbnailData {
+        assets::AssetId id;
+        assets::AssetType type = assets::AssetType::Unknown;
+        renderer::MeshHandle mesh;
+        std::vector<std::uint8_t> pixels;
+        std::uint32_t width = 0, height = 0;                // Of `pixels`.
+        std::uint32_t source_width = 0, source_height = 0;  // Of the image.
+        std::size_t vertices = 0, triangles = 0;
+        bool failed = false;
+    };
+    // Decodes a model or texture on a worker, without touching the catalogue.
+    void request_thumbnail_data(assets::AssetId);
+    std::size_t thumbnail_jobs() const { return thumbnail_jobs_.size(); }
+    std::vector<ThumbnailData> poll_thumbnail_data();
     std::vector<assets::AssetMetadata> assets() const;
     std::vector<assets::AssetIssue> asset_issues() const;
     assets::AssetState asset_state(assets::AssetId) const;
