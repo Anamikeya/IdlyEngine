@@ -442,6 +442,58 @@ Result<EnvironmentAsset> AssetDatabase::load_environment(AssetId id)
 		[this](const AssetMetadata& meta) { return impl_->import_environment(meta); });
 }
 
+std::uint32_t AssetDatabase::revision(AssetId id) const
+{
+	const auto it = impl_->by_id.find(id);
+	return it == impl_->by_id.end() ? 0 : it->second.revision;
+}
+
+Result<void> AssetDatabase::move(AssetId id, std::string_view new_path)
+{
+	const auto it = impl_->by_id.find(id);
+	if (it == impl_->by_id.end()) {
+		return fail(ErrorCode::NotFound, "unknown asset id " + to_string(id));
+	}
+	const auto meta = it->second.meta;
+	auto normalized = normalize_asset_path(new_path);
+	if (!normalized) {
+		return fail(ErrorCode::InvalidArgument, "that name cannot be used: " + normalized.error().message);
+	}
+	if (normalized.value() == meta.path) {
+		return {};
+	}
+	if (asset_type_for(normalized.value()) != meta.type) {
+		return fail(ErrorCode::InvalidArgument, "the new name must keep the file type of " + meta.path);
+	}
+	const fs::path source = impl_->source_of(meta), target = impl_->root / from_utf8(normalized.value());
+	fs::path source_meta = source, target_meta = target;
+	source_meta += ".meta";
+	target_meta += ".meta";
+	std::error_code ec;
+	if (fs::exists(target, ec) || fs::exists(target_meta, ec)) {
+		return fail(ErrorCode::InvalidArgument, normalized.value() + " already exists");
+	}
+	fs::create_directories(target.parent_path(), ec);
+	if (ec) {
+		return fail(ErrorCode::InvalidState, "cannot create the folder for " + normalized.value());
+	}
+	// The id goes with the file: a new .meta first, even for an asset whose id came from its old path.
+	if (auto written = impl_->write_atomic(target_meta, write_meta(MetaFile{id, meta.settings})); !written) {
+		return written.error();
+	}
+	fs::rename(source, target, ec);
+	if (ec) {
+		std::error_code ignored;
+		fs::remove(target_meta, ignored);
+		return fail(ErrorCode::InvalidState, "cannot move " + meta.path + ": " + ec.message());
+	}
+	fs::remove(source_meta, ec);
+	if (auto scanned = scan(); !scanned) {
+		return scanned.error();
+	}
+	return {};
+}
+
 Result<AssetId> AssetDatabase::create_material(std::string_view path, const MaterialData& material)
 {
 	if (auto valid = validate_material(material); !valid) {
