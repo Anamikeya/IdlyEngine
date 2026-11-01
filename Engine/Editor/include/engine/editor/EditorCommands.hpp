@@ -41,6 +41,8 @@ inline constexpr std::string_view global = "Global", viewport = "Viewport", outl
 inline constexpr std::string_view flying = "Flying";
 // Asked first while something is running, so Esc can mean "stop" there and "deselect" otherwise.
 inline constexpr std::string_view playing = "Playing";
+// Keys that do something for as long as they are held, like Flying's. Also never dispatched.
+inline constexpr std::string_view held = "Held";
 }
 // The description of a command, with no behavior: what the shortcut documentation and tests read.
 struct CommandInfo {
@@ -74,6 +76,9 @@ struct InputBlock {
         return !modal && !interacting && !rebinding && (!captured || info.while_captured) && (!text_input || info.while_typing);
     }
 };
+// What a cheat sheet shows for one context. `enabled` is false for what cannot run right now.
+struct CheatSheetRow { std::string keys, label; bool enabled = true; };
+struct CheatSheetGroup { std::string context; std::vector<CheatSheetRow> rows; };
 struct KeymapReport {
     std::size_t applied = 0;
     std::vector<std::string> unknown; // Commands the file names that this build does not have.
@@ -109,11 +114,16 @@ public:
     const EditorCommand *resolve(KeyChord, std::span<const std::string_view> contexts) const;
     // Resolves and runs. False, and nothing happens, when `block` says shortcuts must not fire.
     bool dispatch(KeyChord, std::span<const std::string_view> contexts, const InputBlock &block = {}) const;
+    // The shortcuts that mean something in these contexts, in the order they are asked, then Global unless told not to.
+    // A key a nearer context takes is not listed again further out. Commands with no key are left out.
+    std::vector<CheatSheetGroup> cheat_sheet(std::span<const std::string_view> contexts, bool with_global = true) const;
     // Text of the user's overrides, one "id = chord, chord" a line.
     std::string save_keymap() const;
     // Replaces all overrides with the text's. A malformed line fails and changes nothing; an unknown command is reported.
     Result<KeymapReport> load_keymap(std::string_view text);
 };
+// Whether something other than a shortcut reads this command's keys: it has no use in a palette or console.
+inline bool read_directly(const CommandInfo &info) noexcept { return info.context == context::flying || info.context == context::held; }
 // Every command the editor has, as data. The UI binds behavior to these by ID.
 std::vector<CommandInfo> default_command_table();
 // Mouse gestures, which belong to the camera and gizmo state machines rather than to chords, so they cannot be rebound yet.

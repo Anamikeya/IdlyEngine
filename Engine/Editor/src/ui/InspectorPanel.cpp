@@ -296,7 +296,7 @@ template<class T> bool section_header(EditorUI &ui, Section<T> &s, const std::fu
     if (remove) {
         const float width = ImGui::CalcTextSize("Remove").x + ImGui::GetStyle().FramePadding.x * 2;
         ImGui::SameLine(ImGui::GetWindowContentRegionMax().x - width);
-        if (ImGui::SmallButton("Remove")) remove();
+        if (ui.tip_small_button("Remove", "Take this component off everything selected")) remove();
         ui.mark("Remove." + s.scope);
     }
     ImGui::PopID();
@@ -321,7 +321,7 @@ void EditorUI::details_apply(std::string label, std::vector<commands::Command> e
         const auto count = std::min(edits.size() - at, commands::CommandBus::max_transaction);
         if (const auto done = session.execute(std::span<const commands::Command>(edits).subspan(at, count), {}); !done) {
             // A value the scene refuses leaves the field where it was. Saying so once per drag is enough.
-            if (done.error().message != details_error) { details_error = done.error().message; log("Error: " + details_error); }
+            if (done.error().message != details_error) { details_error = done.error().message; log_error(details_error); }
             return;
         }
     }
@@ -340,7 +340,7 @@ void EditorUI::inspector() {
     for (const auto id : details_pinned) if (auto record = session.scene().inspect(id)) details_targets.push_back(std::move(*record));
     if (!visible) { finish_details_edit(); ImGui::End(); return; }
     if (details_locked) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.75f, 0.45f, 0.15f, 1));
-    if (ImGui::Button(details_locked ? "Locked" : "Lock")) details_locked = !details_locked;
+    if (tip_button(details_locked ? "Locked" : "Lock", "Keep showing this entity when the selection changes")) details_locked = !details_locked;
     if (details_locked) ImGui::PopStyleColor();
     ImGui::SetItemTooltip(details_locked ? "These details stay on the same entities while the selection changes. Click to follow the selection again." : "Keep showing these entities while the selection changes.");
     mark("Details.Lock");
@@ -524,7 +524,7 @@ void EditorUI::inspector() {
     behavior_sections();
     // ---- Adding ----
     ImGui::Spacing();
-    if (ImGui::Button("Add Component")) ImGui::OpenPopup("Add Component");
+    if (tip_button("Add Component", "Add a component to everything selected")) ImGui::OpenPopup("Add Component");
     mark("Details.AddComponent");
     if (ImGui::BeginPopup("Add Component")) {
         const auto any_missing = [&](auto has) { return !all_have(has); };
@@ -608,7 +608,7 @@ void EditorUI::behavior_sections() {
         };
         const float width = ImGui::CalcTextSize("Remove").x + ImGui::GetStyle().FramePadding.x * 2;
         ImGui::SameLine(ImGui::GetWindowContentRegionMax().x - width);
-        if (ImGui::SmallButton("Remove")) {
+        if (tip_small_button("Remove", "Take this off everything selected")) {
             std::vector<commands::Command> edits;
             for (const auto &record : details_targets) {
                 auto list = record.components.behaviors;

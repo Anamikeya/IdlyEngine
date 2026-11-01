@@ -40,7 +40,7 @@ void EditorUI::picker_window() {
         std::vector<const EditorCommand *> ordered;
         for (const auto &id : recent_commands) if (const auto *command = registry.find(id)) ordered.push_back(command);
         for (const auto &command : registry.commands())
-            if (command.info.context != context::flying && std::ranges::find(ordered, &command) == ordered.end()) ordered.push_back(&command);
+            if (!read_directly(command.info) && std::ranges::find(ordered, &command) == ordered.end()) ordered.push_back(&command);
         for (const auto *command : ordered) {
             const auto &id = command->info.id;
             items.push_back({command->info.category + " " + command->info.label, command->info.label, command->info.category, registry.shortcut(id), registry.enabled(id),
@@ -137,7 +137,7 @@ int console_keys(ImGuiInputTextCallbackData *data) {
 }
 void EditorUI::console_print(const std::string &text) {
     std::istringstream lines(text);
-    for (std::string line; std::getline(lines, line);) log(line);
+    for (std::string line; std::getline(lines, line);) console_line(Severity::Info, line);
 }
 void EditorUI::console_panel() {
     if (console_close) {
@@ -150,7 +150,8 @@ void EditorUI::console_panel() {
     if (!begin_panel("Console", "Console", context::global, &show_console)) { ImGui::End(); return; }
     const float footer = ImGui::GetFrameHeightWithSpacing();
     if (ImGui::BeginChild("##messages", {0, -footer})) {
-        for (const auto &m : messages) ImGui::TextWrapped("%s", m.c_str());
+        const auto &entries = messages.entries();
+        for (int i = 0; i < int(entries.size()); ++i) draw_log_entry(entries[std::size_t(i)], i, "Console");
         // The newest message, such as an import error, is what the user needs to see.
         if (std::exchange(scroll_console, false)) ImGui::SetScrollHereY(1);
     }
@@ -169,10 +170,10 @@ void EditorUI::console_panel() {
         console_focus = true; // Enter takes the focus; the next command needs it back.
         if (!line.empty()) {
             console_history.add(line);
-            log("> " + line);
+            console_line(Severity::Info, "> " + line);
             const auto result = console.execute(line);
             if (result) console_print(result.value());
-            else log("Error: " + result.error().message);
+            else console_line(Severity::Error, result.error().message);
         }
     }
     // ---- What it could be, above the line ----
@@ -240,7 +241,7 @@ void EditorUI::bind_console() {
     });
     // ---- Every command, by its ID ----
     for (const auto &command : registry.commands()) {
-        if (command.info.context == context::flying) continue;
+        if (read_directly(command.info)) continue;
         console.add_action(command.info.id, command.info.tooltip, [this, id = command.info.id](std::string_view) {
             return registry.run(id) ? std::string{} : id + " cannot run right now";
         });

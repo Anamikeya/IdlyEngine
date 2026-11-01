@@ -85,7 +85,7 @@ void EditorUI::material_editor() {
     if (ImGui::DragFloat2("UV scale", uv, 0.01f, 0.001f, 1000, "%.3f", ImGuiSliderFlags_AlwaysClamp)) { m.uv_scale = {uv[0], uv[1]}; live = true; }
     commit |= ImGui::IsItemDeactivatedAfterEdit();
     if (commit) report(session.save_material(chosen->id, m), "Material saved");
-    else if (live) { if (auto shown = session.preview_material(chosen->id, m); !shown) log("Error: " + shown.error().message); }
+    else if (live) { if (auto shown = session.preview_material(chosen->id, m); !shown) log_error(shown.error().message); }
     ImGui::TextDisabled("Changes save to the file when a control is released; Ctrl+Z undoes them.");
     ImGui::End();
 }

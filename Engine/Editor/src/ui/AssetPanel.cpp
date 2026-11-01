@@ -9,19 +9,26 @@
 namespace engine::editor {
 void EditorUI::import_file(const std::filesystem::path &file) {
     import_started[file.string()] = std::chrono::steady_clock::now();
-    session.begin_import(file);
-    log("Importing " + file.filename().string() + "...");
+    const auto task_name = "Importing " + file.filename().string();
+    import_tasks[tasks.begin(task_name, true)] = session.begin_import(file);
+    log(task_name + "...");
 }
 void EditorUI::finish_imports() {
     for (const auto &finished : session.poll_imports()) {
         const auto started = import_started.find(finished.source.string());
         const auto took = started == import_started.end() ? 0 : std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - started->second).count();
         if (started != import_started.end()) import_started.erase(started);
-        if (!finished.result) { log("Import failed: " + finished.result.error().message); continue; }
+        for (auto task = import_tasks.begin(); task != import_tasks.end();) {
+            if (task->second == finished.id) { tasks.finish(task->first); task = import_tasks.erase(task); }
+            else ++task;
+        }
+        if (finished.cancelled) continue; // Said so when it was cancelled.
+        if (!finished.result) { log_error("Import failed: " + finished.result.error().message); continue; }
         const auto &asset = finished.result.value();
-        log("Imported " + asset.path + " as a " + assets::to_string(asset.type) + " in " + std::to_string(took) + " ms");
+        const auto link = LogLink::asset(asset.id.value, asset.path);
+        notify(Severity::Success, "Imported as a " + std::string(assets::to_string(asset.type)) + " in " + std::to_string(took) + " ms", link);
         import_times.emplace_back(asset.path, static_cast<long long>(took));
-        for (const auto &warning : asset.warnings) log("Warning: " + asset.path + ": " + warning);
+        for (const auto &warning : asset.warnings) notify(Severity::Warning, warning, link);
         selected_asset = asset.id;
     }
 }
@@ -69,7 +76,12 @@ std::string readable_size(std::uint64_t bytes) {
 }
 // ---- Thumbnails. Decoded on a worker; the GPU work happens one a frame in the renderer ----
 void EditorUI::update_thumbnails() {
+    // The browser asks for a few at a time, so "no jobs" for a moment does not mean it has finished.
+    thumbnails_idle = session.thumbnail_jobs() ? 0 : thumbnails_idle + ImGui::GetIO().DeltaTime;
+    if (session.thumbnail_jobs() && !thumbnail_task) { thumbnail_task = tasks.begin("Making thumbnails"); thumbnails_made = 0; }
+    if (thumbnail_task && thumbnails_idle > 0.5) { tasks.finish(thumbnail_task); thumbnail_task = 0; }
     for (auto &data : session.poll_thumbnail_data()) {
+        if (thumbnail_task) tasks.set_name(thumbnail_task, "Making thumbnails: " + std::to_string(++thumbnails_made) + " done");
         auto &state = thumbnails[data.id];
         state.vertices = data.vertices; state.triangles = data.triangles;
         state.width = data.source_width; state.height = data.source_height;
@@ -197,7 +209,7 @@ bool EditorUI::asset_field(std::string_view type_name, AssetRef &ref, bool mixed
             std::memcpy(&id.value, payload->Data, sizeof id.value);
             const auto dropped = std::ranges::find_if(catalogue, [&](const assets::AssetMetadata &meta) { return meta.id == id; });
             if (dropped != catalogue.end() && dropped->type == type) { ref = {dropped->id.value, dropped->path}; changed = true; }
-            else log(std::string("Error: That field takes a ") + std::string(type_name));
+            else log_error(std::string("That field takes a ") + std::string(type_name));
         }
         ImGui::EndDragDropTarget();
     }
@@ -250,15 +262,15 @@ void EditorUI::asset_browser_contents() {
     const bool entered = ImGui::InputTextWithHint("##import", "File to import, or drop one on the window", import_path.data(), import_path.size(), ImGuiInputTextFlags_EnterReturnsTrue);
     mark("Asset.ImportPath");
     ImGui::SameLine();
-    if (ImGui::Button("Import") || entered) {
+    if (tip_button("Import", "Bring this file into the project. It runs in the background.") || entered) {
         if (import_path[0]) import_file(utf8_path(import_path.data()));
-        else log("Error: Enter a file to import, or drop one on the window");
+        else log_error("Enter a file to import, or drop one on the window");
     }
     ImGui::SameLine();
-    if (ImGui::Button("Rescan")) report(session.rescan_assets(), "Asset folder rescanned");
+    if (tip_button("Rescan", "Look through the asset folder again for changed files")) report(session.rescan_assets(), "Asset folder rescanned");
     ImGui::SetNextItemWidth(px(110)); ImGui::InputText("##material-name", new_material_name.data(), new_material_name.size());
     flow(button_width("New material"));
-    if (ImGui::Button("New material")) {
+    if (tip_button("New material", "Make a material with the name to the left")) {
         const auto created = session.create_material(new_material_name.data());
         if (report(created, "Material created")) { selected_asset = created.value(); asset_scroll_to = selected_asset; }
     }
@@ -288,7 +300,7 @@ void EditorUI::asset_browser_contents() {
     for (std::size_t i = 0; i < std::size(chip_names); ++i) {
         flow(button_width(chip_names[i]));
         if (asset_chips[i]) ImGui::PushStyleColor(ImGuiCol_Button, ImGui::ColorConvertU32ToFloat4(type_color(chip_types[i])));
-        if (ImGui::SmallButton(chip_names[i])) asset_chips[i] = !asset_chips[i];
+        if (tip_small_button(chip_names[i], "Show only assets of the kinds chosen here")) asset_chips[i] = !asset_chips[i];
         if (asset_chips[i]) ImGui::PopStyleColor();
         mark(std::string("Asset.Chip.") + chip_names[i]);
     }
@@ -327,7 +339,7 @@ void EditorUI::asset_browser_contents() {
     ImGui::BeginChild("##items", {0, 0}, ImGuiChildFlags_Borders);
     if (asset_source == AssetSource::Builtin) {
         ImGui::TextDisabled("Built-in meshes");
-        for (const auto *id : {"Create.Cube", "Create.Sphere", "Create.Plane"}) { if (ImGui::Button(registry.find(id)->info.label.c_str())) registry.run(id); ImGui::SameLine(); }
+        for (const auto *id : {"Create.Cube", "Create.Sphere", "Create.Plane"}) { command_button(id); ImGui::SameLine(); }
         ImGui::NewLine();
     } else if (asset_source == AssetSource::Scenes) {
         ImGui::TextDisabled("Scene files beside the current scene. Click one to choose it, then Load.");

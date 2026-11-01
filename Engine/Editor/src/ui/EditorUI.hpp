@@ -9,6 +9,8 @@
 #include <engine/editor/EditorCommands.hpp>
 #include <engine/editor/EditorPrefs.hpp>
 #include <engine/editor/EditorSession.hpp>
+#include <engine/editor/Feedback.hpp>
+#include <engine/editor/GizmoEntry.hpp>
 #include <engine/renderer/DesktopRenderer.hpp>
 #include <glm/glm.hpp>
 #include <algorithm>
@@ -95,7 +97,7 @@ struct EditorUI {
     EditorSession &session;
     renderer::DesktopRenderer &renderer;
     std::array<char, 1024> scene_path{};
-    std::vector<std::string> messages{"Filament OpenGL initialized. All scene edits use typed commands."};
+    MessageLog messages;
     Pending pending = Pending::None;
     bool confirm_requested = false, quit = false;
     std::array<char, 257> name{}; // The Details panel's name field.
@@ -139,6 +141,14 @@ struct EditorUI {
     std::array<float, 16> gizmo_frozen_view{};
     OrbitCamera gizmo_camera_start;
     std::string drag_error; // The latest failed step of a gizmo drag, reported when it ends.
+    // Typing during a drag: where it began, exactly, and what was typed. Once confirmed, nothing more happens until the
+    // button comes up.
+    GizmoEntry gizmo_entry;
+    WorldTransform gizmo_start_world, gizmo_typed_change_now;
+    std::string gizmo_typed_applied;
+    int gizmo_handle = -1;
+    bool gizmo_confirmed = false;
+    std::array<float, 16> gizmo_final{};
     // ---- Viewport ----
     CameraController camera_control;
     bool camera_holding = false; // Navigating: the cursor is hidden and held, and comes back where it was.
@@ -183,11 +193,42 @@ struct EditorUI {
     void finish_rebind();
     void move_selection_to_root();
     explicit EditorUI(EditorSession &s, renderer::DesktopRenderer &r, GameInput &g, GLFWwindow *w);
-    bool scroll_console = false;
-    void log(std::string text);
+    bool scroll_console = false, scroll_message_log = false;
+    // Into the log only. Most messages are this: the user is looking at what they just did.
+    void log(std::string text, LogLink link = {});
+    void log(Severity severity, std::string text, LogLink link = {});
+    // Into the log, and a toast: for what the user is waiting to hear, or would otherwise miss.
+    void notify(Severity severity, std::string text, LogLink link = {});
+    void log_error(std::string text);
     template<class T> bool report(const Result<T> &r, const char *success) {
-        if (r) { log(success); return true; } log("Error: " + r.error().message); return false;
+        if (r) { log(Severity::Success, success); return true; } log_error(r.error().message); return false;
     }
+    template<class T> bool announce(const Result<T> &r, const char *success) {
+        if (r) { notify(Severity::Success, success); return true; } log_error(r.error().message); return false;
+    }
+    // ---- Toasts, tasks and the Message Log ----
+    ToastQueue toasts;
+    TaskList tasks;
+    LogFilter log_filter;
+    bool show_message_log = true;
+    std::map<std::uint64_t, std::uint64_t> import_tasks; // Task to import.
+    std::uint64_t thumbnail_task = 0;
+    std::size_t thumbnails_made = 0;
+    double thumbnails_idle = 0;
+    std::optional<LogLink> link_clicked; // Followed after the panels are drawn, since it may change what they show.
+    void console_line(Severity severity, std::string text);
+    void open_link(const LogLink &link);
+    void draw_log_entry(const LogEntry &entry, int index, const char *where);
+    void message_log_panel();
+    void toast_windows();
+    void cancel_task(std::uint64_t id);
+    // ---- Help where the mouse is ----
+    bool cheat_sheet_open = false;
+    std::string shown_tooltip; // For the --game-log line.
+    void tip(const std::string &text);
+    bool tip_button(const char *label, const char *tooltip);
+    bool tip_small_button(const char *label, const char *tooltip);
+    void cheat_sheet_overlay();
     bool playing() const { return session.play_state() != PlayState::Editing; }
     // Creates and selects an entity in one command, so it is one undo step.
     void spawn(const char *label, Components c, Transform t = {{0,0.5,0}, {}, {1,1,1}}, EntityId parent = 0);
@@ -355,7 +396,7 @@ struct EditorUI {
     std::array<char, 128> layout_name{};
     std::string pending_layout; // ImGui settings to load before the next frame.
     std::string saved_panels;   // Which panels were open when settings were last saved.
-    std::array<bool *, 7> panel_flags();
+    std::array<bool *, 8> panel_flags();
     void layout_dialog();
     std::vector<std::string> saved_layouts() const;
     void apply_pending_layout();

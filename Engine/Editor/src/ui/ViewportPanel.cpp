@@ -15,20 +15,22 @@ void EditorUI::report_physics() {
     std::set<std::string> current;
     for (const auto &issue : session.physics_bridge().diagnostics().issues) {
         const auto record = session.scene().inspect(issue.entity);
-        current.insert("Physics: " + (record ? record->name : std::to_string(issue.entity)) + ": " + issue.message);
+        const auto entity_name = record ? record->name : std::to_string(issue.entity);
+        auto message = "Physics: " + entity_name + ": " + issue.message;
+        if (!reported_issues.contains(message)) notify(Severity::Warning, message, record ? LogLink::entity(issue.entity, entity_name) : LogLink{});
+        current.insert(std::move(message));
     }
-    for (const auto &message : current) if (!reported_issues.contains(message)) log(message);
     reported_issues = std::move(current);
     if (session.physics_error() != reported_physics_error) {
         reported_physics_error = session.physics_error();
-        if (!reported_physics_error.empty()) log("Error: " + reported_physics_error);
+        if (!reported_physics_error.empty()) log_error(reported_physics_error);
     }
 }
 void EditorUI::report_assets() {
     std::set<std::string> current(session.asset_problems().begin(), session.asset_problems().end());
     for (const auto &issue : session.asset_issues()) current.insert("Asset folder: " + issue.path + ": " + issue.message);
-    for (const auto &issue : renderer.take_issues()) log("Renderer: " + issue);
-    for (const auto &message : current) if (!reported_asset_problems.contains(message)) log(message);
+    for (const auto &issue : renderer.take_issues()) notify(Severity::Warning, "Renderer: " + issue);
+    for (const auto &message : current) if (!reported_asset_problems.contains(message)) notify(Severity::Warning, message);
     reported_asset_problems = std::move(current);
 }
 void EditorUI::viewport() {
@@ -83,7 +85,7 @@ void EditorUI::viewport() {
     if (!game && !game_view) selection_outlines(origin, size);
     report_physics();
     report_assets();
-    if (const auto problem = session.take_view_state_problem(); !problem.empty()) log("Error: " + problem);
+    if (const auto problem = session.take_view_state_problem(); !problem.empty()) log_error(problem);
     const EntityId marker = game || game_view || !show_markers ? 0 : markers(origin, size);
     if (camera_control.clicked() && !game) {
         const auto hit = marker ? marker : session.pick(*frame, (io.MousePos.x-origin.x) / size.x * 2-1, 1-(io.MousePos.y-origin.y) / size.y * 2);
@@ -213,14 +215,14 @@ void EditorUI::viewport_overlay(ImVec2 origin, ImVec2 size) {
     // ---- Top left: the view ----
     ImGui::SetCursorScreenPos({origin.x + pad, origin.y + pad});
     constexpr const char *view_names[] = {"Perspective", "Front", "Top", "Side"};
-    if (ImGui::Button(view_names[view_kind])) ImGui::OpenPopup("##view-kind");
+    if (tip_button(view_names[view_kind], ("Which way the view looks. " + registry.shortcut("Viewport.Perspective") + ", " + registry.shortcut("Viewport.Front") + ", " + registry.shortcut("Viewport.Top") + ", " + registry.shortcut("Viewport.Side")).c_str())) ImGui::OpenPopup("##view-kind");
     mark("View.Kind");
     if (ImGui::BeginPopup("##view-kind")) {
         for (const auto *id : {"Viewport.Perspective", "Viewport.Front", "Viewport.Top", "Viewport.Side"}) command_item(id);
         ImGui::EndPopup();
     }
     ImGui::SameLine();
-    if (ImGui::Button("Lit")) ImGui::OpenPopup("##view-mode");
+    if (tip_button("Lit", "How the view is drawn, and what it shows")) ImGui::OpenPopup("##view-mode");
     mark("View.Mode");
     if (ImGui::BeginPopup("##view-mode")) {
         for (const auto *id : {"Viewport.Lit", "Viewport.Wireframe", "Viewport.Unlit"}) command_item(id);
@@ -246,7 +248,7 @@ void EditorUI::viewport_overlay(ImVec2 origin, ImVec2 size) {
         else ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.13f, 0.15f, 0.19f, 0.85f));
         if (ImGui::Button(item.label)) registry.run(item.command);
         ImGui::PopStyleColor();
-        ImGui::SetItemTooltip("%s", registry.tooltip(item.command).c_str());
+        tip(registry.tooltip(item.command));
         mark(std::string("Overlay.") + item.label);
         ImGui::SameLine(0, 1);
         ImGui::PushID(item.label);
@@ -263,7 +265,7 @@ void EditorUI::viewport_overlay(ImVec2 origin, ImVec2 size) {
         ImGui::SameLine();
     }
     if (ImGui::Button(speed_text.c_str())) ImGui::OpenPopup("##speed");
-    ImGui::SetItemTooltip("Camera speed in meters a second. RMB + Wheel changes it while flying.");
+    tip("Camera speed in meters a second. RMB + Wheel changes it while flying.");
     mark("Overlay.Speed");
     if (ImGui::BeginPopup("##speed")) {
         auto speed = float(camera_control.speed());
@@ -279,7 +281,9 @@ void EditorUI::gizmo(ImVec2 origin, ImVec2 size) {
     const auto world = session.scene().world_transform(session.selection());
     if (!world || possessed() || game_view) {
         if (gizmo_active && session.dragging()) (void)session.end_drag();
+        if (gizmo_active) ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
         gizmo_active = false;
+        gizmo_entry.clear();
         return;
     }
     if (ui_map.enabled())
@@ -312,17 +316,60 @@ void EditorUI::gizmo(ImVec2 origin, ImVec2 size) {
         drag_error.clear();
         gizmo_cancelled = false;
         gizmo_camera_start = session.camera;
+        gizmo_entry.clear();
+        gizmo_typed_applied.clear();
+        gizmo_confirmed = false;
+        gizmo_start_world = *world;
+        constexpr int first_handle[] = {ImGuizmo::MT_MOVE_X, ImGuizmo::MT_ROTATE_X, ImGuizmo::MT_SCALE_X};
+        gizmo_handle = int(ImGuizmo::GetActiveHandleType()) - first_handle[operation];
+        // Enter must confirm what was typed, not press whatever button last had the keyboard.
+        ImGui::GetIO().ConfigFlags &= ~ImGuiConfigFlags_NavEnableKeyboard;
         constexpr const char *verbs[] = {"Move", "Rotate", "Scale"};
-        if (const auto begun = session.begin_drag(verbs[operation], io.KeyAlt); !begun) log("Error: " + begun.error().message);
+        if (const auto begun = session.begin_drag(verbs[operation], io.KeyAlt); !begun) log_error(begun.error().message);
     }
     if (using_now && session.dragging() && ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
         gizmo_cancelled = true;
+        gizmo_entry.clear();
         if (gizmo_following) session.camera = gizmo_camera_start;
         report(session.cancel_drag(), "Drag cancelled");
     }
     if (gizmo_cancelled) std::copy_n(gizmo_start.begin(), 16, gizmo_matrix);
+    if (gizmo_confirmed) std::copy(gizmo_final.begin(), gizmo_final.end(), gizmo_matrix);
+    // ---- Typing a number sets how far the drag goes, and the mouse has no more say until it is deleted ----
+    const auto gizmo_operation = GizmoOperation(operation);
+    if (using_now && session.dragging()) {
+        for (const auto character : io.InputQueueCharacters) (void)gizmo_entry.feed(character);
+        if (ImGui::IsKeyPressed(ImGuiKey_Backspace, true)) gizmo_entry.backspace();
+    }
+    const int typed_axis = gizmo_entry.axis() >= 0 ? gizmo_entry.axis() : gizmo_handle_axis(gizmo_operation, gizmo_handle);
+    std::optional<WorldTransform> typed_change;
+    if (const auto typed_value = gizmo_entry.value()) typed_change = gizmo_typed_change(gizmo_operation, gizmo_start_world, coordinates == 0, typed_axis, *typed_value);
+    if (using_now && session.dragging() && gizmo_entry.active()) {
+        // What is not a number yet holds the object where the drag began.
+        WorldTransform change;
+        const glm::dmat4 identity(1.0);
+        for (int i = 0; i < 16; ++i) change.matrix[std::size_t(i)] = glm::value_ptr(identity)[i];
+        if (typed_change) change = *typed_change;
+        if (const auto text = gizmo_entry.text(); text != gizmo_typed_applied) {
+            gizmo_typed_applied = text;
+            if (const auto updated = session.update_drag(change); !updated) drag_error = updated.error().message;
+        }
+        const glm::mat4 shown(glm::make_mat4(change.matrix.data()) * glm::make_mat4(gizmo_start_world.matrix.data()));
+        std::copy_n(glm::value_ptr(shown), 16, gizmo_matrix);
+        changed = false;
+        if (typed_change && (ImGui::IsKeyPressed(ImGuiKey_Enter, false) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter, false))) {
+            std::copy_n(gizmo_matrix, 16, gizmo_final.begin());
+            gizmo_confirmed = true;
+            gizmo_entry.clear();
+            if (drag_error.empty()) report(session.end_drag(), "Gizmo transform committed");
+            else { (void)session.end_drag(); log_error(drag_error); }
+        }
+    } else if (!gizmo_typed_applied.empty()) {
+        gizmo_typed_applied.clear(); // All of it was deleted: back to the mouse.
+        changed = true;
+    }
     // Hold V to land on the nearest vertex of something else.
-    if (using_now && session.dragging() && operation == 0 && ImGui::IsKeyDown(ImGuiKey_V)) {
+    if (using_now && session.dragging() && operation == 0 && !gizmo_entry.active() && ImGui::IsKeyDown(ImGuiKey_V)) {
         if (const auto vertex = session.nearest_vertex(*frame, io.MousePos.x - origin.x, io.MousePos.y - origin.y, size.x, size.y, px(30))) {
             gizmo_matrix[12] = float(vertex->x); gizmo_matrix[13] = float(vertex->y); gizmo_matrix[14] = float(vertex->z);
             changed = true;
@@ -346,8 +393,15 @@ void EditorUI::gizmo(ImVec2 origin, ImVec2 size) {
         float start_t[3], start_r[3], start_s[3], now_t[3], now_r[3], now_s[3];
         ImGuizmo::DecomposeMatrixToComponents(gizmo_start.data(), start_t, start_r, start_s);
         ImGuizmo::DecomposeMatrixToComponents(gizmo_matrix, now_t, now_r, now_s);
-        char text[96];
-        if (operation == 0) std::snprintf(text, sizeof text, "X %.2f  Y %.2f  Z %.2f", now_t[0] - start_t[0], now_t[1] - start_t[1], now_t[2] - start_t[2]);
+        char text[128];
+        if (gizmo_entry.active()) {
+            constexpr const char *axis_names[] = {"X", "Y", "Z", "All"};
+            constexpr const char *units[] = {"m", "deg", "times"};
+            if (typed_axis < 0) std::snprintf(text, sizeof text, "%s  Type X, Y or Z", gizmo_entry.number().c_str());
+            else if (!typed_change && gizmo_entry.value()) std::snprintf(text, sizeof text, "%s %s  Must be more than 0", axis_names[typed_axis], gizmo_entry.number().c_str());
+            else std::snprintf(text, sizeof text, "%s %s %s  Enter confirms, Esc cancels", axis_names[typed_axis], gizmo_entry.number().c_str(), units[operation]);
+        }
+        else if (operation == 0) std::snprintf(text, sizeof text, "X %.2f  Y %.2f  Z %.2f", now_t[0] - start_t[0], now_t[1] - start_t[1], now_t[2] - start_t[2]);
         else if (operation == 1) std::snprintf(text, sizeof text, "X %.1f  Y %.1f  Z %.1f deg", now_r[0] - start_r[0], now_r[1] - start_r[1], now_r[2] - start_r[2]);
         else std::snprintf(text, sizeof text, "X %.2f  Y %.2f  Z %.2f times", now_s[0] / std::max(start_s[0], 1e-6f), now_s[1] / std::max(start_s[1], 1e-6f), now_s[2] / std::max(start_s[2], 1e-6f));
         auto *draw = ImGui::GetWindowDrawList();
@@ -358,10 +412,11 @@ void EditorUI::gizmo(ImVec2 origin, ImVec2 size) {
     }
     if (gizmo_active && !using_now && session.dragging()) {
         const auto ended = session.end_drag();
-        if (!drag_error.empty()) log("Error: " + drag_error);
+        if (!drag_error.empty()) log_error(drag_error);
         else report(ended, "Gizmo transform committed");
     }
-    if (!using_now) gizmo_following = false;
+    if (!using_now) { gizmo_following = false; gizmo_entry.clear(); }
+    if (gizmo_active && !using_now) ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     gizmo_active = using_now;
 }
 void EditorUI::selection_outlines(ImVec2 origin, ImVec2 size) {

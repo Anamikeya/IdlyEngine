@@ -147,6 +147,12 @@ While a text field has the keyboard, only Ctrl+P and Ctrl+Shift+P fire.
 | Quick Open | `Ctrl+P` | Global | `Palette.QuickOpen` |
 | Console | `` ` `` | Global | `Console.Toggle` |
 
+## Help
+
+| Command | Keys | Context | ID |
+|---|---|---|---|
+| Shortcut Cheat Sheet | `F1`, `Shift+/` | Held | `Help.CheatSheet` |
+
 ## Window
 
 | Command | Keys | Context | ID |
@@ -160,6 +166,7 @@ While a text field has the keyboard, only Ctrl+P and Ctrl+Shift+P fire.
 | Material Editor |  | Global | `Window.MaterialEditor` |
 | Asset Browser |  | Global | `Window.AssetBrowser` |
 | Console |  | Global | `Window.Console` |
+| Message Log |  | Global | `Window.MessageLog` |
 | Save Layout... |  | Global | `Window.SaveLayout` |
 | Reset Layout |  | Global | `Window.ResetLayout` |
 

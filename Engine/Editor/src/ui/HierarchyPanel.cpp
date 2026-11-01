@@ -56,7 +56,7 @@ void EditorUI::drop_onto(EntityId parent) {
                 std::string problem;
                 if (parent) { if (const auto result = session.reparent(id, parent); !result) problem = result.error().message; }
                 else if (const auto filed = session.file_entity(id, 0); !filed) problem = filed.error().message;
-                if (!problem.empty()) { log("Error: " + problem); transaction.cancel(); moved = false; break; }
+                if (!problem.empty()) { log_error(problem); transaction.cancel(); moved = false; break; }
             }
             if (moved) log(done);
         } else if (parent) report(session.reparent(dragged, parent), done);
@@ -163,7 +163,7 @@ void EditorUI::tree_node(EntityId id, const std::set<EntityId> &open_path, const
     if (!playing()) {
         const float icon = ImGui::GetFrameHeight() * 0.8f;
         ImGui::PushID(reinterpret_cast<void *>(static_cast<uintptr_t>(id)));
-        if (row_icon("##eye", icon * 2 + px(2), !session.hidden(id), true, session.hidden(id) ? "Hidden in the editor. Click to show." : "Click to hide in the editor.")) session.set_hidden(id, !session.hidden(id));
+        if (row_icon("##eye", icon * 2 + px(2), !session.hidden(id), true, session.hidden(id) ? "Hidden in the editor. Click to show." : ("Click to hide in the editor. With the selection: " + registry.shortcut("Edit.Hide")).c_str())) session.set_hidden(id, !session.hidden(id));
         mark("Eye." + e.name);
         if (row_icon("##lock", icon + px(2), session.locked(id), false, session.locked(id) ? "Locked: cannot be clicked in the viewport. Click to unlock." : "Click to stop it being clicked in the viewport.")) session.set_locked(id, !session.locked(id));
         mark("Lock." + e.name);
@@ -204,7 +204,7 @@ void EditorUI::folder_node(const SceneFolder &folder, const std::set<EntityId> &
             ScopedTransaction transaction(session, moving.size() == 1 ? "Move to Folder " + folder.name : "Move " + std::to_string(moving.size()) + " Entities to Folder " + folder.name);
             for (const auto entity : moving) {
                 const auto filed = session.file_entity(entity, folder.id);
-                if (!filed) { log("Error: " + filed.error().message); transaction.cancel(); break; }
+                if (!filed) { log_error(filed.error().message); transaction.cancel(); break; }
             }
         }
         if (const auto *payload = ImGui::AcceptDragDropPayload(folder_payload)) {
@@ -259,7 +259,7 @@ void EditorUI::hierarchy() {
     mark("Outliner.Search");
     const auto chip = [this](const char *label, bool &on) {
         if (on) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.22f, 0.5f, 0.85f, 1));
-        if (ImGui::SmallButton(label)) on = !on;
+        if (tip_small_button(label, "Show only entities with the kinds chosen here")) on = !on;
         if (on) ImGui::PopStyleColor();
         mark(std::string("Outliner.Chip.") + label);
         ImGui::SameLine();

@@ -232,11 +232,11 @@ int main(int argc, char **argv) {
         EditorUI ui(session, renderer, game_input, host.window);
         if (!automated) { ui.config_folder = config_folder; ui.load_keymap(); ui.load_settings(); }
         ui.ui_map.set_file(ui_map_file);
-        if (!project_opened) ui.log("Error: " + project_opened.error().message);
+        if (!project_opened) ui.log_error(project_opened.error().message);
         if (open_sample_at_start) ui.open_sample();
         if (!start_scene.empty()) {
             ui.set_scene_path(start_scene);
-            ui.report(session.load(start_scene), "Scene loaded");
+            ui.announce(session.load(start_scene), "Scene loaded");
         }
         StateLog state_log;
         if (!game_log.empty()) state_log.out.open(game_log);

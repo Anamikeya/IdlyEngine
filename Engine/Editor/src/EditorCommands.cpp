@@ -148,6 +148,32 @@ const EditorCommand *CommandRegistry::resolve(KeyChord chord, std::span<const st
         if (const auto *command = in_context(context)) return command;
     return in_context(context::global);
 }
+std::vector<CheatSheetGroup> CommandRegistry::cheat_sheet(std::span<const std::string_view> contexts, bool with_global) const {
+    std::vector<std::string_view> asked;
+    for (const auto wanted : contexts) if (std::ranges::find(asked, wanted) == asked.end()) asked.push_back(wanted);
+    if (with_global && std::ranges::find(asked, context::global) == asked.end()) asked.push_back(context::global);
+    std::vector<KeyChord> taken;
+    std::vector<CheatSheetGroup> groups;
+    for (const auto wanted : asked) {
+        CheatSheetGroup group{std::string(wanted), {}};
+        std::vector<KeyChord> taken_here;
+        for (const auto &command : commands_) {
+            if (command.info.context != wanted) continue;
+            const bool can_run = !command.can_execute || command.can_execute();
+            std::string keys;
+            for (const auto chord : command.chords) {
+                if (std::ranges::find(taken, chord) != taken.end()) continue;
+                keys += (keys.empty() ? "" : ", ") + to_string(chord);
+                // Like resolve(): one that cannot run now does not take the key from the contexts further out.
+                if (can_run) taken_here.push_back(chord);
+            }
+            if (!keys.empty()) group.rows.push_back({std::move(keys), command.info.label, can_run});
+        }
+        taken.insert(taken.end(), taken_here.begin(), taken_here.end());
+        if (!group.rows.empty()) groups.push_back(std::move(group));
+    }
+    return groups;
+}
 bool CommandRegistry::dispatch(KeyChord chord, std::span<const std::string_view> contexts, const InputBlock &block) const {
     const auto *command = resolve(chord, contexts);
     if (!command || !block.allows(command->info)) return false;
@@ -198,7 +224,7 @@ Result<KeymapReport> CommandRegistry::load_keymap(std::string_view text) {
 std::vector<CommandInfo> default_command_table() {
     using namespace modifier;
     const auto chord = [](Key key, std::uint8_t modifiers = none) { return KeyChord{key, modifiers}; };
-    const std::string global(context::global), viewport(context::viewport), outliner(context::outliner), flying(context::flying), playing(context::playing);
+    const std::string global(context::global), viewport(context::viewport), outliner(context::outliner), flying(context::flying), playing(context::playing), held(context::held);
     std::vector<CommandInfo> table{
         {"File.NewScene", "New Scene", "Start an empty scene.", "File", global, {chord(Key::N, ctrl)}},
         {"File.OpenScene", "Open Scene...", "Choose a scene file and load it.", "File", global, {chord(Key::O, ctrl)}},
@@ -307,6 +333,8 @@ std::vector<CommandInfo> default_command_table() {
         {"Palette.QuickOpen", "Quick Open", "Find any entity or asset by typing.", "Find", global, {chord(Key::P, ctrl)}, false, false, true},
         {"Console.Toggle", "Console", "Type commands and variables.", "Find", global, {chord(Key::Grave)}},
 
+        {"Help.CheatSheet", "Shortcut Cheat Sheet", "Hold to see the shortcuts that work where you are.", "Help", held, {chord(Key::F1), chord(Key::Slash, shift)}},
+
         {"Window.UndoHistory", "Undo History", "Show every edit and jump to any of them.", "Window", global, {}},
         {"Window.KeyboardShortcuts", "Keyboard Shortcuts", "Search and change every shortcut.", "Window", global, {}},
         {"Window.Toolbar", "Toolbar", "Show or hide this panel.", "Window", global, {}},
@@ -316,6 +344,7 @@ std::vector<CommandInfo> default_command_table() {
         {"Window.MaterialEditor", "Material Editor", "Show or hide this panel.", "Window", global, {}},
         {"Window.AssetBrowser", "Asset Browser", "Show or hide this panel.", "Window", global, {}},
         {"Window.Console", "Console", "Show or hide this panel.", "Window", global, {}},
+        {"Window.MessageLog", "Message Log", "Show or hide this panel.", "Window", global, {}},
         {"Window.SaveLayout", "Save Layout...", "Keep the arrangement of panels under a name.", "Window", global, {}},
         {"Window.ResetLayout", "Reset Layout", "Put every panel back where it starts.", "Window", global, {}},
     };

@@ -10,18 +10,18 @@ void EditorUI::lighting() {
     else ImGui::TextWrapped("This scene has no environment, so the defaults below apply. Changing anything adds an Environment entity.");
     if (playing()) ImGui::TextColored({0.45f, 0.85f, 0.45f, 1}, "Play mode: edits affect the runtime copy only");
     ImGui::SeparatorText("Presets");
-    const bool outdoor = ImGui::Button("Outdoor");
+    const bool outdoor = tip_button("Outdoor", "Replace the environment with daylight");
     mark("Lighting.Outdoor");
     if (outdoor) { report(session.set_environment(editor::EditorSession::outdoor_environment()), "Outdoor lighting applied"); return ImGui::End(); }
     ImGui::SameLine();
-    const bool indoor = ImGui::Button("Indoor");
+    const bool indoor = tip_button("Indoor", "Replace the environment with soft indoor light");
     mark("Lighting.Indoor");
     if (indoor) { report(session.set_environment(editor::EditorSession::indoor_environment()), "Indoor lighting applied"); return ImGui::End(); }
     ImGui::SameLine();
-    if (ImGui::Button("Add sun")) report(session.create_preset_lights(true), "Sun created");
+    if (tip_button("Add sun", "Add a directional light")) report(session.create_preset_lights(true), "Sun created");
     mark("Lighting.AddSun");
     ImGui::SameLine();
-    if (ImGui::Button("Add key light")) report(session.create_preset_lights(false), "Key light created");
+    if (tip_button("Add key light", "Add a light aimed at the scene")) report(session.create_preset_lights(false), "Key light created");
     bool commit = false;
     ImGui::SeparatorText("Environment");
     int source = int(e.source);

@@ -25,12 +25,14 @@ EditorUI::EditorUI(EditorSession &s, renderer::DesktopRenderer &r, GameInput &g,
         if (const auto added = registry.add(std::move(info)); !added) throw std::runtime_error(added.error().message);
     bind_commands();
     bind_console();
+    log("Filament OpenGL initialized. All scene edits use typed commands.");
     if (const auto missing = registry.unbound(); !missing.empty()) throw std::runtime_error("Command with no behavior: " + missing.front());
 }
-void EditorUI::log(std::string text) { if (messages.size() == 512) messages.erase(messages.begin()); messages.push_back(std::move(text)); scroll_console = true; }
 void EditorUI::spawn(const char *label, Components c, Transform t, EntityId parent) {
     auto r = session.execute(commands::CreateEntity{label, t, parent, 0, std::move(c)}, std::string("Create ") + label);
-    if (report(r, (std::string("Created ") + label).c_str())) session.select(r.value().created.front());
+    if (!r) { log_error(r.error().message); return; }
+    session.select(r.value().created.front());
+    log(Severity::Success, std::string("Created ") + label, LogLink::entity(r.value().created.front(), label));
 }
 Transform EditorUI::aimed(Vec3 position, double pitch_degrees, double yaw_degrees) {
     const glm::dquat q(glm::radians(glm::dvec3(pitch_degrees, yaw_degrees, 0)));
@@ -77,27 +79,27 @@ void EditorUI::set_scene_path(const std::filesystem::path &path) { std::snprintf
 void EditorUI::open_sample() {
     if (!report(session.open_project(sample_project), "Opened the Physics Shooter sample project")) return;
     set_scene_path(sample_project / sample_scene);
-    report(session.load(scene_path.data()), "Scene loaded. Press Play, then click the view to start.");
+    announce(session.load(scene_path.data()), "Scene loaded. Press Play, then click the view to start.");
 }
 void EditorUI::create_project(const std::filesystem::path &folder) {
     std::error_code error;
     std::filesystem::create_directories(folder / "Assets", error);
-    if (error) { log("Error: Cannot create the project folder: " + error.message()); return; }
+    if (error) { log_error("Cannot create the project folder: " + error.message()); return; }
     if (!report(session.open_project(folder), "Created an empty project")) return;
     if (!report(session.new_scene(), "New scene")) return;
     set_scene_path(folder / "main.scene");
-    report(session.save(scene_path.data()), "Scene saved");
+    announce(session.save(scene_path.data()), "Scene saved");
 }
 void EditorUI::open_project(const std::filesystem::path &folder) {
     if (!report(session.open_project(folder), "Project opened")) return;
     set_scene_path(folder / "main.scene");
     std::error_code error;
-    if (std::filesystem::is_regular_file(scene_path.data(), error)) report(session.load(scene_path.data()), "Scene loaded (undoable)");
+    if (std::filesystem::is_regular_file(scene_path.data(), error)) announce(session.load(scene_path.data()), "Scene loaded (undoable)");
 }
 void EditorUI::perform(Pending action) {
     if (action == Pending::NewScene && report(session.new_scene(), "New scene"))
         std::snprintf(scene_path.data(), scene_path.size(), "%s", "Untitled.scene");
-    if (action == Pending::Load) report(session.load(scene_path.data()), "Scene loaded (undoable)");
+    if (action == Pending::Load) announce(session.load(scene_path.data()), "Scene loaded (undoable)");
     if (action == Pending::OpenSample) open_sample();
     if (action == Pending::NewProject) create_project(utf8_path(project_path.data()));
     if (action == Pending::OpenProject) open_project(utf8_path(project_path.data()));
@@ -119,7 +121,7 @@ void EditorUI::project_dialog() {
 }
 void EditorUI::request(Pending action) {
     if (action == Pending::Quit && playing()) report(session.stop(), "Stopped Play mode; runtime copy discarded");
-    if (action != Pending::Quit && playing()) { log("Error: Stop Play mode first"); return; }
+    if (action != Pending::Quit && playing()) { log_error("Stop Play mode first"); return; }
     if (!session.dirty()) { perform(action); return; }
     pending = action; confirm_requested = true;
 }
@@ -129,7 +131,7 @@ void EditorUI::confirm() {
     const char *verb = pending == Pending::Quit ? "closing" : pending == Pending::Load ? "loading" : pending == Pending::NewScene ? "starting a new scene" : "opening another project";
     ImGui::Text("The scene has unsaved changes. Save them to '%s' before %s?", scene_path.data(), verb);
     Pending run = Pending::None;
-    if (ImGui::Button("Save")) { if (report(session.save(scene_path.data()), "Scene saved")) run = pending; pending = Pending::None; ImGui::CloseCurrentPopup(); }
+    if (ImGui::Button("Save")) { if (announce(session.save(scene_path.data()), "Scene saved")) run = pending; pending = Pending::None; ImGui::CloseCurrentPopup(); }
     ImGui::SameLine(); if (ImGui::Button("Discard changes")) { run = pending; pending = Pending::None; ImGui::CloseCurrentPopup(); }
     ImGui::SameLine(); if (ImGui::Button("Cancel")) { pending = Pending::None; ImGui::CloseCurrentPopup(); }
     ImGui::EndPopup();
@@ -160,6 +162,7 @@ void EditorUI::docking() {
         ImGui::DockBuilderDockWindow("Material Editor", right);
         ImGui::DockBuilderDockWindow("###3D Viewport", center);
         ImGui::DockBuilderDockWindow("Asset Browser", assets);
+        ImGui::DockBuilderDockWindow("Message Log", messages_dock);
         ImGui::DockBuilderDockWindow("Console", messages_dock);
         ImGui::DockBuilderFinish(dock);
     }
@@ -170,7 +173,7 @@ void EditorUI::toolbar() {
     const auto state = session.play_state();
     command_button("File.NewScene", "New");
     ImGui::SameLine(); command_button("Create.Cube", "+ Cube");
-    ImGui::SameLine(); if (ImGui::Button("Create...")) ImGui::OpenPopup("Create");
+    ImGui::SameLine(); if (tip_button("Create...", "Choose what to add to the scene")) ImGui::OpenPopup("Create");
     mark("Toolbar.Create");
     create_menu();
     ImGui::SameLine(); command_button("Edit.Duplicate");
@@ -182,7 +185,7 @@ void EditorUI::toolbar() {
     ImGui::SameLine(); command_button("File.LoadFromPath");
     ImGui::SameLine(); ImGui::TextDisabled("|"); ImGui::SameLine();
     ImGui::BeginDisabled(playing());
-    if (ImGui::Button("Project...")) ImGui::OpenPopup("Project menu");
+    if (tip_button("Project...", "Create or open a project folder")) ImGui::OpenPopup("Project menu");
     ImGui::EndDisabled();
     mark("Toolbar.Project");
     if (ImGui::BeginPopup("Project menu")) {
@@ -226,12 +229,16 @@ void EditorUI::draw() {
     // Before the viewport: it extracts the frame, whose handles must be those of the latest import or reload.
     docking(); toolbar(); hierarchy(); lighting(); material_editor(); inspector(); assets(); viewport();
     console_panel();
+    message_log_panel();
     picker_window();
     history_panel();
     shortcuts_panel();
     confirm();
     project_dialog();
     layout_dialog();
+    toast_windows();
+    cheat_sheet_overlay();
+    if (const auto link = std::exchange(link_clicked, std::nullopt)) open_link(*link);
     route_shortcuts(rebinding_at_frame_start);
     ui_map.flush();
 }

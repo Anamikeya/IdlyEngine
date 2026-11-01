@@ -12,6 +12,12 @@ namespace engine::editor {
 namespace {
 constexpr const wchar_t *scene_filter = L"Scene files (*.scene)\0*.scene\0All files\0*.*\0";
 constexpr const wchar_t *keymap_filter = L"Keymap files (*.ini)\0*.ini\0All files\0*.*\0";
+// One word, for the --game-log line: its first line, with the spaces marked.
+std::string tooltip_for_log(std::string text) {
+    text.resize(std::min(text.find('\n'), text.size()));
+    std::ranges::replace(text, ' ', '_');
+    return text.empty() ? std::string("-") : text;
+}
 // Every key a chord can use, with what ImGui calls it.
 struct KeyPair { Key key; ImGuiKey imgui; };
 const std::vector<KeyPair> &key_pairs() {
@@ -50,12 +56,27 @@ bool EditorUI::begin_panel(const char *title, std::string_view control, std::str
     }
     return visible;
 }
+void EditorUI::tip(const std::string &text) {
+    if (!ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip)) return;
+    ImGui::SetTooltip("%s", text.c_str());
+    shown_tooltip = text;
+}
+bool EditorUI::tip_button(const char *label, const char *tooltip) {
+    const bool clicked = ImGui::Button(label);
+    tip(tooltip);
+    return clicked;
+}
+bool EditorUI::tip_small_button(const char *label, const char *tooltip) {
+    const bool clicked = ImGui::SmallButton(label);
+    tip(tooltip);
+    return clicked;
+}
 bool EditorUI::command_item(const char *id, const char *label) {
     const auto *command = registry.find(id);
     if (!command) return false;
     const auto keys = registry.shortcut(id);
     const bool clicked = ImGui::MenuItem(label ? label : command->info.label.c_str(), keys.empty() ? nullptr : keys.c_str(), registry.checked(id), registry.enabled(id));
-    ImGui::SetItemTooltip("%s", registry.tooltip(id).c_str());
+    tip(registry.tooltip(id));
     mark(std::string("Item.") + id); // The same command may also be a button on screen.
     if (clicked) registry.run(id);
     return clicked;
@@ -66,7 +87,7 @@ bool EditorUI::command_button(const char *id, const char *label) {
     ImGui::BeginDisabled(!registry.enabled(id));
     const bool clicked = ImGui::Button(label ? label : command->info.label.c_str());
     ImGui::EndDisabled();
-    ImGui::SetItemTooltip("%s", registry.tooltip(id).c_str());
+    tip(registry.tooltip(id));
     mark(id);
     if (clicked) registry.run(id);
     return clicked;
@@ -78,7 +99,7 @@ bool EditorUI::command_checkbox(const char *id, const char *label) {
     ImGui::BeginDisabled(!registry.enabled(id));
     const bool clicked = ImGui::Checkbox(label ? label : command->info.label.c_str(), &value);
     ImGui::EndDisabled();
-    ImGui::SetItemTooltip("%s", registry.tooltip(id).c_str());
+    tip(registry.tooltip(id));
     mark(id);
     if (clicked) registry.run(id);
     return clicked;
@@ -89,7 +110,7 @@ void EditorUI::move_selection_to_root() {
     for (const auto id : roots) {
         if (!session.scene().inspect(id)->parent) continue;
         const auto moved = session.reparent(id, 0);
-        if (!moved) { transaction.cancel(); log("Error: " + moved.error().message); return; }
+        if (!moved) { transaction.cancel(); log_error(moved.error().message); return; }
     }
     log("Moved to root (world transform kept)");
 }
@@ -105,11 +126,11 @@ void EditorUI::bind_commands() {
         if (const auto file = open_file_dialog(window, L"Open Scene", scene_filter)) { set_scene_path(*file); request(Pending::Load); }
     }, editing);
     bind("File.LoadFromPath", [this] { request(Pending::Load); }, editing);
-    bind("File.Save", [this] { report(session.save(scene_path.data()), "Scene saved"); }, editing);
+    bind("File.Save", [this] { announce(session.save(scene_path.data()), "Scene saved"); }, editing);
     bind("File.SaveAs", [this] {
-        if (const auto file = save_file_dialog(window, L"Save Scene As", scene_filter, L"scene")) { set_scene_path(*file); report(session.save(scene_path.data()), "Scene saved"); }
+        if (const auto file = save_file_dialog(window, L"Save Scene As", scene_filter, L"scene")) { set_scene_path(*file); announce(session.save(scene_path.data()), "Scene saved"); }
     }, editing);
-    bind("File.SaveAll", [this] { report(session.save(scene_path.data()), "Scene saved. Materials save themselves when a control is released."); }, editing);
+    bind("File.SaveAll", [this] { announce(session.save(scene_path.data()), "Scene saved. Materials save themselves when a control is released."); }, editing);
     bind("File.OpenSample", [this] { request(Pending::OpenSample); }, editing);
     bind("File.NewProject", [this] { project_create = true; project_prompt = true; }, editing);
     bind("File.OpenProject", [this] { project_create = false; project_prompt = true; }, editing);
@@ -254,6 +275,7 @@ void EditorUI::bind_commands() {
     bind("Snap.GridLarger", [this] { step_grid(1); });
     // ---- Camera: the keys are read while flying, never dispatched ----
     for (const auto *id : {"Camera.FlyForward", "Camera.FlyBack", "Camera.FlyLeft", "Camera.FlyRight", "Camera.FlyDown", "Camera.FlyUp", "Camera.FovOut", "Camera.FovIn"}) bind(id, [] {});
+    bind("Help.CheatSheet", [] {}); // Read while held, by cheat_sheet_overlay().
     // ---- Bookmarks ----
     for (std::size_t slot = 0; slot < 10; ++slot) {
         const auto number = std::to_string(slot);
@@ -307,9 +329,10 @@ void EditorUI::bind_commands() {
     panel("Window.MaterialEditor", show_material);
     panel("Window.AssetBrowser", show_assets);
     panel("Window.Console", show_console);
+    panel("Window.MessageLog", show_message_log);
     bind("Window.SaveLayout", [this] { layout_prompt = true; }, [this] { return !config_folder.empty(); });
     bind("Window.ResetLayout", [this] {
-        show_toolbar = show_hierarchy = show_inspector = show_lighting = show_material = show_assets = show_console = true;
+        show_toolbar = show_hierarchy = show_inspector = show_lighting = show_material = show_assets = show_console = show_message_log = true;
         layout_reset_requested = true;
     });
 }
@@ -319,14 +342,14 @@ void EditorUI::load_keymap() {
     std::error_code error;
     if (!std::filesystem::exists(file, error)) return;
     const auto text = read_text_file(file);
-    if (!text) { log("Error: " + text.error().message); return; }
+    if (!text) { log_error(text.error().message); return; }
     const auto loaded = registry.load_keymap(text.value());
-    if (!loaded) { log("Error: " + loaded.error().message + ". Using the default shortcuts."); return; }
+    if (!loaded) { log_error(loaded.error().message + ". Using the default shortcuts."); return; }
     for (const auto &id : loaded.value().unknown) log("Keymap: no command called " + id);
 }
 void EditorUI::save_keymap() {
     if (config_folder.empty()) return;
-    if (const auto saved = write_text_file(config_folder / "keymap.ini", registry.save_keymap()); !saved) log("Error: " + saved.error().message);
+    if (const auto saved = write_text_file(config_folder / "keymap.ini", registry.save_keymap()); !saved) log_error(saved.error().message);
 }
 void EditorUI::route_shortcuts(bool rebinding_at_frame_start) {
     // A panel's own close button sets its flag directly, so changes are noticed here.
@@ -427,7 +450,7 @@ void EditorUI::main_menu() {
     const bool open_window = ImGui::BeginMenu("Window");
     mark("Menu.Window");
     if (open_window) {
-        for (const auto *id : {"Window.Toolbar", "Window.Hierarchy", "Window.Inspector", "Window.Lighting", "Window.MaterialEditor", "Window.AssetBrowser", "Window.Console", "Window.UndoHistory", "Window.KeyboardShortcuts"}) command_item(id);
+        for (const auto *id : {"Window.Toolbar", "Window.Hierarchy", "Window.Inspector", "Window.Lighting", "Window.MaterialEditor", "Window.AssetBrowser", "Window.Console", "Window.MessageLog", "Window.UndoHistory", "Window.KeyboardShortcuts"}) command_item(id);
         ImGui::Separator();
         for (const auto *id : {"Assets.ToggleDrawer", "Palette.Commands", "Palette.QuickOpen", "Console.Toggle"}) command_item(id);
         ImGui::Separator();
@@ -634,11 +657,15 @@ void EditorUI::load_settings() {
     session.view_flags.shadows = settings.flag("view.shadows", session.view_flags.shadows);
     session.view_flags.ambient_occlusion = settings.flag("view.ambient_occlusion", session.view_flags.ambient_occlusion);
     session.view_flags.bloom = settings.flag("view.bloom", session.view_flags.bloom);
-    constexpr const char *panel_keys[] = {"toolbar", "hierarchy", "inspector", "lighting", "material", "assets", "console"};
+    constexpr const char *panel_keys[] = {"toolbar", "hierarchy", "inspector", "lighting", "material", "assets", "console", "message_log"};
     const auto flags = panel_flags();
     for (std::size_t i = 0; i < flags.size(); ++i) *flags[i] = settings.flag(std::string("panel.") + panel_keys[i], *flags[i]);
     saved_panels.clear();
     for (const bool *flag : flags) saved_panels += *flag ? '1' : '0';
+    log_filter.info = settings.flag("log.info", log_filter.info);
+    log_filter.success = settings.flag("log.success", log_filter.success);
+    log_filter.warning = settings.flag("log.warning", log_filter.warning);
+    log_filter.error = settings.flag("log.error", log_filter.error);
     std::string list = settings.text_of("palette.recent");
     recent_commands.clear();
     for (std::size_t at = 0; at < list.size();) {
@@ -650,6 +677,10 @@ void EditorUI::load_settings() {
 void EditorUI::save_settings() {
     if (config_folder.empty()) return;
     settings.set("camera.speed", camera_control.speed());
+    settings.set("log.info", log_filter.info);
+    settings.set("log.success", log_filter.success);
+    settings.set("log.warning", log_filter.warning);
+    settings.set("log.error", log_filter.error);
     saved_speed = float(camera_control.speed());
     settings.set("snap.grid", snap.grid);
     settings.set("snap.rotation", snap.rotation);
@@ -664,16 +695,22 @@ void EditorUI::save_settings() {
     settings.set("view.shadows", session.view_flags.shadows);
     settings.set("view.ambient_occlusion", session.view_flags.ambient_occlusion);
     settings.set("view.bloom", session.view_flags.bloom);
-    constexpr const char *panel_keys[] = {"toolbar", "hierarchy", "inspector", "lighting", "material", "assets", "console"};
+    constexpr const char *panel_keys[] = {"toolbar", "hierarchy", "inspector", "lighting", "material", "assets", "console", "message_log"};
     const auto flags = panel_flags();
     saved_panels.clear();
     for (std::size_t i = 0; i < flags.size(); ++i) {
         settings.set(std::string("panel.") + panel_keys[i], *flags[i]);
         saved_panels += *flags[i] ? '1' : '0';
     }
-    if (const auto saved = write_text_file(config_folder / "editor.ini", settings.text()); !saved) log("Error: " + saved.error().message);
+    if (const auto saved = write_text_file(config_folder / "editor.ini", settings.text()); !saved) log_error(saved.error().message);
 }
 std::string EditorUI::log_fields() const {
+    std::string primary_scale = "-", primary_rot = "-";
+    if (const auto record = session.scene().inspect(session.selection())) {
+        const auto &t = record->transform;
+        primary_scale = std::to_string(t.scale.x) + "," + std::to_string(t.scale.y) + "," + std::to_string(t.scale.z);
+        primary_rot = std::to_string(t.rotation.x) + "," + std::to_string(t.rotation.y) + "," + std::to_string(t.rotation.z) + "," + std::to_string(t.rotation.w);
+    }
     const auto &c = session.camera;
     return " mode=" + std::to_string(int(camera_control.mode())) + " yaw=" + std::to_string(c.yaw) + " pitch=" + std::to_string(c.pitch) + " distance=" + std::to_string(c.distance) +
            " fov=" + std::to_string(c.fov_degrees) + " ortho=" + std::to_string(c.orthographic ? 1 : 0) + " speed=" + std::to_string(camera_control.speed()) +
@@ -685,8 +722,14 @@ std::string EditorUI::log_fields() const {
            " ejected=" + std::to_string(session.ejected() ? 1 : 0) + " simulating=" + std::to_string(session.simulating() ? 1 : 0) + " captured=" + std::to_string(game_input.captured ? 1 : 0) +
            " view_camera=" + std::to_string(session.view_camera()) + " picker=" + std::to_string(int(picker)) + " stat_fps=" + std::to_string(stat_fps ? 1 : 0) + " stat_timings=" + std::to_string(stat_timings ? 1 : 0) +
            " stat_frame_ms=" + std::to_string(stat_frame_ms) + " frames_drawn=" + std::to_string(frames_drawn) +
-           " console_lines=" + std::to_string(messages.size()) + " console_shown=" + std::to_string(show_console ? 1 : 0) + " console_typed=" + std::to_string(std::strlen(console_input.data())) +
+           " console_lines=" + std::to_string(messages.entries().size()) + " console_shown=" + std::to_string(show_console ? 1 : 0) + " console_typed=" + std::to_string(std::strlen(console_input.data())) +
            " picker_index=" + std::to_string(picker_index) + " colliders=" + std::to_string(show_colliders ? 1 : 0) + " bloom=" + std::to_string(session.view_flags.bloom ? 1 : 0) +
+           " log_info=" + std::to_string(messages.count(Severity::Info)) + " log_success=" + std::to_string(messages.count(Severity::Success)) + " log_warnings=" + std::to_string(messages.count(Severity::Warning)) +
+           " log_errors=" + std::to_string(messages.count(Severity::Error)) + " log_shown=" + std::to_string(messages.shown(log_filter)) + " log_panel=" + std::to_string(show_message_log ? 1 : 0) +
+           " toasts=" + std::to_string(toasts.toasts().size()) + " toast_errors=" + std::to_string(toasts.count(Severity::Error)) + " tasks=" + std::to_string(tasks.tasks().size()) + " import_tasks=" + std::to_string(import_tasks.size()) +
+           " imports=" + std::to_string(session.imports_pending()) + " assets=" + std::to_string(session.assets().size()) + " cheat_sheet=" + std::to_string(cheat_sheet_open ? 1 : 0) +
+           " primary_scale=" + primary_scale + " primary_rot=" + primary_rot +
+           " gizmo_typed=" + (gizmo_entry.active() ? gizmo_entry.text() : std::string("-")) + " tooltip=" + tooltip_for_log(shown_tooltip) +
            " thumbnails=" + std::to_string(std::ranges::count_if(thumbnails, [this](const auto &entry) { return renderer.thumbnail(entry.first.value).texture != 0; })) +
            " selected_asset=" + assets::to_string(selected_asset);
 }
@@ -701,7 +744,74 @@ std::vector<std::string> EditorUI::saved_layouts() const {
     std::ranges::sort(names);
     return names;
 }
-std::array<bool *, 7> EditorUI::panel_flags() { return {&show_toolbar, &show_hierarchy, &show_inspector, &show_lighting, &show_material, &show_assets, &show_console}; }
+void EditorUI::cheat_sheet_overlay() {
+    const auto &io = ImGui::GetIO();
+    const auto *command = registry.find("Help.CheatSheet");
+    const auto modifiers = held_modifiers();
+    bool down = false;
+    // Not while typing, where ? is a character, or while the game has the keyboard.
+    if (command && !io.WantTextInput && !game_input.captured && !popup_before_frame && rebind_command.empty() && !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel))
+        for (const auto chord : command->chords)
+            for (const auto &[key, imgui] : key_pairs())
+                if (key == chord.key && chord.modifiers == modifiers && ImGui::IsKeyDown(imgui)) down = true;
+    cheat_sheet_open = down;
+    if (!down) return;
+    // ---- What to list: the same contexts route_shortcuts() asks, in the same order ----
+    std::vector<std::string_view> stack;
+    if (playing()) stack.push_back(context::playing);
+    if (hovered_context == context::viewport) stack.push_back(context::viewport);
+    if (!focused_context.empty()) stack.push_back(focused_context);
+    auto groups = registry.cheat_sheet(stack);
+    std::string where;
+    for (const auto &group : groups) where += (where.empty() ? "" : ", then ") + group.context;
+    if (hovered_context == context::viewport) {
+        const std::array<std::string_view, 1> flying_keys{context::flying};
+        for (auto &group : registry.cheat_sheet(flying_keys, false)) { group.context = "While holding the right mouse button"; groups.push_back(std::move(group)); }
+        CheatSheetGroup mouse{"Mouse", {}};
+        for (const auto &gesture : mouse_gestures()) mouse.rows.push_back({std::string(gesture.input), std::string(gesture.action)});
+        groups.push_back(std::move(mouse));
+    }
+    // ---- Shown over everything, and it takes no input: letting go of the key is how it goes away ----
+    const auto *main = ImGui::GetMainViewport();
+    const ImVec2 size{main->WorkSize.x * 0.92f, main->WorkSize.y * 0.92f};
+    ImGui::SetNextWindowPos({main->WorkPos.x + main->WorkSize.x / 2, main->WorkPos.y + main->WorkSize.y / 2}, ImGuiCond_Always, {0.5f, 0.5f});
+    ImGui::SetNextWindowSize(size);
+    ImGui::SetNextWindowBgAlpha(0.94f);
+    ImGui::Begin("##cheat-sheet", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav);
+    ImGui::BringWindowToDisplayFront(ImGui::GetCurrentWindow());
+    ui_map.mark("CheatSheet", ImGui::GetWindowPos(), {ImGui::GetWindowPos().x + size.x, ImGui::GetWindowPos().y + size.y});
+    ImGui::Text("Shortcuts here: %s", where.c_str());
+    ImGui::Separator();
+    std::size_t lines = 0;
+    for (const auto &group : groups) lines += group.rows.size() + 2;
+    const int columns = std::clamp(int(size.x / px(340)), 1, 5);
+    const std::size_t per_column = std::max<std::size_t>((lines + std::size_t(columns) - 1) / std::size_t(columns), 1);
+    if (ImGui::BeginTable("##columns", columns)) {
+        std::size_t used = 0;
+        ImGui::TableNextColumn();
+        const auto next_line = [&] {
+            if (++used < per_column) return;
+            used = 0;
+            ImGui::TableNextColumn();
+        };
+        for (const auto &group : groups) {
+            ImGui::Spacing();
+            ImGui::TextColored({0.6f, 0.75f, 0.95f, 1}, "%s", group.context.c_str());
+            next_line(); next_line();
+            for (const auto &row : group.rows) {
+                const float keys_width = px(120);
+                if (row.enabled) ImGui::TextUnformatted(row.keys.c_str());
+                else ImGui::TextDisabled("%s", row.keys.c_str());
+                ImGui::SameLine(ImGui::GetColumnOffset() + std::max(keys_width, ImGui::CalcTextSize(row.keys.c_str()).x + px(20)));
+                ImGui::TextDisabled("%s", row.label.c_str());
+                next_line();
+            }
+        }
+        ImGui::EndTable();
+    }
+    ImGui::End();
+}
+std::array<bool *, 8> EditorUI::panel_flags() { return {&show_toolbar, &show_hierarchy, &show_inspector, &show_lighting, &show_material, &show_assets, &show_console, &show_message_log}; }
 void EditorUI::layout_dialog() {
     if (std::exchange(layout_prompt, false)) ImGui::OpenPopup("Save layout");
     if (!ImGui::BeginPopupModal("Save layout", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) return;
