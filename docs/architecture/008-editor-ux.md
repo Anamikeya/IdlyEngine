@@ -17,8 +17,13 @@ route_shortcuts()            Turns key presses into chords and dispatches them.
 ```
 
 **Routing.** The viewport answers while the mouse is over it, other panels while they have the focus, then Global. A
-command that cannot run now is passed over. Nothing fires while a text field has the keyboard, a popup or dialog is open,
-a drag is in progress, the game holds the mouse, or the Keyboard Shortcuts panel is waiting for keys.
+command that cannot run now is passed over. While something runs, the Playing context is asked first, so Esc means pause or
+stop there and deselect elsewhere.
+
+**What stops a key.** `InputBlock::allows` decides. Nothing fires while a popup or dialog is open, a drag is in progress, or
+the Keyboard Shortcuts panel is waiting for keys. While the game holds the mouse, only commands marked `while_captured` fire:
+Esc, F8 and Shift+F1, the ways out. While a text field has the keyboard, only commands marked `while_typing` fire: Ctrl+P and
+Ctrl+Shift+P, which mean nothing to a text field.
 
 **Settings** live in `%APPDATA%\GameEngine\`: `keymap.ini` holds only what differs from the defaults, `layout.ini` is
 ImGui's layout, and `editor.ini` holds small values like camera speed. `--config-dir <folder>` points somewhere else. `--smoke` and `--render-test` use none.
@@ -124,6 +129,44 @@ change and a folder change, so filing a child (which reparents it too) is one un
 (`request_thumbnail_data`, `poll_thumbnail_data`). The renderer then draws a mesh into a small texture, one a frame
 (`request_thumbnail`), or takes a reduced image directly (`set_thumbnail_image`). A material's picture is a sphere, and is
 redrawn when its handle changes.
+
+## Play, simulate and eject
+
+`EditorSession` holds two flags beside the runtime. `ejected` says the view is the editor's: `frame()` skips the primary
+camera and draws the grid. `simulating` says it began that way, without the player. `simulate()` is `play()` with both set.
+The game stays in its Ready phase, where the world simulates and the timer does not, so nothing needs a second kind of
+runtime. Possessing clears both, and Stop and Restart reset them.
+
+`EditorUI::possessed()` is what the viewport asks: the game has the view, so there is its HUD and its camera, and no gizmo or
+picking. Ejected or simulating, those come back, and they act on the runtime scene, so Stop discards what they did.
+
+`EditorUI::free_mouse()` releases the mouse and sends the game an empty `InputFrame`. `Game::set_input` keeps held keys until
+told otherwise, so without it the player would walk on by itself. Losing the window's focus goes through the same call.
+
+## Typing to reach things
+
+`fuzzy_rank` (`FuzzyMatch.hpp`) ranks texts by their letters in order, with most weight on runs and word starts. It has no ImGui,
+so it is tested alone. The command palette and quick open are one window, `EditorUI::picker_window`, over different items: each
+item has the text searched, what to show, and what to do. Recent command IDs are in `editor.ini` as `palette.recent`.
+
+## Console
+
+`ConsoleRegistry` has variables, which read and write through functions so they always show the real value, and actions, which
+take the rest of the line. A name may have spaces (`stat fps`), and the longest name that starts a line wins. Every command in
+the registry is also an action, by its ID. Built-ins are in `EditorUI::bind_console()`. The Console panel shows the same messages
+as `log()`. `stat fps` is fed by `EditorUI::frame_drawn()` from the host loop, because Filament can skip a frame and the loop goes
+on regardless.
+
+### How to add a console variable
+
+```cpp
+console.add_bool("view.markers", "Draw the markers for lights and cameras.", [this] { return show_markers; }, [this](bool on) { show_markers = on; save_settings(); });
+console.add_number("camera.speed", "Flying speed, in meters a second.", [this] { return camera_control.speed(); }, [this](double value) { camera_control.set_speed(value); save_settings(); }, CameraController::min_speed, CameraController::max_speed);
+console.add_action("stat none", "Hide all stats.", [this](std::string_view) { stat_fps = stat_timings = false; return std::string("Stats off"); });
+```
+
+The default it reports is the value at registration, which is before settings load. A variable with no storage of its own is
+not needed: point it at the value the rest of the editor already uses.
 
 ## Real-input runs
 

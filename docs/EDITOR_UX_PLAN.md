@@ -3,7 +3,7 @@
 Branch `feature/ui-ux`, worktree `D:\AI\GameEngine-Integration`, created from `main` at `8d12a03` (Milestone 4 merged).
 Reference: `docs/UNREAL_UX_REFERENCE.md`. Blueprints are out of scope.
 
-**Status: Phase 3 done, waiting for approval to start Phase 4.** Results and deviations are in section 9.
+**Status: Phase 4 done, waiting for approval to start Phase 5.** Results and deviations are in section 9.
 
 ## 1. Audit
 
@@ -289,6 +289,7 @@ Both MSVC presets build into fresh `build-ux-windows-msvc-release` and `-ci` fol
 - 2026-10-30: Phase 1 done.
 - 2026-10-30: Phase 2 done.
 - 2026-10-30: Phase 3 done.
+- 2026-11-01: Phase 4 done.
 
 ### Phase 1 checklist
 
@@ -408,3 +409,42 @@ Both MSVC presets build into fresh `build-ux-windows-msvc-release` and `-ci` fol
 - Asset fields were too narrow to read "(none)".
 - A test, not the game: the shooter script failed once, when a light crate sailed over the bonus zone, hit the back wall and bounced away. Gameplay and physics are unchanged since Milestone 4. The script now tries the next crate, since what it checks is the sensor.
 - A saved layout did not restore which panels were open, and closed panels came back after a restart. ImGui's settings record neither, so layouts and `editor.ini` now do.
+
+### Phase 4 checklist
+
+- [x] Alt+P plays, or carries on a paused run; Stop restores the scene exactly
+- [x] Alt+S simulates: the world runs, the game stays waiting, and the view stays the editor's
+- [x] Shift+F1 frees the mouse without pausing; a click on the view takes it again
+- [x] F8 ejects to the editor camera and possesses again; held keys are cleared; live entities can be selected and inspected
+- [x] First Esc frees the mouse and pauses, second Esc stops; an open drawer takes Esc first; outside Play it still deselects
+- [x] Viewport edge colored whenever something runs: green playing, blue simulating, yellow ejected; toolbar says which
+- [x] Command palette, Ctrl+Shift+P: fuzzy search, shortcuts shown, recent commands first and kept across restarts, Enter runs
+- [x] Quick open, Ctrl+P: fuzzy search over entities and assets; an entity is selected and framed, an asset shown in the browser, a material opened in the Material Editor
+- [x] Console, backtick: autocomplete with descriptions and current values, Tab completes, Up and Down for history
+- [x] Variables with a name, default, description and callback; built-ins `stat fps`, `stat timings`, `stat none`, `show collision`, `r.shadows`, `r.ambient_occlusion`, `r.bloom`, `r.skybox`, `view.*`, `snap.*`, `camera.speed`, `help`, `clear`; every command runs by its ID
+
+### Phase 4 deviations
+
+- **No `r.vsync`.** Filament's public API has no swap-interval control and its Windows backend never sets one. Adding it would mean changing Filament.
+- **Esc pauses first, as approved,** rather than stopping at once as the brief says. While the mouse is free, one Esc stops.
+- **The palette leaves out the Flying commands,** so it is not quite "all registered commands". The camera reads those keys while RMB is held; they cannot run on their own. The console leaves them out too.
+- **One source file for the palette, quick open and console,** `src/ui/WorkflowPanels.cpp`, and `ConsoleRegistry.hpp` rather than `CVar.hpp`. They share a window and a matcher, and the registry holds actions as well as variables.
+- **The Play menu has no Resume,** because Play now does both. It stays on the toolbar and in the palette.
+- **Console history lasts one session.** Variables persist only where the setting they point at already does; stats are off at each start.
+
+### Phase 4 known limits
+
+- **Not driven with real input:** the gizmo on a live entity while ejected, F8 while paused, Alt+P to resume, the toolbar's Simulate and Eject buttons, losing window focus while the game holds the mouse (the driver stops by design), and most variables. `camera.speed`, `r.bloom`, `show collision` and the stats are driven; the registry behind the rest has unit tests, but each built-in's binding does not.
+- **`stat timings` physics and gameplay are averages over all ticks so far,** not current values. GPU is the latest reported frame.
+- **Quick open rebuilds its list every frame while open,** from a copy of the scene. That is fine at 73 entities and will drag at many thousands.
+- **Esc while ejected stops the run;** it does not deselect.
+
+### Phase 4 bugs found by running it
+
+- **Crash on close, from Phase 3.** The renderer destroyed the thumbnail scene and then cleared its environment light, writing to freed memory on every close of a scene with an image-based light. It only crashed when the heap had already unmapped that page, so nearly every run passed: Windows recorded one such fault in all the runs since Phase 3, after a long session. Its crash dump located the bug. The fix is the order of destruction. There is no test that catches it reliably; the close checks would only see it when it faults.
+- **`stat fps` counted trips round the main loop, not frames drawn.** Filament skips frames when the GPU is behind, so it showed 133 while the editor drew about 60. The script now compares it with the frames drawn.
+- Ctrl+P and Ctrl+Shift+P did nothing from the Console, because any text field blocked every key. Commands can now be marked as working from a text field.
+- The backtick opened a closed Console but left it open afterwards. It now puts away a panel it opened.
+- Quick open labelled materials `unknown`: `to_string` had no case for materials or environments.
+- The generated shortcuts page broke on the backtick key, and still said no key works while the game holds the mouse.
+- A test, not the editor: one Phase 3 run failed its first drag and one shooter run stopped when the editor lost focus, both while the desktop was probably in use. In the Phase 3 run the cursor ended far from anywhere the script sent it. Both passed when re-run on the same build. Drags now check the cursor before pressing, as clicks already did, so this reads as a stopped run rather than a failure.
