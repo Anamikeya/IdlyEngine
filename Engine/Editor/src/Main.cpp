@@ -248,7 +248,6 @@ int main(int argc, char **argv) {
         std::string shown_title;
         auto last = std::chrono::steady_clock::now();
         PerformanceLog performance;
-        bool escape_was_down = false;
         while (!ui.quit) {
             glfwPollEvents();
             if (glfwWindowShouldClose(host.window)) {
@@ -262,13 +261,11 @@ int main(int argc, char **argv) {
             }
             const auto now = std::chrono::steady_clock::now();
             const auto elapsed = now - last; last = now;
-            // Esc, or losing the window, gives the mouse back and pauses. A click on the view takes it again.
-            const bool escape_down = glfwGetKey(host.window, GLFW_KEY_ESCAPE) == GLFW_PRESS;
-            if (game_input.captured && ((escape_down && !escape_was_down) || !glfwGetWindowAttrib(host.window, GLFW_FOCUSED))) {
-                game_input.release(host.window);
+            // Losing the window gives the mouse back and pauses. A click on the view takes it again.
+            if (game_input.captured && !glfwGetWindowAttrib(host.window, GLFW_FOCUSED)) {
+                ui.free_mouse();
                 if (session.game() && session.game()->phase() == gameplay::GamePhase::Playing) ui.report(session.pause(), "Paused");
             }
-            escape_was_down = escape_down;
             auto *game = session.game();
             if (game && game_input.captured) game_input.feed(host.window, *game);
             session.update(elapsed);
@@ -286,7 +283,7 @@ int main(int argc, char **argv) {
             if (!ui.frame) { auto f = session.frame(4.0 / 3); if (f) ui.frame = f.value(); }
             const auto render_start = std::chrono::steady_clock::now();
             const bool drawn = ui.frame && renderer.render(*ui.frame, session.resources(), ImGui::GetDrawData(), width, height);
-            if (drawn) ++rendered;
+            if (drawn) { ++rendered; ui.frame_drawn(); }
             performance.rendered(drawn, std::chrono::steady_clock::now() - render_start, renderer.stats(), session.physics_bridge().diagnostics().world.body_count);
             if (rendered == 1 && drawn) performance.startup = std::chrono::steady_clock::now() - program_start;
             if (!drawn && !smoke) std::this_thread::sleep_for(std::chrono::milliseconds(1)); // The GPU is behind: wait, do not spin.

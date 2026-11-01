@@ -249,7 +249,7 @@ ENGINE_TEST(default_table_has_unique_ids_and_no_conflicts_within_a_context) {
 	}
 	// Two commands in one context would be a real conflict. A panel's binding over a global one is a choice: it is what
 	// the routing is for. Those are listed here so that a new one is a decision too.
-	const std::string allowed[] = {"Edit.Rename F2", "Asset.Rename F2", "Edit.Deselect Esc", "Assets.CloseDrawer Esc"};
+	const std::string allowed[] = {"Edit.Rename F2", "Asset.Rename F2", "Edit.Deselect Esc", "Assets.CloseDrawer Esc", "Play.Escape Esc"};
 	for (const auto& command : r.commands())
 		for (const auto chord : command.chords)
 			for (const auto* other : r.conflicts(command.info.id, chord)) {

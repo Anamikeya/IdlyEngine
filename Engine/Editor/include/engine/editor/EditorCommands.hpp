@@ -39,6 +39,8 @@ namespace context {
 inline constexpr std::string_view global = "Global", viewport = "Viewport", outliner = "Outliner", details = "Details", asset_browser = "AssetBrowser";
 // Keys held while flying with RMB. Never dispatched: the camera reads them, so the same keys can mean something else otherwise.
 inline constexpr std::string_view flying = "Flying";
+// Asked first while something is running, so Esc can mean "stop" there and "deselect" otherwise.
+inline constexpr std::string_view playing = "Playing";
 }
 // The description of a command, with no behavior: what the shortcut documentation and tests read.
 struct CommandInfo {
@@ -49,6 +51,8 @@ struct CommandInfo {
     std::string context = std::string(context::global);
     std::vector<KeyChord> default_chords;
     bool repeats = false; // Fires again while the key is held.
+    bool while_captured = false; // Fires even while the running game holds the keyboard: the way out.
+    bool while_typing = false; // Fires even from a text field, for keys that mean nothing to one.
     std::string icon;     // Optional; empty for none.
 };
 struct EditorCommand {
@@ -60,12 +64,15 @@ struct EditorCommand {
 };
 // Why a shortcut must not fire this frame.
 struct InputBlock {
-    bool text_input = false;  // A text field has the keyboard.
+    bool text_input = false;  // A text field has the keyboard. Only `while_typing` commands fire.
     bool modal = false;       // A dialog or popup is open.
-    bool captured = false;    // The running game holds the mouse and keyboard.
+    bool captured = false;    // The running game holds the mouse and keyboard. Only `while_captured` commands fire.
     bool interacting = false; // A drag is in progress: a gizmo or a field.
     bool rebinding = false;   // The Keyboard Shortcuts panel is waiting for keys.
     bool any() const noexcept { return text_input || modal || captured || interacting || rebinding; }
+    bool allows(const CommandInfo &info) const noexcept {
+        return !modal && !interacting && !rebinding && (!captured || info.while_captured) && (!text_input || info.while_typing);
+    }
 };
 struct KeymapReport {
     std::size_t applied = 0;

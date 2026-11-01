@@ -1,4 +1,5 @@
 #include "EditorUI.hpp"
+#include <cstring>
 #include "FileDialog.hpp"
 #include <engine/editor/EditorPrefs.hpp>
 #include <glm/gtc/quaternion.hpp>
@@ -260,7 +261,37 @@ void EditorUI::bind_commands() {
         bind(("Bookmark.Go" + number).c_str(), [this, slot] { if (const auto goal = session.bookmark(slot)) { camera_control.animate_to(session.camera, *goal); view_kind = goal->orthographic ? view_kind : 0; } }, [this, slot] { return session.bookmark(slot).has_value(); });
     }
     // ---- Play ----
-    bind("Play.Play", [this] { report(session.play(), "Play mode: running a copy of the scene; changes are discarded on Stop"); }, editing);
+    bind("Play.Play", [this] {
+        const bool paused = session.play_state() == PlayState::Paused;
+        report(session.play(), paused ? "Resumed" : "Play mode: running a copy of the scene; changes are discarded on Stop");
+    }, [this] { return session.play_state() != PlayState::Playing; });
+    bind("Play.Simulate", [this] { report(session.simulate(), "Simulating: the scene runs, and the view stays yours. Esc stops."); }, editing);
+    bind("Play.Eject", [this] {
+        if (session.ejected()) {
+            report(session.set_ejected(false), "Possessed");
+            // Back in a running game: it takes the mouse again. Any other state waits for a click on the view.
+            if (auto *game = session.game(); game && game->phase() == gameplay::GamePhase::Playing && session.play_state() == PlayState::Playing) game_input.capture(window);
+        } else {
+            free_mouse();
+            report(session.set_ejected(true), "Ejected: the game carries on, and the view is yours. F8 goes back.");
+        }
+    }, [this] { return playing(); });
+    bind("Play.FreeMouse", [this] { free_mouse(); log("The mouse is free. Click the view to take it again."); }, [this] { return game_input.captured; });
+    bind("Play.Escape", [this] {
+        if (game_input.captured) {
+            free_mouse();
+            if (session.game() && session.game()->phase() == gameplay::GamePhase::Playing) report(session.pause(), "Paused. Esc again stops.");
+        } else stop_play();
+    }, [this] { return playing() && !asset_drawer_open; });
+    // ---- Finding things ----
+    bind("Palette.Commands", [this] { open_picker(Picker::Commands); });
+    bind("Palette.QuickOpen", [this] { open_picker(Picker::QuickOpen); });
+    bind("Console.Toggle", [this] {
+        console_opened_by_key = !show_console; // Leaving puts a panel that was closed away again.
+        show_console = true;
+        ImGui::SetWindowFocus("Console");
+        console_focus = true;
+    });
     bind("Play.Resume", [this] { report(session.play(), "Resumed"); }, [this] { return session.play_state() == PlayState::Paused; });
     bind("Play.Pause", [this] { report(session.pause(), "Paused"); }, [this] { return session.play_state() == PlayState::Playing; });
     bind("Play.Step", [this] { report(session.step(), "Stepped one tick"); }, [this] { return session.play_state() == PlayState::Paused; });
@@ -307,12 +338,14 @@ void EditorUI::route_shortcuts(bool rebinding_at_frame_start) {
     block.text_input = io.WantTextInput;
     block.modal = popup_before_frame || ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel);
     block.captured = game_input.captured;
-    block.interacting = gizmo_active || ImGui::IsAnyItemActive() || camera_control.holds_cursor();
+    // A field being typed in is active too, but that is `text_input`, not a drag.
+    block.interacting = gizmo_active || (ImGui::IsAnyItemActive() && !io.WantTextInput) || camera_control.holds_cursor();
     block.rebinding = rebinding_at_frame_start || !rebind_command.empty();
-    if (block.any()) return;
-    // The viewport answers while the mouse is over it; other panels when they have the focus.
-    std::array<std::string_view, 2> stack{};
+    // While something runs, its keys come first. The viewport answers while the mouse is over it; other panels when they
+    // have the focus.
+    std::array<std::string_view, 3> stack{};
     std::size_t depth = 0;
+    if (playing()) stack[depth++] = context::playing;
     if (hovered_context == context::viewport) stack[depth++] = context::viewport;
     if (!focused_context.empty()) stack[depth++] = focused_context;
     const auto contexts = std::span<const std::string_view>(stack.data(), depth);
@@ -321,7 +354,7 @@ void EditorUI::route_shortcuts(bool rebinding_at_frame_start) {
         if (!ImGui::IsKeyPressed(imgui, true)) continue;
         const KeyChord chord{key, modifiers};
         const auto *command = registry.resolve(chord, contexts);
-        if (!command || (!ImGui::IsKeyPressed(imgui, false) && !command->info.repeats)) continue;
+        if (!command || (!ImGui::IsKeyPressed(imgui, false) && !command->info.repeats) || !block.allows(command->info)) continue;
         registry.dispatch(chord, contexts, block);
     }
 }
@@ -386,7 +419,9 @@ void EditorUI::main_menu() {
     const bool open_play = ImGui::BeginMenu("Play");
     mark("Menu.Play");
     if (open_play) {
-        for (const auto *id : {"Play.Play", "Play.Resume", "Play.Pause", "Play.Step", "Play.Stop"}) command_item(id);
+        for (const auto *id : {"Play.Play", "Play.Simulate", "Play.Pause", "Play.Step", "Play.Stop"}) command_item(id);
+        ImGui::Separator();
+        for (const auto *id : {"Play.Eject", "Play.FreeMouse", "Play.Escape"}) command_item(id);
         ImGui::EndMenu();
     }
     const bool open_window = ImGui::BeginMenu("Window");
@@ -394,7 +429,7 @@ void EditorUI::main_menu() {
     if (open_window) {
         for (const auto *id : {"Window.Toolbar", "Window.Hierarchy", "Window.Inspector", "Window.Lighting", "Window.MaterialEditor", "Window.AssetBrowser", "Window.Console", "Window.UndoHistory", "Window.KeyboardShortcuts"}) command_item(id);
         ImGui::Separator();
-        command_item("Assets.ToggleDrawer");
+        for (const auto *id : {"Assets.ToggleDrawer", "Palette.Commands", "Palette.QuickOpen", "Console.Toggle"}) command_item(id);
         ImGui::Separator();
         if (ImGui::BeginMenu("Layouts")) {
             const auto layouts = saved_layouts();
@@ -604,6 +639,13 @@ void EditorUI::load_settings() {
     for (std::size_t i = 0; i < flags.size(); ++i) *flags[i] = settings.flag(std::string("panel.") + panel_keys[i], *flags[i]);
     saved_panels.clear();
     for (const bool *flag : flags) saved_panels += *flag ? '1' : '0';
+    std::string list = settings.text_of("palette.recent");
+    recent_commands.clear();
+    for (std::size_t at = 0; at < list.size();) {
+        const auto comma = std::min(list.find(',', at), list.size());
+        if (comma > at) recent_commands.push_back(list.substr(at, comma - at));
+        at = comma + 1;
+    }
 }
 void EditorUI::save_settings() {
     if (config_folder.empty()) return;
@@ -640,6 +682,11 @@ std::string EditorUI::log_fields() const {
            " snap_grid=" + std::to_string(snap.grid ? 1 : 0) + " folders=" + std::to_string(session.view_state().folders.folders.size()) +
            " members=" + std::to_string(session.view_state().folders.members.size()) + " locked=" + std::to_string(session.view_state().locked.size()) +
            " drawer=" + std::to_string(asset_drawer_open ? 1 : 0) + " details_targets=" + std::to_string(details_targets.size()) + " details_locked=" + std::to_string(details_locked ? 1 : 0) +
+           " ejected=" + std::to_string(session.ejected() ? 1 : 0) + " simulating=" + std::to_string(session.simulating() ? 1 : 0) + " captured=" + std::to_string(game_input.captured ? 1 : 0) +
+           " view_camera=" + std::to_string(session.view_camera()) + " picker=" + std::to_string(int(picker)) + " stat_fps=" + std::to_string(stat_fps ? 1 : 0) + " stat_timings=" + std::to_string(stat_timings ? 1 : 0) +
+           " stat_frame_ms=" + std::to_string(stat_frame_ms) + " frames_drawn=" + std::to_string(frames_drawn) +
+           " console_lines=" + std::to_string(messages.size()) + " console_shown=" + std::to_string(show_console ? 1 : 0) + " console_typed=" + std::to_string(std::strlen(console_input.data())) +
+           " picker_index=" + std::to_string(picker_index) + " colliders=" + std::to_string(show_colliders ? 1 : 0) + " bloom=" + std::to_string(session.view_flags.bloom ? 1 : 0) +
            " thumbnails=" + std::to_string(std::ranges::count_if(thumbnails, [this](const auto &entry) { return renderer.thumbnail(entry.first.value).texture != 0; })) +
            " selected_asset=" + assets::to_string(selected_asset);
 }

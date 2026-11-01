@@ -24,9 +24,10 @@ EditorUI::EditorUI(EditorSession &s, renderer::DesktopRenderer &r, GameInput &g,
     for (auto &info : default_command_table())
         if (const auto added = registry.add(std::move(info)); !added) throw std::runtime_error(added.error().message);
     bind_commands();
+    bind_console();
     if (const auto missing = registry.unbound(); !missing.empty()) throw std::runtime_error("Command with no behavior: " + missing.front());
 }
-void EditorUI::log(std::string text) { if (messages.size() == 128) messages.erase(messages.begin()); messages.push_back(std::move(text)); scroll_console = true; }
+void EditorUI::log(std::string text) { if (messages.size() == 512) messages.erase(messages.begin()); messages.push_back(std::move(text)); scroll_console = true; }
 void EditorUI::spawn(const char *label, Components c, Transform t, EntityId parent) {
     auto r = session.execute(commands::CreateEntity{label, t, parent, 0, std::move(c)}, std::string("Create ") + label);
     if (report(r, (std::string("Created ") + label).c_str())) session.select(r.value().created.front());
@@ -150,8 +151,8 @@ void EditorUI::docking() {
         ImGui::DockBuilderSplitNode(center, ImGuiDir_Left, 0.19f, &left, &center);
         ImGui::DockBuilderSplitNode(center, ImGuiDir_Right, 0.28f, &right, &center);
         ImGui::DockBuilderSplitNode(center, ImGuiDir_Down, 0.34f, &bottom, &center);
-        ImGuiID assets = 0, console = 0;
-        ImGui::DockBuilderSplitNode(bottom, ImGuiDir_Left, 0.68f, &assets, &console);
+        ImGuiID assets = 0, messages_dock = 0;
+        ImGui::DockBuilderSplitNode(bottom, ImGuiDir_Left, 0.68f, &assets, &messages_dock);
         ImGui::DockBuilderDockWindow("Toolbar", top);
         ImGui::DockBuilderDockWindow("Scene Hierarchy", left);
         ImGui::DockBuilderDockWindow("Inspector", right);
@@ -159,7 +160,7 @@ void EditorUI::docking() {
         ImGui::DockBuilderDockWindow("Material Editor", right);
         ImGui::DockBuilderDockWindow("###3D Viewport", center);
         ImGui::DockBuilderDockWindow("Asset Browser", assets);
-        ImGui::DockBuilderDockWindow("Console", console);
+        ImGui::DockBuilderDockWindow("Console", messages_dock);
         ImGui::DockBuilderFinish(dock);
     }
 }
@@ -193,11 +194,15 @@ void EditorUI::toolbar() {
     }
     ImGui::SameLine(); ImGui::TextDisabled("|"); ImGui::SameLine();
     command_button(state == PlayState::Playing ? "Play.Pause" : state == PlayState::Paused ? "Play.Resume" : "Play.Play");
+    if (state == PlayState::Editing) { ImGui::SameLine(); command_button("Play.Simulate"); }
+    else { ImGui::SameLine(); command_button("Play.Eject", session.ejected() ? "Possess" : "Eject"); }
     ImGui::SameLine(); command_button("Play.Step");
     ImGui::SameLine(); command_button("Play.Stop");
     ImGui::SameLine();
-    if (playing()) ImGui::TextColored({0.45f, 0.85f, 0.45f, 1}, "%s  tick %llu", state == PlayState::Paused ? "PAUSED" : "PLAYING",
-                                      static_cast<unsigned long long>(session.runtime_ticks()));
+    if (playing()) {
+        const char *what = state == PlayState::Paused ? "PAUSED" : session.simulating() ? "SIMULATING" : session.ejected() ? "EJECTED" : "PLAYING";
+        ImGui::TextColored({0.45f, 0.85f, 0.45f, 1}, "%s  tick %llu", what, static_cast<unsigned long long>(session.runtime_ticks()));
+    }
     else ImGui::TextDisabled("Revision %llu%s", static_cast<unsigned long long>(session.commands().revision()), session.dirty() ? "  (unsaved)" : "");
     ImGui::SetNextItemWidth(px(490)); ImGui::InputText("Scene file", scene_path.data(), scene_path.size());
     mark("Toolbar.ScenePath");
@@ -220,13 +225,8 @@ void EditorUI::draw() {
     main_menu();
     // Before the viewport: it extracts the frame, whose handles must be those of the latest import or reload.
     docking(); toolbar(); hierarchy(); lighting(); material_editor(); inspector(); assets(); viewport();
-    if (show_console) {
-        begin_panel("Console", "Console", context::global, &show_console);
-        for (const auto &m : messages) ImGui::TextWrapped("%s", m.c_str());
-        // The newest message, such as an import error, is what the user needs to see.
-        if (std::exchange(scroll_console, false)) ImGui::SetScrollHereY(1);
-        ImGui::End();
-    }
+    console_panel();
+    picker_window();
     history_panel();
     shortcuts_panel();
     confirm();

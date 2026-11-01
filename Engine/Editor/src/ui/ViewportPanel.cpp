@@ -68,7 +68,7 @@ void EditorUI::viewport() {
         }
         ImGui::EndDragDropTarget();
     }
-    auto *game = session.game();
+    auto *game = possessed() ? session.game() : nullptr; // Ejected or simulating, the view is the editor's.
     if (game && game_input.captured) session.select(0); // The view belongs to the player: no gizmo, no picking.
     update_camera(hovered, size.y);
     session.view_flags.grid = show_grid && !game_view;
@@ -92,6 +92,12 @@ void EditorUI::viewport() {
     }
     auto *draw = ImGui::GetWindowDrawList();
     const float margin = px(12), line = ImGui::GetTextLineHeightWithSpacing();
+    // A colored edge says at a glance that this is not the editor scene: green playing, blue simulating, yellow ejected.
+    if (playing()) {
+        const ImU32 edge = session.simulating() ? IM_COL32(90, 170, 255, 255) : session.ejected() ? IM_COL32(245, 205, 80, 255) : IM_COL32(115, 215, 115, 255);
+        draw->AddRect(origin, ImVec2(origin.x+size.x, origin.y+size.y), edge, 0.0f, ImDrawFlags_None, px(3));
+    }
+    draw_stats(origin, size);
     if (game) {
         game_overlay(*game, origin, size, hovered);
         ImGui::End();
@@ -108,11 +114,12 @@ void EditorUI::viewport() {
         ? "RMB or MMB pan  |  Wheel zoom  |  F focus  |  Click select  |  Alt+G perspective"
         : "RMB + WASD fly  |  Alt+LMB orbit  |  MMB pan  |  Wheel zoom  |  F focus  |  Click select");
     if (playing()) {
-        draw->AddRect(origin, ImVec2(origin.x+size.x, origin.y+size.y), IM_COL32(115,215,115,255), 0.0f, ImDrawFlags_None, px(3));
-        draw->AddText({origin.x+margin,below_overlay+line}, IM_COL32(115,215,115,255),
-            session.play_state() == editor::PlayState::Paused ? "PLAY MODE (paused) - changes are discarded on Stop"
-                                                              : "PLAY MODE - changes are discarded on Stop");
-        std::string view = "Viewing through the editor camera (no primary camera)";
+        const char *mode = session.play_state() == editor::PlayState::Paused ? "PLAY MODE (paused) - changes are discarded on Stop"
+                         : session.simulating() ? "SIMULATING - F8 possesses, Esc stops; changes are discarded"
+                         : session.ejected() ? "EJECTED - the game runs on; F8 goes back, Esc stops"
+                                             : "PLAY MODE - changes are discarded on Stop";
+        draw->AddText({origin.x+margin,below_overlay+line}, IM_COL32(115,215,115,255), mode);
+        std::string view = session.ejected() ? "Viewing through the editor camera" : "Viewing through the editor camera (no primary camera)";
         if (const auto camera = session.scene().inspect(session.view_camera())) view = "Viewing through camera '" + camera->name + "'";
         if (!session.view_camera_issue().empty()) view = session.view_camera_issue() + "; using the editor camera";
         draw->AddText({origin.x+margin,below_overlay+2*line}, IM_COL32(115,215,115,255), view.c_str());
@@ -140,10 +147,10 @@ void EditorUI::hold_cursor(bool hold) {
 }
 void EditorUI::update_camera(bool hovered, float height) {
     const auto &io = ImGui::GetIO();
-    if (session.game() || (camera_holding && !glfwGetWindowAttrib(window, GLFW_FOCUSED))) {
+    if (possessed() || (camera_holding && !glfwGetWindowAttrib(window, GLFW_FOCUSED))) {
         camera_control.reset();
         if (camera_holding) hold_cursor(false);
-        if (session.game()) return;
+        if (possessed()) return;
     }
     double x = 0, y = 0;
     glfwGetCursorPos(window, &x, &y);
@@ -269,9 +276,8 @@ void EditorUI::viewport_overlay(ImVec2 origin, ImVec2 size) {
 }
 void EditorUI::gizmo(ImVec2 origin, ImVec2 size) {
     const auto &io = ImGui::GetIO();
-    const auto *game = session.game();
     const auto world = session.scene().world_transform(session.selection());
-    if (!world || game || game_view) {
+    if (!world || possessed() || game_view) {
         if (gizmo_active && session.dragging()) (void)session.end_drag();
         gizmo_active = false;
         return;
@@ -401,6 +407,11 @@ void EditorUI::game_overlay(gameplay::Game &game, ImVec2 origin, ImVec2 size, bo
     case editor::HudAction::Stop: stop_play(); break;
     default: break;
     }
+}
+void EditorUI::free_mouse() {
+    game_input.release(window);
+    // Whatever was held stays held in the game otherwise, and the player would walk on by itself.
+    if (auto *game = session.game()) game->set_input({});
 }
 void EditorUI::stop_play() {
     game_input.release(window);

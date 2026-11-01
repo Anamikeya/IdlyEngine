@@ -5,6 +5,7 @@
 #include <GLFW/glfw3.h>
 #include <imgui.h>
 #include <imgui_internal.h>
+#include <engine/editor/ConsoleRegistry.hpp>
 #include <engine/editor/EditorCommands.hpp>
 #include <engine/editor/EditorPrefs.hpp>
 #include <engine/editor/EditorSession.hpp>
@@ -319,6 +320,35 @@ struct EditorUI {
     void asset_browser_contents();
     void rename_asset_dialog();
     void assets();
+    // ---- Typing to reach things ----
+    enum class Picker { None, Commands, QuickOpen };
+    Picker picker = Picker::None;
+    bool picker_focus = false;
+    std::array<char, 256> picker_text{};
+    int picker_index = 0, picker_scrolled = -1;
+    std::vector<std::string> recent_commands;
+    void open_picker(Picker kind);
+    void remember_recent(const std::string &id);
+    void picker_window();
+    ConsoleRegistry console;
+    ConsoleHistory console_history;
+    std::array<char, 512> console_input{};
+    bool console_focus = false, console_close = false, console_opened_by_key = false;
+    bool stat_fps = false, stat_timings = false;
+    double stat_frame_ms = 16;
+    std::uint64_t frames_drawn = 0;
+    std::chrono::steady_clock::time_point last_drawn{};
+    // Filament may skip a frame when the GPU is behind, so stat fps counts these and not trips round the loop.
+    void frame_drawn();
+    void bind_console();
+    void console_panel();
+    void console_print(const std::string &text);
+    void draw_stats(ImVec2 origin, ImVec2 size);
+    // ---- While something runs ----
+    // Gives the mouse back to the editor. The game, if it is running, gets no more input until it is taken again.
+    void free_mouse();
+    // The game has the view: its camera, its HUD, and no gizmo or picking.
+    bool possessed() const { return session.game() && !session.ejected(); }
     // ---- Panels and layouts ----
     bool show_toolbar = true, show_hierarchy = true, show_inspector = true, show_lighting = true, show_material = true, show_assets = true, show_console = true;
     bool layout_reset_requested = false, layout_prompt = false;
