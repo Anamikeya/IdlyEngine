@@ -75,6 +75,11 @@ double EditorSettings::number(std::string_view key, double fallback) const {
     const auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), value);
     return error == std::errc{} && end == text.data() + text.size() ? value : fallback;
 }
+void EditorSettings::set_text(std::string_view key, std::string_view value) { values_.insert_or_assign(std::string(key), std::string(value)); }
+std::string EditorSettings::text_of(std::string_view key) const {
+    const auto found = values_.find(key);
+    return found == values_.end() ? std::string{} : found->second;
+}
 bool EditorSettings::flag(std::string_view key, bool fallback) const {
     const auto found = values_.find(key);
     return found == values_.end() ? fallback : found->second == "1";

@@ -22,5 +22,7 @@ public:
     void set(std::string_view key, bool value);
     double number(std::string_view key, double fallback) const;
     bool flag(std::string_view key, bool fallback) const;
+    void set_text(std::string_view key, std::string_view value);
+    std::string text_of(std::string_view key) const;
 };
 } // namespace engine::editor
