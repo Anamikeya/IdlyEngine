@@ -80,6 +80,8 @@ struct ImportedAsset {
 struct FinishedImport {
     std::filesystem::path source;
     Result<ImportedAsset> result;
+    std::uint64_t id = 0;
+    bool cancelled = false; // Its result was discarded, and nothing was added.
 };
 
 // Single owner thread. This owns the actual scene, never a competing authoring model.
@@ -155,6 +157,9 @@ class EditorSession {
     void sync_history();
     std::vector<std::shared_future<Result<assets::PreparedImport>>> imports_;
     std::vector<std::filesystem::path> import_sources_;
+    std::vector<std::uint64_t> import_ids_;
+    std::set<std::uint64_t> cancelled_imports_;
+    std::uint64_t next_import_id_ = 1;
     std::uint64_t frames_since_trim_ = 0;
     std::uint64_t assets_released_ = 0;
     const Resolved &resolve(const AssetRef &, assets::AssetType) const;
@@ -379,10 +384,13 @@ public:
     const renderer::ResourceRegistry &resources() const { return resources_; }
 
     // ---- Background import: decoding happens on a worker; the catalogue and the GPU stay on this thread ----
-    void begin_import(const std::filesystem::path &file);
+    std::uint64_t begin_import(const std::filesystem::path &file);
     std::size_t imports_pending() const { return imports_.size(); }
     // Finishes the imports whose decoding is done.
     std::vector<FinishedImport> poll_imports();
+    // A decode cannot be interrupted, so this discards its result when it arrives: nothing reaches the project.
+    // False when no such import is running.
+    bool cancel_import(std::uint64_t id);
     // Waits for all of them. Tests and shutdown.
     std::vector<FinishedImport> wait_for_imports();
 

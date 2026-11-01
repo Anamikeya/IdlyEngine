@@ -1214,20 +1214,30 @@ Result<ImportedAsset> EditorSession::finish_import(const assets::PreparedImport 
     if (prepared.mesh) imported.warnings = prepared.mesh->warnings;
     return imported;
 }
-void EditorSession::begin_import(const std::filesystem::path &file) {
+std::uint64_t EditorSession::begin_import(const std::filesystem::path &file) {
     // std::async: the worker touches only its own copy of the path; the catalogue is left to poll_imports().
     imports_.push_back(std::async(std::launch::async, [file] { return assets::prepare_import(file); }).share());
     import_sources_.push_back(file);
+    import_ids_.push_back(next_import_id_);
+    return next_import_id_++;
+}
+bool EditorSession::cancel_import(std::uint64_t id) {
+    if (std::ranges::find(import_ids_, id) == import_ids_.end()) return false;
+    cancelled_imports_.insert(id);
+    return true;
 }
 std::vector<FinishedImport> EditorSession::poll_imports() {
     std::vector<FinishedImport> finished;
     for (std::size_t i = 0; i < imports_.size();) {
         if (imports_[i].wait_for(std::chrono::seconds(0)) != std::future_status::ready) { ++i; continue; }
         const auto &decoded = imports_[i].get();
-        if (decoded) finished.push_back({import_sources_[i], finish_import(decoded.value())});
-        else finished.push_back({import_sources_[i], decoded.error()});
+        const auto id = import_ids_[i];
+        if (cancelled_imports_.erase(id)) finished.push_back({import_sources_[i], fail(ErrorCode::InvalidState, "Cancelled"), id, true});
+        else if (decoded) finished.push_back({import_sources_[i], finish_import(decoded.value()), id});
+        else finished.push_back({import_sources_[i], decoded.error(), id});
         imports_.erase(imports_.begin() + std::ptrdiff_t(i));
         import_sources_.erase(import_sources_.begin() + std::ptrdiff_t(i));
+        import_ids_.erase(import_ids_.begin() + std::ptrdiff_t(i));
     }
     return finished;
 }
