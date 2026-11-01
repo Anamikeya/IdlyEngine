@@ -67,6 +67,7 @@ function Start-Run { param([string[]]$Extra = @())
 function Scrub { param([string]$Name, [double]$Fx, [int]$Dx, [string]$Modifier, [scriptblock]$During)
     $p = Get-WidgetPoint $Name $Fx
     Move-To $p[0] $p[1]; [Win32Input]::Mouse(1, 0, 1); Start-Sleep -Milliseconds 150
+    Assert-CursorOn $p[0] $p[1]
     if ($Modifier) { Key-Down $Modifier; Start-Sleep -Milliseconds 60 }
     Mouse-Press 'Left' $true; Start-Sleep -Milliseconds 80
     try {

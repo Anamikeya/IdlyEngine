@@ -134,6 +134,12 @@ function Assert-Cursor { param([int]$ScreenX, [int]$ScreenY)
     }
 }
 
+# The same, for a point given as fractions of the client area. Before a press that starts a drag.
+function Assert-CursorOn { param([double]$X, [double]$Y)
+    Update-Window
+    Assert-Cursor ($script:origin.X + [int]($X * $script:width)) ($script:origin.Y + [int]($Y * $script:height))
+}
+
 function Click-At { param([double]$X, [double]$Y, [switch]$Right)
     Move-To $X $Y
     $sx = $script:origin.X + [int]($X * $script:width); $sy = $script:origin.Y + [int]($Y * $script:height)
@@ -195,6 +201,7 @@ function Get-WidgetPoint { param([string]$Name, [double]$Fx = 0.5, [double]$Fy =
 # Presses on one point and releases on another, with a real movement between: what a drag and drop is made of.
 function Drag-Between { param([double[]]$From, [double[]]$To, [string]$Capture)
     Move-To $From[0] $From[1]; [Win32Input]::Mouse(1, 0, 1); Start-Sleep -Milliseconds 150
+    Assert-CursorOn $From[0] $From[1]
     Mouse-Press 'Left' $true; Start-Sleep -Milliseconds 120
     try {
         Move-Relative 0 -12 120
@@ -272,7 +279,8 @@ function Hold-Key { param([string[]]$Keys, [int]$Milliseconds)
 function Get-VirtualKey { param([string]$Key)
     switch ($Key) {
         'Space' { return [uint16]0x20 } 'Shift' { return [uint16]0xA0 } 'Esc' { return [uint16]0x1B } 'Enter' { return [uint16]0x0D }
-        'Ctrl' { return [uint16]0xA2 } 'Delete' { return [uint16]0x2E } 'Alt' { return [uint16]0xA4 } 'End' { return [uint16]0x23 } 'F2' { return [uint16]0x71 } 'F11' { return [uint16]0x7A }
+        'Ctrl' { return [uint16]0xA2 } 'Delete' { return [uint16]0x2E } 'Alt' { return [uint16]0xA4 } 'End' { return [uint16]0x23 } 'F1' { return [uint16]0x70 } 'F2' { return [uint16]0x71 } 'F8' { return [uint16]0x77 } 'F11' { return [uint16]0x7A }
+        'Up' { return [uint16]0x26 } 'Down' { return [uint16]0x28 } 'Tab' { return [uint16]0x09 }
         'Grave' { return [uint16]0xC0 } 'LeftBracket' { return [uint16]0xDB } 'RightBracket' { return [uint16]0xDD }
         default { return [uint16][char]$Key.ToUpper() }
     }
