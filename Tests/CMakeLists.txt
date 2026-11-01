@@ -56,6 +56,11 @@ if(TARGET engine_editor_session)
 		LABELS editor unit
 		SOURCES Editor/editor_workflow_tests.cpp
 		LIBRARIES engine_editor_session)
+	gameengine_add_test_executable(editor_feedback_tests
+		LABELS editor unit
+		SOURCES Editor/editor_feedback_tests.cpp
+		LIBRARIES engine_editor_session)
+	target_include_directories(editor_feedback_tests SYSTEM PRIVATE "${GAMEENGINE_RESOURCES_DIR}/glm")
 	gameengine_add_test_executable(editor_panels_tests
 		LABELS editor unit
 		SOURCES Editor/editor_panels_tests.cpp

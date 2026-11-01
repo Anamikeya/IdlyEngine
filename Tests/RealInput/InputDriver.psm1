@@ -280,7 +280,7 @@ function Get-VirtualKey { param([string]$Key)
     switch ($Key) {
         'Space' { return [uint16]0x20 } 'Shift' { return [uint16]0xA0 } 'Esc' { return [uint16]0x1B } 'Enter' { return [uint16]0x0D }
         'Ctrl' { return [uint16]0xA2 } 'Delete' { return [uint16]0x2E } 'Alt' { return [uint16]0xA4 } 'End' { return [uint16]0x23 } 'F1' { return [uint16]0x70 } 'F2' { return [uint16]0x71 } 'F8' { return [uint16]0x77 } 'F11' { return [uint16]0x7A }
-        'Up' { return [uint16]0x26 } 'Down' { return [uint16]0x28 } 'Tab' { return [uint16]0x09 }
+        'Up' { return [uint16]0x26 } 'Down' { return [uint16]0x28 } 'Tab' { return [uint16]0x09 } 'Slash' { return [uint16]0xBF } 'Backspace' { return [uint16]0x08 }
         'Grave' { return [uint16]0xC0 } 'LeftBracket' { return [uint16]0xDB } 'RightBracket' { return [uint16]0xDD }
         default { return [uint16][char]$Key.ToUpper() }
     }
