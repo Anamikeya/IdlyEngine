@@ -3,7 +3,7 @@
 Branch `feature/ui-ux`, worktree `D:\AI\GameEngine-Integration`, created from `main` at `8d12a03` (Milestone 4 merged).
 Reference: `docs/UNREAL_UX_REFERENCE.md`. Blueprints are out of scope.
 
-**Status: Phase 4 done, waiting for approval to start Phase 5.** Results and deviations are in section 9.
+**Status: Phase 5 done, so all five phases are done. Waiting for approval on the follow-up, separate OS windows, and on merging.** Results and deviations are in section 9.
 
 ## 1. Audit
 
@@ -290,6 +290,7 @@ Both MSVC presets build into fresh `build-ux-windows-msvc-release` and `-ci` fol
 - 2026-10-30: Phase 2 done.
 - 2026-10-30: Phase 3 done.
 - 2026-11-01: Phase 4 done.
+- 2026-11-01: Phase 5 done.
 
 ### Phase 1 checklist
 
@@ -448,3 +449,40 @@ Both MSVC presets build into fresh `build-ux-windows-msvc-release` and `-ci` fol
 - Quick open labelled materials `unknown`: `to_string` had no case for materials or environments.
 - The generated shortcuts page broke on the backtick key, and still said no key works while the game holds the mouse.
 - A test, not the editor: one Phase 3 run failed its first drag and one shooter run stopped when the editor lost focus, both while the desktop was probably in use. In the Phase 3 run the cursor ended far from anywhere the script sent it. Both passed when re-run on the same build. Drags now check the cursor before pressing, as clicks already did, so this reads as a stopped run rather than a failure.
+
+### Phase 5 checklist
+
+- [x] Toasts in the bottom right: info, success, warning and error, for save, load, import and every error; hover holds one, x closes it, the same message counts up
+- [x] A progress bar and Cancel on long tasks
+- [x] Imports and thumbnails run in the background; the editor keeps drawing during them
+- [x] Message Log panel with a filter for each severity, remembered between sessions
+- [x] Links in the log and on toasts select an entity or reveal an asset; a link to what is gone says so
+- [x] Tooltips with the bound shortcut on everything built from a command; every other button says what it does
+- [x] Cheat sheet while F1 or ? is held, generated from the registry for the contexts in effect, with the keys that work there
+- [x] During a gizmo drag: a number, with an axis letter if wanted, sets the amount; Enter confirms, Esc cancels, Backspace goes back to the mouse
+
+### Phase 5 deviations
+
+- **A typed value is how far the drag goes, not where the object ends up.** `x3` moves 3 m from where the drag began, `y90` turns 90 degrees from there, and `2` scales to twice its size. The brief says "sets an exact value", which could mean either. This matches the readout beside the cursor, works the same for a whole selection, and setting an absolute value is what Details already does. Changing it is a small edit in `gizmo_typed_change`.
+- **The mouse button stays down while typing,** because this happens during the drag. Letting go with a valid number keeps it, as Enter does.
+- **A number alone needs a handle that means one axis.** On an arrow or ring it goes along that axis, and the center of the scale gizmo scales all three. A plane or screen handle asks for X, Y or Z, and Enter waits.
+- **No "build" toast.** The engine has no build command to report on.
+- **The progress bar does not show how far along an import is,** only that it is running, because the importer reports no progress. Thumbnails count how many are done. They have no Cancel, as they are few and short.
+- **Cancel discards the result.** A decode in progress cannot be interrupted, as planned, so it runs to its end and nothing reaches the project.
+- **Most messages are not toasts.** A toast for every "Created Cube" would be noise. Save, load, import, warnings and errors get one; the rest go to the log.
+- **The Message Log is a panel of its own beside the Console.** The Console still shows everything, with what was typed. The log leaves that out, and a typing mistake in the Console is no toast.
+- **Errors go by themselves after 10 seconds** unless the mouse is on them. They stay in the log.
+
+### Phase 5 known limits
+
+- **Not everything is off the main thread.** Saving and loading a scene, and adding a decoded import to the project, run on it. Material thumbnails still read their maps there, one every six frames, as Phase 3 noted. Their cost on large projects has not been measured.
+- **Tooltips:** the value fields in the Lighting panel and Material Editor have none, and Details' only come from its tables. The first key is the one named when a command has two.
+- **? is Shift and the / key,** which is not ? on every keyboard. F1 always works, and both can be rebound.
+- **A toast can cover the bottom right of Details** for a few seconds.
+- **Not driven with real input:** typing on a multi-selection, on an Alt+drag copy, or during Shift+drag; the numeric keypad's Enter; world-space typing (the run is in Local, on an unrotated cube, so both axes agree); the toast limit; links on physics warnings; the Thumbnails task; a layout saved before the Message Log existed. Unit tests cover the multi-selection, world-space and toast-limit logic; the rest are UI paths only.
+
+### Phase 5 bugs found by running it
+
+- The Message Log's filters ran off a narrow panel, so Errors was cut off and Clear could not be reached. They now wrap.
+- On the cheat sheet, long keys ran into their labels.
+- A link in the log ran off a narrow panel. It now takes the next line when it does not fit.

@@ -168,6 +168,41 @@ console.add_action("stat none", "Hide all stats.", [this](std::string_view) { st
 The default it reports is the value at registration, which is before settings load. A variable with no storage of its own is
 not needed: point it at the value the rest of the editor already uses.
 
+## Feedback
+
+`Feedback.hpp` has no ImGui and takes time as an argument, so it is tested alone: `MessageLog`, `ToastQueue` and `TaskList`. They are
+drawn by `src/ui/FeedbackPanels.cpp`.
+
+There are two ways to say something. `log()` only adds to the log, and is right when the user is looking at what they just did.
+`notify()` also shows a toast, for what they are waiting to hear or would otherwise miss. `log_error()` is `notify` with `Severity::Error`.
+`report(result, text)` logs a success and notifies a failure, and `announce(result, text)` notifies both. Pass a `LogLink` to make the
+message lead somewhere:
+
+```cpp
+notify(Severity::Warning, "Physics: Crate: bad collider", LogLink::entity(id, "Crate"));
+```
+
+For work that takes a while, `tasks.begin(name, can_cancel)` and `tasks.finish(id)`. It only appears once it has run for
+`TaskList::show_after`. To cancel an import, `EditorSession::cancel_import` marks it, and `poll_imports` throws the result away when
+it arrives, since a decode cannot be interrupted.
+
+## Tooltips and the cheat sheet
+
+`command_item`, `command_button` and `command_checkbox` take their tooltip from `CommandRegistry::tooltip`, so a rebinding shows up at once.
+A button with no command uses `tip_button` or `tip_small_button`, with a sentence of its own.
+
+`CommandRegistry::cheat_sheet` lists the contexts it is given and then Global, in the order `resolve` asks them, leaving out a key a nearer
+context takes. `Help.CheatSheet` is in the `Held` context, like Flying's keys: nothing dispatches it, and `cheat_sheet_overlay` reads the
+keys directly, for as long as they are down.
+
+## Typing during a gizmo drag
+
+`GizmoEntry` collects what is typed, and `gizmo_typed_change` turns it into a world-space change in doubles, so a typed move is exact. The
+gizmo's float matrix is only for drawing. `gizmo()` feeds it `io.InputQueueCharacters` while dragging; shortcuts are already blocked by
+then. While anything is typed the mouse is ignored, and what is not yet a number holds the object where the drag began. Enter ends the drag
+through `end_drag`, so it is one undo step like any other, and `gizmo_confirmed` holds the result until the button comes up.
+Keyboard navigation is off during the drag, or Enter would also press whichever button had the keyboard last.
+
 ## Real-input runs
 
 `--ui-map <file>` writes where named controls are, so scripts find them by name, not by a position that changes with the
