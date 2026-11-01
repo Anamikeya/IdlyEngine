@@ -980,7 +980,8 @@ Result<renderer::Frame> EditorSession::frame(double aspect) {
     environment_settings.intensity = authored.intensity;
     environment_settings.rotation_radians = glm::radians(authored.rotation_degrees);
     // A sky has no meaning in a parallel view, where every pixel would look the same way.
-    environment_settings.show_skybox = authored.show_skybox && view_flags.skybox && !(camera.orthographic && !runtime_);
+    const bool editor_view = !runtime_ || ejected_;
+    environment_settings.show_skybox = authored.show_skybox && view_flags.skybox && !(camera.orthographic && editor_view);
     environment_settings.ev100 = authored.ev100;
     environment_settings.tone_mapping = authored.tone_mapping;
     environment_settings.shadow_quality = view_flags.shadows ? authored.shadow_quality : ShadowQuality::Off;
@@ -998,7 +999,7 @@ Result<renderer::Frame> EditorSession::frame(double aspect) {
     // Each play session is a distinct scene identity, so the renderer never reuses editor objects for it.
     const renderer::FrameStamp stamp{scene_identity(), scene_revision(), ++frame_};
     view_camera_ = 0; view_camera_issue_.clear();
-    if (runtime_) {
+    if (runtime_ && !ejected_) {
         const auto primary = std::find_if(entities.begin(), entities.end(),
             [](const EntityRecord &e) { return e.components.camera && e.components.camera->primary; });
         if (primary != entities.end()) {
@@ -1019,7 +1020,7 @@ Result<renderer::Frame> EditorSession::frame(double aspect) {
         eye.distance += stand_back;
         lens.far_plane = eye.distance + 2 * stand_back;
     }
-    return renderer::extract_frame(shown, stamp, lens, eye.world(), meshes, lights, environment_settings, !runtime_ && view_flags.grid, grid_spacing);
+    return renderer::extract_frame(shown, stamp, lens, eye.world(), meshes, lights, environment_settings, editor_view && view_flags.grid, grid_spacing);
 }
 std::uint64_t EditorSession::scene_identity() const { return runtime_ ? 1 + play_sessions_ : 1; }
 std::uint64_t EditorSession::scene_revision() const { return runtime_ ? runtime_->bus.revision() : bus_.revision(); }
@@ -1047,6 +1048,18 @@ Result<void> EditorSession::play() {
     reconcile();
     return {};
 }
+Result<void> EditorSession::simulate() {
+    if (runtime_) return fail(ErrorCode::InvalidState, "Stop first");
+    if (auto started = play(); !started) return started;
+    ejected_ = simulating_ = true;
+    return {};
+}
+Result<void> EditorSession::set_ejected(bool ejected) {
+    if (!runtime_) return fail(ErrorCode::InvalidState, "Nothing is running");
+    ejected_ = ejected;
+    if (!ejected) simulating_ = false; // Possessing turns a simulation into a run.
+    return {};
+}
 Result<void> EditorSession::pause() {
     if (!runtime_) return fail(ErrorCode::InvalidState, "Pause requires Play mode");
     runtime_->paused = true;
@@ -1064,6 +1077,7 @@ Result<void> EditorSession::stop() {
     runtime_.reset();
     physics_error_.clear();
     transaction_depth_ = 0; drag_start_.clear(); // A runtime transaction has nothing to finish.
+    ejected_ = simulating_ = false;
     reconcile();
     return {};
 }
@@ -1072,6 +1086,7 @@ Result<void> EditorSession::restart() {
     runtime_.reset();
     physics_error_.clear();
     transaction_depth_ = 0; drag_start_.clear();
+    ejected_ = simulating_ = false;
     return play();
 }
 gameplay::Game *EditorSession::game() const { return runtime_ ? runtime_->game.get() : nullptr; }

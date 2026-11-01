@@ -138,6 +138,7 @@ class EditorSession {
     std::optional<EditorFolders> transaction_folders_; // Folders as they were when the open transaction first changed them.
     Result<void> commit_folders(EditorFolders next, std::string name);
     void set_flag_on_subtree(std::set<EntityId> &flags, EntityId id, bool on);
+    bool ejected_ = false, simulating_ = false;
     // A worker decoding an asset for its thumbnail.
     struct ThumbnailJob { assets::AssetId id; assets::AssetType type; std::future<std::shared_ptr<const assets::PreparedImport>> result; };
     std::vector<ThumbnailJob> thumbnail_jobs_;
@@ -301,6 +302,13 @@ public:
     PlayState play_state() const;
     // Editing: copies the editor scene into a new runtime scene. Paused: resumes.
     Result<void> play();
+    // Runs the scene without possessing the player: the world simulates, a game stays waiting to start, and the view
+    // is the editor's, so anything can be selected and inspected while it runs.
+    Result<void> simulate();
+    bool simulating() const { return simulating_; }
+    // Detached from the running game's view: the editor camera is used, and the game carries on. Only while running.
+    Result<void> set_ejected(bool);
+    bool ejected() const { return ejected_; }
     Result<void> pause();
     // One fixed tick while paused.
     Result<void> step();
