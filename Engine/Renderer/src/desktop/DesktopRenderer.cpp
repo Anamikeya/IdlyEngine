@@ -552,7 +552,7 @@ struct DesktopRenderer::Impl {
         for (const auto &[key, image] : thumbnails) { (void)key; retire(image); }
         destroy_retired_thumbnails();
         thumbnail_scene->remove(thumbnail_light); remove(thumbnail_light);
-        engine->destroy(thumbnail_view); engine->destroy(thumbnail_depth); engine->destroy(thumbnail_sky); engine->destroy(thumbnail_scene);
+        engine->destroy(thumbnail_view); engine->destroy(thumbnail_depth); engine->destroy(thumbnail_sky);
         engine->destroyCameraComponent(thumbnail_camera_entity); utils::EntityManager::get().destroy(thumbnail_camera_entity);
         engine->destroy(preview_view); preview_scene->remove(preview_object); preview_scene->remove(preview_light);
         remove(preview_object); remove(preview_light);
@@ -563,6 +563,8 @@ struct DesktopRenderer::Impl {
         for (const auto &[key, light] : lights) { (void)key; remove(light); }
         destroy_environment();
         ibl_context.reset();
+        // After destroy_environment(), which takes the indirect light back from all three scenes.
+        engine->destroy(thumbnail_scene);
         engine->destroy(preview_scene);
         engine->destroy(scene);
         remove(grid); remove(sun); remove(fill);
