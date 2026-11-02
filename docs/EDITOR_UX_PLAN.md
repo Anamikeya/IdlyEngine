@@ -291,6 +291,7 @@ Both MSVC presets build into fresh `build-ux-windows-msvc-release` and `-ci` fol
 - 2026-10-30: Phase 3 done.
 - 2026-11-01: Phase 4 done.
 - 2026-11-01: Phase 5 done.
+- 2026-11-02: `docs/EDITOR_GUIDE.md` added: how to use the editor.
 
 ### Phase 1 checklist
 
