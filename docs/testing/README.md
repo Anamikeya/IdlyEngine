@@ -55,7 +55,7 @@ LIBRARIES ...)` (`cmake/GameEngineTesting.cmake`). After each build the executab
 runs in a fresh process, which isolates process-global state such as Box3D's world table.
 Case names must be unique within an executable.
 
-## Current suites (409 CTest entries)
+## Current suites (414 CTest entries)
 
 | Executable | Labels | Cases | Covers |
 |---|---|---|---|
@@ -70,6 +70,7 @@ Case names must be unique within an executable.
 | `editor_panels_tests` | editor, unit | 31 | What the panels stand on, without a window: folders and their undo, lock and hide, copy and paste, grouping, moving assets and fixing references, property and component text, thumbnail decoding, panel shortcuts |
 | `editor_workflow_tests` | editor, unit | 30 | Reaching things by typing and running without leaving the editor, without a window: fuzzy scoring and ranking, the real commands found by typing, console variables, actions, suggestions and history, simulate and eject, which keys work while the game holds the keyboard or a text field has it, asset type names |
 | `editor_feedback_tests` | editor, unit | 33 | What the editor says and how it answers, without a window: the message log and its filters, links, toasts, tasks, cancelled imports, the cheat sheet, tooltips, typing during a gizmo drag and the exact change it makes |
+| `animation_tests` | animation, unit | 5 | ozz-animation as the engine builds it: a skeleton and clip built in code, sampled at start, middle and end, blended by weight, saved and reloaded through ozz's archive, and an invalid clip refused. Poses compare at ozz's key precision, about 0.5 mm per metre |
 | `networking_tests` | networking, unit | 41 | Serialization, loopback transport, connection manager |
 | `online_services_tests` | online, unit | 7 | NullOnlineService |
 | `engine_core_tests` | none | 1 entry, 24 scenarios | `engine.core.acceptance`: scene, commands, undo, components, serialization of all format versions, malformed input |

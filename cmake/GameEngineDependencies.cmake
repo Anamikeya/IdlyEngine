@@ -88,6 +88,33 @@ if(GAMEENGINE_WITH_PHYSICS)
 	endif()
 endif()
 
+# ---- ozz-animation ----------------------------------------------------------------------------
+# Runtime and offline libraries only. Its tools, samples, howtos and tests stay off, so its bundled GLFW, gtest and
+# jsoncpp never enter the build. Its CMake writes only under the binary dir. Never build its BUILD_CLANG_FORMAT
+# target: it reformats the read-only sources in place (it is not part of `all`).
+if(GAMEENGINE_WITH_ANIMATION)
+	gameengine_verify_dependency(ozz-animation)
+	if(CMAKE_VERSION VERSION_LESS 3.30)
+		message(FATAL_ERROR "ozz-animation needs CMake 3.30 or later (this is ${CMAKE_VERSION}). "
+			"Upgrade CMake, or configure with -DGAMEENGINE_WITH_ANIMATION=OFF.")
+	endif()
+	set(BUILD_SHARED_LIBS OFF)
+	# The engine uses the DLL runtime (/MD, /MDd); ozz defaults to the static one.
+	set(ozz_build_msvc_rt_dll ON CACHE BOOL "" FORCE)
+	foreach(ozz_option IN ITEMS ozz_build_tools ozz_build_fbx ozz_build_gltf ozz_build_data ozz_build_samples
+			ozz_build_howtos ozz_build_tests ozz_build_postfix ozz_build_simd_ref)
+		set(${ozz_option} OFF CACHE BOOL "" FORCE)
+	endforeach()
+	add_subdirectory("${GAMEENGINE_RESOURCES_DIR}/ozz-animation" "${CMAKE_BINARY_DIR}/_deps/ozz" EXCLUDE_FROM_ALL SYSTEM)
+	foreach(ozz_target IN ITEMS ozz_base ozz_options ozz_animation ozz_animation_offline ozz_geometry)
+		set_target_properties(${ozz_target} PROPERTIES FOLDER "ThirdParty/ozz")
+	endforeach()
+	# Only ozz's own code: the engine's targets include ozz's headers as SYSTEM and keep their own warning settings.
+	add_library(gameengine_ozz INTERFACE)
+	target_link_libraries(gameengine_ozz INTERFACE ozz_animation_offline ozz_animation ozz_base)
+	add_library(gameengine::ozz ALIAS gameengine_ozz)
+endif()
+
 # ---- GameNetworkingSockets --------------------------------------------------------------------
 if(GAMEENGINE_WITH_GNS)
 	gameengine_verify_dependency(GameNetworkingSockets)

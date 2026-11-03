@@ -1,7 +1,10 @@
 # Milestone 5 plan: characters and effects
 
 Branch `milestone-5`, worktree `D:\AI\GameEngine-Integration`, created from `main` at `14c6642`.
-**Status: plan, waiting for approval.** No code has been written. Do not merge into `main` without the user's approval.
+**Status: approved 2026-11-03. Slice 0 done; slice 1 (particles) next.** Do not merge into `main` without the user's approval.
+
+Decisions (2026-11-03): the plan is approved as written. ozz-animation 0.17.0 goes into `resources` at its pinned commit.
+The enemy is Quaternius' Universal Animation Library (CC0), downloaded in glTF. Edit-mode preview is on by default.
 
 Goal: particles, skeletal animation with ozz-animation, and Box3D ragdolls, all editable in the editor. The shooter
 gains animated enemies that walk, flinch when shot and fall as ragdolls, plus sparks, dust and glass shards.
@@ -170,3 +173,20 @@ Cut order if time runs short: foot IK, then debris bodies (particles only), then
 - The shooter, with enemies and effects, is won and lost with real input.
 - Release reaches 60 fps with 10 animated enemies and 5,000 particles on this PC, or the report says what it reaches.
 - The report lists what was verified, how, and what was not.
+
+## 8. Progress
+
+### Slice 0: ozz in the build (done 2026-11-03)
+
+- ozz-animation fetched into `resources` at `744eb9d9` by `fetch_dependencies.py`, and pinned in
+  `cmake/DependencyLock.cmake`. CI fetches it on both jobs.
+- `GAMEENGINE_WITH_ANIMATION` (on) adds ozz with the DLL runtime and its tools, samples and tests off, as
+  `gameengine::ozz`. Configure stops with a message on CMake older than 3.30.
+- **The compile risk is closed:** ozz builds under C++20 with MSVC 19.44 with no warnings, keeping its own `/W4` and
+  warnings-as-errors.
+- `animation_tests`: 5 cases. One first failed by 0.45 mm. That is ozz's 16-bit rotation keys, not a bug, so poses
+  are compared at 1 mm per metre, and the precision is recorded in `docs/build/dependencies.md`.
+- 414 of 414 CTest entries pass in Release and in the CI configuration (warnings as errors, strict lock), both in
+  the existing editor-UX build folders. Fresh-folder builds of both presets are left to slice 6, as they rebuild
+  Filament.
+

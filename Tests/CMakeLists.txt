@@ -30,6 +30,14 @@ if(TARGET engine::gameplay)
 	target_compile_definitions(gameplay_tests PRIVATE "GAMEENGINE_SAMPLES_DIR=\"${CMAKE_SOURCE_DIR}/Samples\"")
 endif()
 
+# ozz-animation as the engine builds it; Engine/Animation's own cases join this executable in slice 3.
+if(TARGET gameengine::ozz)
+	gameengine_add_test_executable(animation_tests
+		LABELS animation unit
+		SOURCES Animation/ozz_smoke_tests.cpp
+		LIBRARIES gameengine::ozz)
+endif()
+
 if(TARGET engine::networking)
 	gameengine_add_test_executable(networking_tests
 		LABELS networking unit

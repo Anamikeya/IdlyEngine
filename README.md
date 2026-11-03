@@ -66,7 +66,7 @@ The editor's controls are modelled on Unreal Engine's:
 
 - Windows 10 or 11, x64
 - Visual Studio 2022 with **Desktop development with C++** (tested with MSVC 14.44 and Windows SDK 10.0.26100)
-- CMake 3.25 or later, and Ninja
+- CMake 3.30 or later, and Ninja
 - Python 3, to fetch the dependencies
 - Several GB of free disk space and a long first build, because Filament is built from source
 
@@ -76,7 +76,7 @@ The dependencies are not in this repository. They are checked out at the commits
 [`cmake/DependencyLock.cmake`](cmake/DependencyLock.cmake), into a folder of your choice:
 
 ```powershell
-python -I cmake/scripts/fetch_dependencies.py D:\deps\idly box3d GameNetworkingSockets flecs glm spdlog glfw imgui filament
+python -I cmake/scripts/fetch_dependencies.py D:\deps\idly box3d GameNetworkingSockets flecs glm spdlog glfw imgui filament ozz-animation
 $env:GAMEENGINE_RESOURCES_DIR = 'D:\deps\idly'
 ```
 
@@ -93,6 +93,7 @@ between them.
 | Dear ImGui (docking) | MIT | Editor UI |
 | GLM | MIT | Math |
 | spdlog | MIT | Logging |
+| ozz-animation | MIT | Skeletal animation (Milestone 5) |
 | GameNetworkingSockets | BSD-style | Networking backend, headers only for now |
 
 The full list, with commits, is in [`docs/build/dependencies.md`](docs/build/dependencies.md).
@@ -119,6 +120,7 @@ From a **Developer PowerShell for VS 2022**, run the commands directly. From any
 |---|---|---|
 | `GAMEENGINE_BUILD_EDITOR` | ON | Build GLFW, ImGui, Filament and the editor |
 | `GAMEENGINE_WITH_PHYSICS` | ON | Build Box3D and the physics module |
+| `GAMEENGINE_WITH_ANIMATION` | ON | Build ozz-animation. Needs CMake 3.30 |
 | `GAMEENGINE_BUILD_TESTS` | ON | Build the tests and register them with CTest |
 | `GAMEENGINE_WARNINGS_AS_ERRORS` | OFF | Treat warnings as errors on engine targets only |
 | `GAMEENGINE_WITH_GNS` | OFF | Build GameNetworkingSockets. Needs protobuf |

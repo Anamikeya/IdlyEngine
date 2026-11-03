@@ -11,6 +11,7 @@ set(GAMEENGINE_DEPENDENCY_LOCK
 	"glfw|https://github.com/glfw/glfw|92dcf4ce74f2e2554a98fea09be7c705c17daa5a"
 	"glm|https://github.com/g-truc/glm|6f14f4792a0cde5d0cf2c910506724d61cb95834"
 	"imgui|https://github.com/ocornut/imgui|d88f238d1d363ef387382b2e29ad12cf96f826ac"
+	"ozz-animation|https://github.com/guillaumeblanc/ozz-animation|744eb9d99f606eda849acb0b1204f7a3dc20bca1"
 	"miniaudio|https://github.com/mackron/miniaudio|9634bedb5b5a2ca38c1ee7108a9358a4e233f14d"
 	"spdlog|https://github.com/gabime/spdlog|6d9805df3f588402b17073dcd13eb569ceda864d"
 	"tracy|https://github.com/wolfpld/tracy|1f4c53574b5913235b838d31e7d4b3c04bb2f4ab"

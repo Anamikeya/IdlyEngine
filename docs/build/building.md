@@ -2,7 +2,7 @@
 
 ## Requirements
 
-- CMake >= 3.25, Ninja.
+- CMake >= 3.25, Ninja. CMake 3.30 or later while `GAMEENGINE_WITH_ANIMATION` is on (the default), for ozz-animation.
 - Windows: Visual Studio 2022 with the "Desktop development with C++" workload (MSVC x64).
 - The third-party source tree. Point `GAMEENGINE_RESOURCES_DIR` at it (environment variable or
   `-DGAMEENGINE_RESOURCES_DIR=`). If unset, `<repo>/resources` is tried. Nothing is ever written
@@ -45,6 +45,7 @@ cmake -S . -B build/mingw-gcc-debug -G Ninja -DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_
 | `GAMEENGINE_WARNINGS_AS_ERRORS` | OFF | `/WX` / `-Werror` on engine-owned targets only |
 | `GAMEENGINE_STRICT_DEPENDENCY_LOCK` | OFF | Fail configure if a dependency is not at its locked commit |
 | `GAMEENGINE_WITH_PHYSICS` | ON | Build Box3D and `engine::physics` |
+| `GAMEENGINE_WITH_ANIMATION` | ON | Build ozz-animation as `gameengine::ozz`. Needs CMake 3.30 |
 | `GAMEENGINE_BUILD_EDITOR` | ON | Define `gameengine::glfw` / `gameengine::imgui` and add `Engine/Editor` when it exists |
 | `GAMEENGINE_WITH_GNS` | OFF | Build GameNetworkingSockets and `engine::networking_gns` (needs protobuf) |
 | `GAMEENGINE_GNS_COMPILE_CHECK` | ON | When GNS is off, compile (not link) the GNS backend against GNS headers |
