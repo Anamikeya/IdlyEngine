@@ -578,6 +578,33 @@ ENGINE_TEST(a_shot_at_a_wall_leaves_a_mark_and_does_not_move_it)
 	ENGINE_CHECK_EQ(a.scene.size(), entities); // The mark has faded.
 }
 
+ENGINE_TEST(an_impact_template_with_an_emitter_asks_for_particles_instead_of_a_mark)
+{
+	Arena a;
+	a.floor();
+	a.player();
+	a.rules();
+	Components wall;
+	wall.colliders = {box({5, 3, 0.5})};
+	a.add("Wall", at(0, 3, -6), wall);
+	Components sparks;
+	sparks.emitter = ParticleEmitterComponent{{1, "effects/sparks.effect"}, false, false, 2};
+	sparks.behaviors = {{"impact_effect", {}}};
+	const auto source = a.add("Impact Effect Template", at(0, -40, 0), sparks);
+	a.begin();
+	const auto entities = a.scene.size();
+	a.tick(pressed({Action::Fire}));
+	ENGINE_REQUIRE(a.game->shots().size() == 1);
+	ENGINE_CHECK_EQ(a.scene.size(), entities); // Nothing enters the scene.
+	ENGINE_REQUIRE(a.game->effect_events().size() == 1);
+	const auto& event = a.game->effect_events()[0];
+	ENGINE_CHECK_EQ(event.source, source);
+	ENGINE_CHECK_NEAR(event.direction.z, 1.0f, 1e-3f); // Along the wall's normal, back towards the player.
+	ENGINE_CHECK_NEAR(event.point.z, -5.5f + 0.02f, 1e-3f);
+	a.tick({});
+	ENGINE_CHECK(a.game->effect_events().empty()); // One tick's requests only.
+}
+
 // ---- Targets ---------------------------------------------------------------------------------
 
 ENGINE_TEST(a_dynamic_target_takes_damage_and_moves)

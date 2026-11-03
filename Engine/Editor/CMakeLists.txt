@@ -105,7 +105,7 @@ target_compile_options(engine_desktop_renderer PRIVATE /W4 /permissive- /utf-8)
 add_dependencies(engine_desktop_renderer editor_materials)
 add_executable(engine_editor src/Main.cpp src/GameHud.cpp src/RenderTest.cpp
     src/ui/EditorUI.cpp src/ui/HierarchyPanel.cpp src/ui/InspectorPanel.cpp src/ui/LightingPanel.cpp
-    src/ui/MaterialPanel.cpp src/ui/ViewportPanel.cpp src/ui/AssetPanel.cpp src/ui/CommandUI.cpp src/ui/FileDialog.cpp src/ui/WorkflowPanels.cpp src/ui/FeedbackPanels.cpp)
+    src/ui/MaterialPanel.cpp src/ui/EffectPanel.cpp src/ui/ViewportPanel.cpp src/ui/AssetPanel.cpp src/ui/CommandUI.cpp src/ui/FileDialog.cpp src/ui/WorkflowPanels.cpp src/ui/FeedbackPanels.cpp)
 target_link_libraries(engine_editor PRIVATE engine_editor_session engine_desktop_renderer editor_imgui comdlg32)
 target_include_directories(engine_editor SYSTEM PRIVATE "${GAMEENGINE_RESOURCES_DIR}/glm")
 # Like the materials, the sample is found by an absolute path, so the editor runs from its build tree.

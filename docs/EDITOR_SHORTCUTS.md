@@ -70,6 +70,7 @@ While a text field has the keyboard, only Ctrl+P and Ctrl+Shift+P fire.
 | Falling Cube |  | Global | `Create.FallingCube` |
 | Falling Sphere |  | Global | `Create.FallingSphere` |
 | Floor |  | Global | `Create.Floor` |
+| Particle Emitter |  | Global | `Create.ParticleEmitter` |
 | Child Empty |  | Outliner | `Create.ChildEmpty` |
 | Child Cube |  | Outliner | `Create.ChildCube` |
 | Child Sphere |  | Outliner | `Create.ChildSphere` |
@@ -87,6 +88,8 @@ While a text field has the keyboard, only Ctrl+P and Ctrl+Shift+P fire.
 | Show Shadows |  | Viewport | `Viewport.ShowShadows` |
 | Show Ambient Occlusion |  | Viewport | `Viewport.ShowAmbientOcclusion` |
 | Show Bloom |  | Viewport | `Viewport.ShowBloom` |
+| Play Effects |  | Viewport | `Viewport.ShowEffects` |
+| Restart Effects |  | Viewport | `Viewport.RestartEffects` |
 | Game View | `G` | Viewport | `Viewport.GameView` |
 | Maximize Viewport | `F11` | Viewport | `Viewport.Maximize` |
 | Perspective | `Alt+G` | Viewport | `Viewport.Perspective` |
@@ -164,6 +167,7 @@ While a text field has the keyboard, only Ctrl+P and Ctrl+Shift+P fire.
 | Inspector |  | Global | `Window.Inspector` |
 | Lighting |  | Global | `Window.Lighting` |
 | Material Editor |  | Global | `Window.MaterialEditor` |
+| Effect Editor |  | Global | `Window.EffectEditor` |
 | Asset Browser |  | Global | `Window.AssetBrowser` |
 | Console |  | Global | `Window.Console` |
 | Message Log |  | Global | `Window.MessageLog` |

@@ -204,6 +204,7 @@ void EditorUI::bind_console() {
     flag("r.ambient_occlusion", "Draw ambient occlusion in the viewport.", session.view_flags.ambient_occlusion);
     flag("r.bloom", "Draw bloom in the viewport.", session.view_flags.bloom);
     flag("r.skybox", "Draw the skybox in the viewport.", session.view_flags.skybox);
+    flag("r.effects", "Play particle emitters while editing.", session.view_flags.effects);
     flag("view.grid", "Draw the grid.", show_grid);
     flag("view.collision", "Draw collider outlines.", show_colliders);
     flag("view.markers", "Draw the markers for lights and cameras.", show_markers);

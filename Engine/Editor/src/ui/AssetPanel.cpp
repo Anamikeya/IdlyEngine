@@ -39,6 +39,7 @@ ImU32 type_color(assets::AssetType type) {
     case assets::AssetType::Texture: return IM_COL32(85, 180, 95, 255);
     case assets::AssetType::Material: return IM_COL32(230, 150, 60, 255);
     case assets::AssetType::Environment: return IM_COL32(165, 105, 215, 255);
+    case assets::AssetType::Effect: return IM_COL32(55, 185, 200, 255);
     default: return IM_COL32(120, 120, 120, 255);
     }
 }
@@ -48,6 +49,7 @@ const char *type_label(assets::AssetType type) {
     case assets::AssetType::Texture: return "IMAGE";
     case assets::AssetType::Material: return "MATERIAL";
     case assets::AssetType::Environment: return "HDR";
+    case assets::AssetType::Effect: return "EFFECT";
     default: return "?";
     }
 }
@@ -56,6 +58,7 @@ assets::AssetType type_from_name(std::string_view name) {
     if (name == "texture") return assets::AssetType::Texture;
     if (name == "material") return assets::AssetType::Material;
     if (name == "environment") return assets::AssetType::Environment;
+    if (name == "effect") return assets::AssetType::Effect;
     return assets::AssetType::Unknown;
 }
 bool has_text(std::string_view text, std::string_view wanted) {
@@ -149,12 +152,12 @@ void EditorUI::asset_item_input(const assets::AssetMetadata &meta) {
     if (ImGui::IsItemClicked(ImGuiMouseButton_Left)) selected_asset = meta.id;
     if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
         if (meta.type == assets::AssetType::Mesh) report(session.place_asset(meta.id), "Model added to the scene");
-        else if (meta.type == assets::AssetType::Material) registry.run("Asset.Edit");
+        else if (meta.type == assets::AssetType::Material || meta.type == assets::AssetType::Effect) registry.run("Asset.Edit");
     }
     if (ImGui::BeginDragDropSource()) {
         ImGui::SetDragDropPayload(asset_payload, &meta.id.value, sizeof meta.id.value);
         ImGui::Text("%s", file_name_of(meta.path).c_str());
-        ImGui::TextDisabled(meta.type == assets::AssetType::Mesh ? "Drop on the view to place it, or on a field" : "Drop on a matching field");
+        ImGui::TextDisabled(meta.type == assets::AssetType::Mesh || meta.type == assets::AssetType::Effect ? "Drop on the view to place it, or on a field" : "Drop on a matching field");
         ImGui::EndDragDropSource();
     }
     asset_tooltip(meta);
@@ -275,6 +278,12 @@ void EditorUI::asset_browser_contents() {
         if (report(created, "Material created")) { selected_asset = created.value(); asset_scroll_to = selected_asset; }
     }
     mark("Asset.NewMaterial");
+    flow(button_width("New effect"));
+    if (tip_button("New effect", "Make a particle effect with the name to the left")) {
+        const auto created = session.create_effect(new_material_name.data());
+        if (report(created, "Effect created")) { selected_asset = created.value(); asset_scroll_to = selected_asset; }
+    }
+    mark("Asset.NewEffect");
     flow(button_width("Duplicate"));
     ImGui::BeginDisabled(!have_material);
     if (ImGui::Button("Duplicate")) {
@@ -295,8 +304,8 @@ void EditorUI::asset_browser_contents() {
     ImGui::SetNextItemWidth(px(140));
     ImGui::InputTextWithHint("##asset-search", "Search assets", asset_search.data(), asset_search.size());
     mark("Asset.Search");
-    constexpr const char *chip_names[] = {"Model", "Image", "Material", "HDR"};
-    constexpr assets::AssetType chip_types[] = {assets::AssetType::Mesh, assets::AssetType::Texture, assets::AssetType::Material, assets::AssetType::Environment};
+    constexpr const char *chip_names[] = {"Model", "Image", "Material", "HDR", "Effect"};
+    constexpr assets::AssetType chip_types[] = {assets::AssetType::Mesh, assets::AssetType::Texture, assets::AssetType::Material, assets::AssetType::Environment, assets::AssetType::Effect};
     for (std::size_t i = 0; i < std::size(chip_names); ++i) {
         flow(button_width(chip_names[i]));
         if (asset_chips[i]) ImGui::PushStyleColor(ImGuiCol_Button, ImGui::ColorConvertU32ToFloat4(type_color(chip_types[i])));

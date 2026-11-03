@@ -160,6 +160,15 @@ PropertyTable<EnvironmentComponent> make_environment() {
         field<T>("shadow_distance", "Distance (m)", "Shadows", "How far from the camera directional shadows reach.", PropertyType::Number, &T::shadow_distance, {1, 1000, 1, "%.0f"}),
     }};
 }
+PropertyTable<ParticleEmitterComponent> make_emitter() {
+    using T = ParticleEmitterComponent;
+    return {"Particle Emitter", {
+        asset<T>("effect", "Effect", "Emitter", "A particle effect (.effect). Edit it in the Effect Editor.", &T::effect, "effect"),
+        field<T>("auto_play", "Play by itself", "Emitter", "Starts on its own in Play and in the editor's preview. Off: only gameplay fires it.", PropertyType::Bool, &T::auto_play),
+        field<T>("loop", "Loop", "Emitter", "Starts again each time the effect's duration ends.", PropertyType::Bool, &T::loop),
+        field<T>("rate_scale", "Rate scale", "Emitter", "Multiplies the effect's rate and bursts.", PropertyType::Number, &T::rate_scale, {0, 1000, 0.01}),
+    }};
+}
 }
 std::string property_to_text(const PropertyValue &value) {
     std::ostringstream out;
@@ -199,4 +208,5 @@ const PropertyTable<LightComponent> &light_properties() { static const auto tabl
 const PropertyTable<RigidBodyComponent> &body_properties() { static const auto table = make_body(); return table; }
 const PropertyTable<ColliderComponent> &collider_properties() { static const auto table = make_collider(); return table; }
 const PropertyTable<EnvironmentComponent> &environment_properties() { static const auto table = make_environment(); return table; }
+const PropertyTable<ParticleEmitterComponent> &emitter_properties() { static const auto table = make_emitter(); return table; }
 } // namespace engine::editor

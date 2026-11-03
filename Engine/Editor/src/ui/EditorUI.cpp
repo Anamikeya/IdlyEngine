@@ -61,6 +61,8 @@ void EditorUI::create_items() {
     for (const auto *id : {"Create.DirectionalLight", "Create.PointLight", "Create.SpotLight", "Create.Camera"}) command_item(id);
     ImGui::Separator();
     for (const auto *id : {"Create.FallingCube", "Create.FallingSphere", "Create.Floor"}) command_item(id);
+    ImGui::Separator();
+    command_item("Create.ParticleEmitter");
 }
 void EditorUI::create_menu() {
     if (!ImGui::BeginPopup("Create")) return;
@@ -160,6 +162,7 @@ void EditorUI::docking() {
         ImGui::DockBuilderDockWindow("Inspector", right);
         ImGui::DockBuilderDockWindow("Lighting", right);
         ImGui::DockBuilderDockWindow("Material Editor", right);
+        ImGui::DockBuilderDockWindow("Effect Editor", right);
         ImGui::DockBuilderDockWindow("###3D Viewport", center);
         ImGui::DockBuilderDockWindow("Asset Browser", assets);
         ImGui::DockBuilderDockWindow("Message Log", messages_dock);
@@ -227,7 +230,7 @@ void EditorUI::draw() {
     finish_imports();
     main_menu();
     // Before the viewport: it extracts the frame, whose handles must be those of the latest import or reload.
-    docking(); toolbar(); hierarchy(); lighting(); material_editor(); inspector(); assets(); viewport();
+    docking(); toolbar(); hierarchy(); lighting(); material_editor(); effect_editor(); inspector(); assets(); viewport();
     console_panel();
     message_log_panel();
     picker_window();

@@ -12,6 +12,7 @@
 #include <glm/gtc/type_ptr.hpp>
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <fstream>
 #include <iostream>
@@ -403,6 +404,68 @@ void resource_lifecycle(Harness &h) {
     h.settle();
     h.check(h.renderer.stats().textures == 1, "the texture uploads again after undo", std::to_string(h.renderer.stats().textures));
 }
+// Particles (Milestone 5): still quads 1.5 m wide at the view's center, born in one burst and living long, so a readback
+// sees them where they were born. Behind them, a self-lit blue panel shows how each blend mode combines with the scene.
+void particles(Harness &h) {
+    h.reset();
+    h.session.view_flags.effects = true;
+    const auto emitter_of = [&](const std::string &name, assets::ParticleBlend blend, std::array<double, 4> color, double strength) {
+        assets::EffectData e;
+        e.rate = 0; e.burst = 1; e.max_particles = 1;
+        e.lifetime = {600, 600}; e.speed = {0, 0}; e.acceleration = {0, 0, 0};
+        e.size = {{0, 1.5}};
+        e.color = {{0, color}};
+        e.blend = blend; e.emissive_strength = strength;
+        const auto effect = h.session.create_effect(name, e);
+        if (!effect) throw std::runtime_error("Effect failed: " + effect.error().message);
+        // Centered on the row the checks read: 0.06 of the view's height below the middle, 0.28 m at this distance.
+        const auto placed = h.session.place_asset_at(effect.value(), {0, -0.33, 0});
+        if (!placed) throw std::runtime_error("Emitter failed: " + placed.error().message);
+        h.frame();                                // Picks the emitter up ...
+        h.session.update(std::chrono::milliseconds(16)); // ... and its burst.
+        return placed.value().created.front();
+    };
+    const auto remove = [&](EntityId id) { if (!h.session.execute(commands::DeleteEntity{id})) throw std::runtime_error("Delete failed"); };
+    const auto dark = h.pixel(0.5f, 0.56f);
+    auto glow = emitter_of("glow", assets::ParticleBlend::Additive, {1, 0.2, 0.1, 1}, 1);
+    const auto red = h.pixel(0.5f, 0.56f);
+    // Additive: its light lands on the sky behind, so red rises and the other channels barely do.
+    h.check(red[0] > dark[0] + 120 && red[1] < dark[1] + 25 && red[2] < dark[2] + 25, "an additive particle adds its color", "background " + text(dark) + ", particle " + text(red));
+    const auto edge = h.pixel(0.5f + 0.15f * 800 / 1280, 0.56f);
+    h.check(brightness(edge) < brightness(red), "the soft dot fades towards its edge", "middle " + text(red) + ", edge " + text(edge));
+    h.check(h.renderer.stats().particle_batches == 1 && h.renderer.stats().particles == 1, "one batch, one particle on the GPU",
+            std::to_string(h.renderer.stats().particle_batches) + " batches");
+    h.capture("particles_additive");
+    remove(glow);
+    glow = emitter_of("dim", assets::ParticleBlend::Additive, {0.4, 0.08, 0.04, 1}, 1);
+    const auto dim = h.pixel(0.5f, 0.56f);
+    remove(glow);
+    glow = emitter_of("bright", assets::ParticleBlend::Additive, {0.4, 0.08, 0.04, 1}, 4);
+    const auto bright = h.pixel(0.5f, 0.56f);
+    h.check(brightness(bright) > brightness(dim) + 40, "strength multiplies the color", "1x " + text(dim) + ", 4x " + text(bright));
+    remove(glow);
+    h.settle();
+    h.check(h.renderer.stats().particle_batches == 0, "deleting the emitter frees its GPU batch", std::to_string(h.renderer.stats().particle_batches));
+    // A blue wall that lights itself, a metre behind.
+    assets::MaterialData blue; blue.base_color = {0, 0, 0, 1}; blue.emissive = {0, 0, 1}; blue.emissive_strength = 1;
+    h.panel(h.material("blue_wall", blue), {0, 0, -1}, {4, 4, 0.1});
+    const auto wall = h.pixel(0.5f, 0.56f);
+    auto cover = emitter_of("cover", assets::ParticleBlend::Alpha, {0, 1, 0, 1}, 1);
+    const auto covered = h.pixel(0.5f, 0.56f);
+    h.check(covered[1] > 2 * covered[2] && covered[1] > 100, "an opaque alpha particle covers what is behind", "wall " + text(wall) + ", covered " + text(covered));
+    remove(cover);
+    cover = emitter_of("half", assets::ParticleBlend::Alpha, {0, 1, 0, 0.5}, 1);
+    const auto half = h.pixel(0.5f, 0.56f);
+    h.check(half[1] > 40 && half[2] > 40 && half[2] < wall[2], "a half alpha particle blends with what is behind", text(half));
+    remove(cover);
+    cover = emitter_of("add_green", assets::ParticleBlend::Additive, {0, 1, 0, 1}, 1);
+    const auto added = h.pixel(0.5f, 0.56f);
+    h.check(added[1] > 100 && added[2] >= wall[2] - 3, "an additive particle adds to what is behind", text(added));
+    h.capture("particles_over_wall");
+    h.session.view_flags.effects = false;
+    h.check(h.pixel(0.5f, 0.56f)[1] < 20, "turning the preview off hides the particles", text(h.pixel(0.5f, 0.56f)));
+    h.session.view_flags.effects = true;
+}
 void model_with_all_maps(Harness &h, const fs::path &model_file) {
     std::error_code error;
     if (!fs::is_regular_file(model_file, error)) { std::cout << "SKIP  model capture: " << model_file.string() << " not found\n"; return; }
@@ -455,6 +518,7 @@ int run_render_test(GLFWwindow *window, const fs::path &materials, const fs::pat
         editor_lights_follow_exposure(h);
         punctual_lights(h);
         resource_lifecycle(h);
+        particles(h);
         const fs::path sample = fs::path(ENGINE_SAMPLES_DIR) / "PhysicsShooter";
         model_with_all_maps(h, sample / "Assets/models/WaterBottle.glb");
         lighting_scene(h, sample);

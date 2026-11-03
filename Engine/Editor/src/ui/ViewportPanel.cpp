@@ -227,7 +227,8 @@ void EditorUI::viewport_overlay(ImVec2 origin, ImVec2 size) {
     if (ImGui::BeginPopup("##view-mode")) {
         for (const auto *id : {"Viewport.Lit", "Viewport.Wireframe", "Viewport.Unlit"}) command_item(id);
         ImGui::SeparatorText("Show");
-        for (const auto *id : {"Viewport.ShowGrid", "Viewport.ToggleColliders", "Viewport.ShowMarkers", "Viewport.ShowSkybox", "Viewport.ShowShadows", "Viewport.ShowAmbientOcclusion", "Viewport.ShowBloom"}) command_item(id);
+        for (const auto *id : {"Viewport.ShowGrid", "Viewport.ToggleColliders", "Viewport.ShowMarkers", "Viewport.ShowSkybox", "Viewport.ShowShadows", "Viewport.ShowAmbientOcclusion", "Viewport.ShowBloom", "Viewport.ShowEffects"}) command_item(id);
+        command_item("Viewport.RestartEffects");
         ImGui::EndPopup();
     }
     // ---- Top right: snapping and camera speed, each a toggle and a value ----

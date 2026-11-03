@@ -117,6 +117,8 @@ struct EditorUI {
     GLFWwindow *window;
     assets::MaterialData material_edit; // The Material Editor's working copy of the chosen material.
     assets::AssetId material_edit_id;
+    assets::EffectData effect_edit; // The Effect Editor's working copy of the chosen effect.
+    assets::AssetId effect_edit_id;
     std::array<char, 128> new_material_name{};
     std::array<char, 1024> project_path{};
     bool project_prompt = false, project_create = true;
@@ -306,6 +308,7 @@ struct EditorUI {
     // One texture slot of the material: a combo of the project's textures. True when it changed.
     bool texture_slot(const char *label, assets::MaterialTexture &slot);
     void material_editor();
+    void effect_editor();
     // Puts physics problems in the Console once, when they appear.
     void report_physics();
     // Puts asset problems in the Console once, when they appear.
@@ -334,7 +337,7 @@ struct EditorUI {
     AssetSource asset_source = AssetSource::All;
     std::string asset_folder;
     std::array<char, 128> asset_search{}, asset_field_search{};
-    std::array<bool, 4> asset_chips{};
+    std::array<bool, 5> asset_chips{};
     bool asset_list_view = false;
     assets::AssetId asset_scroll_to;
     bool asset_drawer_open = false, asset_drawer_focus = false;
@@ -392,11 +395,12 @@ struct EditorUI {
     bool possessed() const { return session.game() && !session.ejected(); }
     // ---- Panels and layouts ----
     bool show_toolbar = true, show_hierarchy = true, show_inspector = true, show_lighting = true, show_material = true, show_assets = true, show_console = true;
+    bool show_effect = true;
     bool layout_reset_requested = false, layout_prompt = false;
     std::array<char, 128> layout_name{};
     std::string pending_layout; // ImGui settings to load before the next frame.
     std::string saved_panels;   // Which panels were open when settings were last saved.
-    std::array<bool *, 8> panel_flags();
+    std::array<bool *, 9> panel_flags();
     void layout_dialog();
     std::vector<std::string> saved_layouts() const;
     void apply_pending_layout();

@@ -420,6 +420,7 @@ void EditorUI::inspector() {
     const bool has_light = all_have([](const EntityRecord &r) { return r.components.light.has_value(); });
     const bool has_body = all_have([](const EntityRecord &r) { return r.components.body.has_value(); });
     const bool has_environment = all_have([](const EntityRecord &r) { return r.components.environment.has_value(); });
+    const bool has_emitter = all_have([](const EntityRecord &r) { return r.components.emitter.has_value(); });
     auto mesh = has_mesh ? Section<MeshComponent>{"Mesh Renderer", mesh_properties(), ids, gather([](const EntityRecord &r) { return *r.components.mesh; }),
                                                   [](EntityId id, const MeshComponent &v) { return commands::Command(commands::SetMesh{id, v}); }}
                          : Section<MeshComponent>{"Mesh Renderer", mesh_properties(), {}, {}, {}};
@@ -435,6 +436,9 @@ void EditorUI::inspector() {
     auto body = has_body ? Section<RigidBodyComponent>{"Rigid Body", body_properties(), ids, gather([](const EntityRecord &r) { return *r.components.body; }),
                                                        [](EntityId id, const RigidBodyComponent &v) { return commands::Command(commands::SetRigidBody{id, v}); }}
                          : Section<RigidBodyComponent>{"Rigid Body", body_properties(), {}, {}, {}};
+    auto emitter = has_emitter ? Section<ParticleEmitterComponent>{"Particle Emitter", emitter_properties(), ids, gather([](const EntityRecord &r) { return *r.components.emitter; }),
+                                                                    [](EntityId id, const ParticleEmitterComponent &v) { return commands::Command(commands::SetParticleEmitter{id, v}); }}
+                               : Section<ParticleEmitterComponent>{"Particle Emitter", emitter_properties(), {}, {}, {}};
     // Colliders by position in the list, while every target has that many.
     std::vector<Section<ColliderComponent>> colliders;
     std::size_t shared_colliders = primary.components.colliders.size();
@@ -450,13 +454,13 @@ void EditorUI::inspector() {
     const auto favorites_wanted = [&](const auto &s) {
         return !s.values.empty() && std::ranges::any_of(s.table.properties, [&](const auto &p) { return settings.flag(settings_key("favorite", s.table.name, p.id), false) && row_wanted(*this, s, p); });
     };
-    bool any_favorite = favorites_wanted(transform) || favorites_wanted(mesh) || favorites_wanted(camera) || favorites_wanted(light) || favorites_wanted(environment) || favorites_wanted(body);
+    bool any_favorite = favorites_wanted(transform) || favorites_wanted(mesh) || favorites_wanted(camera) || favorites_wanted(light) || favorites_wanted(environment) || favorites_wanted(body) || favorites_wanted(emitter);
     for (const auto &s : colliders) any_favorite |= favorites_wanted(s);
     ImGui::BeginChild("##details", {0, 0});
     if (any_favorite) {
         ImGui::SeparatorText("Favorites");
         if (begin_rows("##favorites")) {
-            favorite_rows(*this, transform); favorite_rows(*this, mesh); favorite_rows(*this, camera); favorite_rows(*this, light); favorite_rows(*this, environment); favorite_rows(*this, body);
+            favorite_rows(*this, transform); favorite_rows(*this, mesh); favorite_rows(*this, camera); favorite_rows(*this, light); favorite_rows(*this, environment); favorite_rows(*this, body); favorite_rows(*this, emitter);
             for (auto &s : colliders) favorite_rows(*this, s);
             ImGui::EndTable();
         }
@@ -496,6 +500,11 @@ void EditorUI::inspector() {
     }
     if (has_light) section(*this, light, remover("Light", [](EntityId id) { return commands::SetLight{id, std::nullopt}; }));
     if (has_environment) section(*this, environment, remover("Environment", [](EntityId id) { return commands::SetEnvironment{id, std::nullopt}; }));
+    if (has_emitter) {
+        section(*this, emitter, remover("Particle Emitter", [](EntityId id) { return commands::SetParticleEmitter{id, std::nullopt}; }));
+        if (!details_search[0] && !details_only_modified && primary.components.emitter->effect.empty())
+            ImGui::TextColored({0.95f, 0.75f, 0.3f, 1}, "No effect: choose one, or drop an effect on the field.");
+    }
     if (has_body) {
         section(*this, body, remover("Rigid Body", [](EntityId id) { return commands::SetRigidBody{id, std::nullopt}; }));
         if (primary.components.colliders.empty()) ImGui::TextColored({0.95f, 0.75f, 0.3f, 1}, "No colliders: this body will not collide.");
@@ -536,6 +545,8 @@ void EditorUI::inspector() {
         mark("Details.Add.Light");
         if (add_light)
             details_add("Light", [](const EntityRecord &r) -> std::optional<commands::Command> { if (r.components.light) return std::nullopt; return commands::SetLight{r.id, LightComponent{}}; });
+        if (ImGui::MenuItem("Particle Emitter", nullptr, false, any_missing([](const EntityRecord &r) { return r.components.emitter.has_value(); })))
+            details_add("Particle Emitter", [](const EntityRecord &r) -> std::optional<commands::Command> { if (r.components.emitter) return std::nullopt; return commands::SetParticleEmitter{r.id, ParticleEmitterComponent{}}; });
         if (ImGui::MenuItem("Rigid Body", nullptr, false, any_missing([](const EntityRecord &r) { return r.components.body.has_value(); })))
             details_add("Rigid Body", [](const EntityRecord &r) -> std::optional<commands::Command> { if (r.components.body) return std::nullopt; return commands::SetRigidBody{r.id, RigidBodyComponent{}}; });
         if (ImGui::MenuItem("Collider (fitted to mesh)", nullptr, false, any_missing([](const EntityRecord &r) { return r.components.colliders.size() >= max_colliders_per_entity; }) || !many))

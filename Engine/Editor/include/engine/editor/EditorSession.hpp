@@ -385,7 +385,8 @@ public:
     // Sets the entity's model or texture according to the asset's type, adding a mesh renderer if it has none, and
     // makes the color white so the asset shows as authored. One undo step.
     Result<commands::Receipt> assign_asset(EntityId, assets::AssetId);
-    // Creates an entity drawing the model, named after the file and resting on the floor (y = 0), and selects it.
+    // Creates an entity drawing the model, named after the file and resting on the floor (y = 0), and selects it. For a
+    // particle effect, an entity with an emitter playing it.
     Result<commands::Receipt> place_asset(assets::AssetId);
     // The same with its base at `point`.
     Result<commands::Receipt> place_asset_at(assets::AssetId, const Vec3 &point);

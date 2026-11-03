@@ -1676,7 +1676,22 @@ Result<commands::Receipt> EditorSession::place_asset(assets::AssetId asset) { re
 Result<commands::Receipt> EditorSession::place_asset_at(assets::AssetId asset, const Vec3 &point) {
     const auto meta = assets_ ? assets_->find(asset) : std::nullopt;
     if (!meta) return fail(ErrorCode::NotFound, "Asset is not in the asset folder");
-    if (meta->type != assets::AssetType::Mesh) return fail(ErrorCode::InvalidArgument, meta->path + " is not a model; assign it to an entity instead");
+    const auto stem_of = [&] {
+        const auto stem = std::filesystem::path(std::u8string(reinterpret_cast<const char8_t *>(meta->path.data()), meta->path.size())).stem().u8string();
+        return trimmed_name(std::string(reinterpret_cast<const char *>(stem.data()), stem.size()));
+    };
+    if (meta->type == assets::AssetType::Effect) {
+        // An emitter a little above the point, so a fountain is not born inside the floor.
+        Components components;
+        components.emitter = ParticleEmitterComponent{reference(*meta)};
+        Transform t; t.position = {point.x, point.y + 0.05, point.z};
+        auto name = stem_of();
+        const auto label = "Place " + name;
+        auto result = execute(commands::CreateEntity{std::move(name), t, 0, 0, std::move(components)}, label);
+        if (result) selection_.set(result.value().created.front());
+        return result;
+    }
+    if (meta->type != assets::AssetType::Mesh) return fail(ErrorCode::InvalidArgument, meta->path + " is not a model or an effect; assign it to an entity instead");
     const AssetRef ref = reference(*meta);
     const auto data = model(ref);
     if (!data) return fail(ErrorCode::ParseError, resolve(ref, assets::AssetType::Mesh).problem);

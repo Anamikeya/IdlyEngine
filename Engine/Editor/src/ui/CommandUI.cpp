@@ -196,10 +196,17 @@ void EditorUI::bind_commands() {
     }, [entity_material] { return !entity_material().empty(); });
     bind("Asset.Assign", [this, selected_asset_meta] {
         const auto meta = selected_asset_meta();
-        report(meta->type == assets::AssetType::Material ? session.assign_material(session.selection(), selected_asset) : session.assign_asset(session.selection(), selected_asset), "Asset assigned to the selected entity");
+        if (meta->type == assets::AssetType::Effect) report(session.assign_effect(session.selection(), selected_asset), "Effect assigned to the selected entity");
+        else report(meta->type == assets::AssetType::Material ? session.assign_material(session.selection(), selected_asset) : session.assign_asset(session.selection(), selected_asset), "Asset assigned to the selected entity");
     }, [this, selected_asset_meta] { const auto meta = selected_asset_meta(); return meta && session.selection() && meta->type != assets::AssetType::Environment; });
-    bind("Asset.AddToScene", [this] { report(session.place_asset(selected_asset), "Model added to the scene"); }, [selected_asset_meta] { const auto meta = selected_asset_meta(); return meta && meta->type == assets::AssetType::Mesh; });
-    bind("Asset.Edit", [this] { show_material = true; ImGui::SetWindowFocus("Material Editor"); }, [selected_asset_meta] { const auto meta = selected_asset_meta(); return meta && meta->type == assets::AssetType::Material; });
+    bind("Asset.AddToScene", [this] { report(session.place_asset(selected_asset), "Added to the scene"); }, [selected_asset_meta] {
+        const auto meta = selected_asset_meta();
+        return meta && (meta->type == assets::AssetType::Mesh || meta->type == assets::AssetType::Effect);
+    });
+    bind("Asset.Edit", [this, selected_asset_meta] {
+        if (selected_asset_meta()->type == assets::AssetType::Effect) { show_effect = true; ImGui::SetWindowFocus("Effect Editor"); }
+        else { show_material = true; ImGui::SetWindowFocus("Material Editor"); }
+    }, [selected_asset_meta] { const auto meta = selected_asset_meta(); return meta && (meta->type == assets::AssetType::Material || meta->type == assets::AssetType::Effect); });
     bind("Asset.Reload", [this] {
         report(session.reload_asset(selected_asset), "Asset re-imported from disk");
         thumbnails.erase(selected_asset);
@@ -233,6 +240,14 @@ void EditorUI::bind_commands() {
     bind("Create.Camera", [this] { spawn("Camera", {{}, CameraComponent{}, {}}, aimed({0,1.5,6}, -8, 0)); });
     bind("Create.FallingCube", [this] { spawn("Falling Cube", physical(BuiltinMesh::Cube), {{0,3,0}, {}, {1,1,1}}); });
     bind("Create.FallingSphere", [this] { spawn("Falling Sphere", physical(BuiltinMesh::Sphere), {{0,3,0}, {}, {1,1,1}}); });
+    bind("Create.ParticleEmitter", [this] {
+        Components c;
+        c.emitter = ParticleEmitterComponent{};
+        const auto catalogue = session.assets();
+        const auto chosen = std::ranges::find_if(catalogue, [&](const assets::AssetMetadata &meta) { return meta.id == selected_asset; });
+        if (chosen != catalogue.end() && chosen->type == assets::AssetType::Effect) c.emitter->effect = {chosen->id.value, chosen->path};
+        spawn("Particle Emitter", std::move(c), {{0,1,0}, {}, {1,1,1}});
+    });
     bind("Create.Floor", [this] {
         Components floor{MeshComponent{BuiltinMesh::Plane}, {}, {}};
         floor.colliders = {fitted_collider(BuiltinMesh::Plane)};
@@ -255,6 +270,8 @@ void EditorUI::bind_commands() {
     toggle("Viewport.ShowShadows", session.view_flags.shadows);
     toggle("Viewport.ShowAmbientOcclusion", session.view_flags.ambient_occlusion);
     toggle("Viewport.ShowBloom", session.view_flags.bloom);
+    toggle("Viewport.ShowEffects", session.view_flags.effects);
+    bind("Viewport.RestartEffects", [this] { session.restart_effects(); });
     bind("Viewport.GameView", [this] { game_view = !game_view; }, {}, [this] { return game_view; });
     bind("Viewport.Maximize", [this] { viewport_maximized = !viewport_maximized; }, {}, [this] { return viewport_maximized; });
     constexpr const char *views[] = {"Viewport.Perspective", "Viewport.Front", "Viewport.Top", "Viewport.Side"};
@@ -327,12 +344,13 @@ void EditorUI::bind_commands() {
     panel("Window.Inspector", show_inspector);
     panel("Window.Lighting", show_lighting);
     panel("Window.MaterialEditor", show_material);
+    panel("Window.EffectEditor", show_effect);
     panel("Window.AssetBrowser", show_assets);
     panel("Window.Console", show_console);
     panel("Window.MessageLog", show_message_log);
     bind("Window.SaveLayout", [this] { layout_prompt = true; }, [this] { return !config_folder.empty(); });
     bind("Window.ResetLayout", [this] {
-        show_toolbar = show_hierarchy = show_inspector = show_lighting = show_material = show_assets = show_console = show_message_log = true;
+        show_toolbar = show_hierarchy = show_inspector = show_lighting = show_material = show_assets = show_console = show_message_log = show_effect = true;
         layout_reset_requested = true;
     });
 }
@@ -422,7 +440,7 @@ void EditorUI::main_menu() {
         ImGui::Separator();
         for (const auto *id : {"Viewport.Lit", "Viewport.Wireframe", "Viewport.Unlit"}) command_item(id);
         ImGui::Separator();
-        for (const auto *id : {"Viewport.ShowGrid", "Viewport.ToggleColliders", "Viewport.ShowMarkers", "Viewport.ShowSkybox", "Viewport.ShowShadows", "Viewport.ShowAmbientOcclusion", "Viewport.ShowBloom"}) command_item(id);
+        for (const auto *id : {"Viewport.ShowGrid", "Viewport.ToggleColliders", "Viewport.ShowMarkers", "Viewport.ShowSkybox", "Viewport.ShowShadows", "Viewport.ShowAmbientOcclusion", "Viewport.ShowBloom", "Viewport.ShowEffects"}) command_item(id);
         if (ImGui::BeginMenu("Bookmarks")) {
             for (int slot = 0; slot < 10; ++slot) command_item(("Bookmark.Go" + std::to_string(slot)).c_str());
             ImGui::Separator();
@@ -657,7 +675,8 @@ void EditorUI::load_settings() {
     session.view_flags.shadows = settings.flag("view.shadows", session.view_flags.shadows);
     session.view_flags.ambient_occlusion = settings.flag("view.ambient_occlusion", session.view_flags.ambient_occlusion);
     session.view_flags.bloom = settings.flag("view.bloom", session.view_flags.bloom);
-    constexpr const char *panel_keys[] = {"toolbar", "hierarchy", "inspector", "lighting", "material", "assets", "console", "message_log"};
+    session.view_flags.effects = settings.flag("view.effects", session.view_flags.effects);
+    constexpr const char *panel_keys[] = {"toolbar", "hierarchy", "inspector", "lighting", "material", "assets", "console", "message_log", "effect"};
     const auto flags = panel_flags();
     for (std::size_t i = 0; i < flags.size(); ++i) *flags[i] = settings.flag(std::string("panel.") + panel_keys[i], *flags[i]);
     saved_panels.clear();
@@ -695,7 +714,8 @@ void EditorUI::save_settings() {
     settings.set("view.shadows", session.view_flags.shadows);
     settings.set("view.ambient_occlusion", session.view_flags.ambient_occlusion);
     settings.set("view.bloom", session.view_flags.bloom);
-    constexpr const char *panel_keys[] = {"toolbar", "hierarchy", "inspector", "lighting", "material", "assets", "console", "message_log"};
+    settings.set("view.effects", session.view_flags.effects);
+    constexpr const char *panel_keys[] = {"toolbar", "hierarchy", "inspector", "lighting", "material", "assets", "console", "message_log", "effect"};
     const auto flags = panel_flags();
     saved_panels.clear();
     for (std::size_t i = 0; i < flags.size(); ++i) {
@@ -811,7 +831,7 @@ void EditorUI::cheat_sheet_overlay() {
     }
     ImGui::End();
 }
-std::array<bool *, 8> EditorUI::panel_flags() { return {&show_toolbar, &show_hierarchy, &show_inspector, &show_lighting, &show_material, &show_assets, &show_console, &show_message_log}; }
+std::array<bool *, 9> EditorUI::panel_flags() { return {&show_toolbar, &show_hierarchy, &show_inspector, &show_lighting, &show_material, &show_assets, &show_console, &show_message_log, &show_effect}; }
 void EditorUI::layout_dialog() {
     if (std::exchange(layout_prompt, false)) ImGui::OpenPopup("Save layout");
     if (!ImGui::BeginPopupModal("Save layout", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) return;

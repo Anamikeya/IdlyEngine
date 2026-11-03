@@ -80,6 +80,10 @@ if(TARGET engine_editor_session)
 		LABELS editor unit
 		SOURCES Editor/editor_panels_tests.cpp
 		LIBRARIES engine_editor_session)
+	gameengine_add_test_executable(editor_effects_tests
+		LABELS editor effects unit
+		SOURCES Editor/editor_effects_tests.cpp
+		LIBRARIES engine_editor_session)
 	target_compile_definitions(editor_panels_tests PRIVATE "GAMEENGINE_TEST_ASSETS_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/Assets\"")
 endif()
 

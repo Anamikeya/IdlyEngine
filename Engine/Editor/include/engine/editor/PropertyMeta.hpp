@@ -34,7 +34,7 @@ template<class T> struct Property {
     double step = 0.01;            // Per pixel of drag.
     std::string_view format = "%.3f";
     std::vector<std::string_view> choices; // For Enum.
-    std::string_view asset_type;   // For Asset: "mesh", "texture", "material" or "environment".
+    std::string_view asset_type;   // For Asset: "mesh", "texture", "material", "environment" or "effect".
     bool read_only = false;
     bool hidden = false;           // Kept out of the panel, still copied and saved.
     // Whether it applies now, like Unreal's EditCondition: a predicate because many depend on an enum (a spot light's
@@ -87,4 +87,5 @@ const PropertyTable<LightComponent> &light_properties();
 const PropertyTable<RigidBodyComponent> &body_properties();
 const PropertyTable<ColliderComponent> &collider_properties();
 const PropertyTable<EnvironmentComponent> &environment_properties();
+const PropertyTable<ParticleEmitterComponent> &emitter_properties();
 } // namespace engine::editor
