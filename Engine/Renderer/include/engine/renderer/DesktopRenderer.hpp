@@ -38,6 +38,15 @@ public:
     // Draws one material on a sphere for the next render(); the token shows it in the UI. Zero handle: no preview.
     void set_material_preview(MaterialHandle);
     std::uint64_t preview_texture() const;
+    // ---- Thumbnails: small images kept on the GPU, by a key the host chooses ----
+    // Draws a mesh with a material (builtin_lit: its own) during a later render(), one a frame. Replaces any older one.
+    void request_thumbnail(std::uint64_t key, MeshHandle, MaterialHandle);
+    // An image given as RGBA8, rows top to bottom.
+    void set_thumbnail_image(std::uint64_t key, const std::vector<std::uint8_t> &rgba, unsigned width, unsigned height);
+    struct Thumbnail { std::uint64_t texture = 0; bool flipped = false; };
+    // Texture zero until it exists. `flipped`: drawn into, so its rows run bottom to top.
+    Thumbnail thumbnail(std::uint64_t key) const;
+    void forget_thumbnail(std::uint64_t key);
     RendererStats stats() const;
     std::size_t object_count() const;
     // Scene lights currently mirrored; the built-in editor lights are used only while this is zero.

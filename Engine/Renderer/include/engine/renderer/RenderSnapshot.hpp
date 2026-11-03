@@ -67,6 +67,7 @@ struct PerspectiveCamera {
     double vertical_fov_radians = 1.0471975511965976;
     double aspect_ratio = 1;
     double near_plane = 0.1, far_plane = 1000;
+    double orthographic_half_height = 0; // Above zero: an orthographic view this many meters from the middle to the top.
 };
 enum class LightKind { Directional, Point, Spot };
 struct LightBinding {
@@ -124,6 +125,7 @@ struct FrameSnapshot {
     std::vector<RenderLight> lights;
     RenderEnvironment environment;
     bool show_grid = true;
+    double grid_spacing = 1; // Meters between grid lines.
 };
 using Frame = std::shared_ptr<const FrameSnapshot>;
 
@@ -134,11 +136,11 @@ using Frame = std::shared_ptr<const FrameSnapshot>;
 // Backend adapters convert projection/depth conventions as necessary.
 Result<Frame> extract_frame(const Scene &, FrameStamp, const PerspectiveCamera &,
                             std::span<const MeshBinding>, std::span<const LightBinding>,
-                            const RenderEnvironment & = {}, bool show_grid = true);
+                            const RenderEnvironment & = {}, bool show_grid = true, double grid_spacing = 1);
 // Editor navigation is host state, not a managed scene entity or undo operation.
 // The same rigid-camera validation applies. lens.entity is zero for this overload.
 Result<Frame> extract_frame(const Scene &, FrameStamp, const PerspectiveCamera &,
                             const WorldTransform &camera_world,
                             std::span<const MeshBinding>, std::span<const LightBinding>,
-                            const RenderEnvironment & = {}, bool show_grid = true);
+                            const RenderEnvironment & = {}, bool show_grid = true, double grid_spacing = 1);
 } // namespace engine::renderer

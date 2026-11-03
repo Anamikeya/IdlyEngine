@@ -1,0 +1,405 @@
+#pragma once
+#ifndef GLFW_INCLUDE_NONE
+#define GLFW_INCLUDE_NONE
+#endif
+#include <GLFW/glfw3.h>
+#include <imgui.h>
+#include <imgui_internal.h>
+#include <engine/editor/ConsoleRegistry.hpp>
+#include <engine/editor/EditorCommands.hpp>
+#include <engine/editor/EditorPrefs.hpp>
+#include <engine/editor/EditorSession.hpp>
+#include <engine/editor/Feedback.hpp>
+#include <engine/editor/GizmoEntry.hpp>
+#include <engine/renderer/DesktopRenderer.hpp>
+#include <glm/glm.hpp>
+#include <algorithm>
+#include <array>
+#include <cctype>
+#include <chrono>
+#include <cmath>
+#include <cstdio>
+#include <filesystem>
+#include <functional>
+#include <map>
+#include <optional>
+#include <set>
+#include <string>
+#include <string_view>
+#include <utility>
+#include <vector>
+
+namespace engine::editor {
+// UTF-8 text from ImGui or GLFW to a path.
+inline std::filesystem::path utf8_path(std::string_view text) { return std::u8string(reinterpret_cast<const char8_t *>(text.data()), text.size()); }
+// Files dropped on the window, imported on the next frame.
+inline std::vector<std::filesystem::path> dropped_files;
+// Actions that discard the editor scene ask first when it has unsaved changes.
+enum class Pending { None, NewScene, Load, Quit, OpenSample, NewProject, OpenProject };
+inline const std::filesystem::path sample_project = std::filesystem::path(ENGINE_SAMPLES_DIR) / "PhysicsShooter";
+inline constexpr const char *sample_scene = "physics_shooter.scene";
+// The device side of the game's input: whether the game holds the mouse, and what the keys are doing.
+struct GameInput {
+    gameplay::InputMap map = gameplay::InputMap::shooter_defaults();
+    bool captured = false;
+    double last_x = 0, last_y = 0;
+    void capture(GLFWwindow *window) {
+        if (captured) return;
+        captured = true;
+        glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+        if (glfwRawMouseMotionSupported()) glfwSetInputMode(window, GLFW_RAW_MOUSE_MOTION, GLFW_TRUE);
+        glfwGetCursorPos(window, &last_x, &last_y);
+        auto &io = ImGui::GetIO();
+        io.ConfigFlags |= ImGuiConfigFlags_NoMouse;
+        io.ConfigFlags &= ~ImGuiConfigFlags_NavEnableKeyboard;
+    }
+    void release(GLFWwindow *window) {
+        if (!captured) return;
+        captured = false;
+        glfwSetInputMode(window, GLFW_RAW_MOUSE_MOTION, GLFW_FALSE);
+        glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+        map.release_all();
+        auto &io = ImGui::GetIO();
+        io.ConfigFlags &= ~ImGuiConfigFlags_NoMouse;
+        io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+    }
+    // Once per frame while the game holds the mouse: devices to actions, mouse to aim.
+    void feed(GLFWwindow *window, gameplay::Game &game) {
+        using namespace gameplay::code;
+        for (const int key : {w, a, s, d, r, space, left_shift}) map.set(key, glfwGetKey(window, key) == GLFW_PRESS);
+        map.set(mouse_left, glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS);
+        double x = 0, y = 0;
+        glfwGetCursorPos(window, &x, &y);
+        game.look(x - last_x, y - last_y);
+        last_x = x; last_y = y;
+        game.set_input(map.take());
+    }
+};
+// A length in pixels at 100% scale, in pixels at the current scale.
+inline float px(float length) { return length * ImGui::GetFontSize() / 13; }
+// Euler angles from a quaternion carry rounding noise, which would read as -0.000.
+inline float tidy_degrees(double degrees) { return std::abs(degrees) < 0.0005 ? 0.f : float(degrees); }
+// Where named controls are on screen, written to a file for real-input runs (--ui-map), so they find a control by name
+// and not by a position that changes with the layout. Costs nothing unless a file is set.
+class UiMap {
+    std::filesystem::path file_;
+    std::map<std::string, std::array<float, 4>> items_;
+    std::string written_;
+    std::chrono::steady_clock::time_point last_write_{};
+public:
+    void set_file(std::filesystem::path file) { file_ = std::move(file); }
+    bool enabled() const { return !file_.empty(); }
+    void begin_frame() { items_.clear(); }
+    void mark(std::string_view name, ImVec2 min, ImVec2 max) { items_[std::string(name)] = {min.x, min.y, max.x, max.y}; }
+    void flush();
+};
+struct EditorUI {
+    EditorSession &session;
+    renderer::DesktopRenderer &renderer;
+    std::array<char, 1024> scene_path{};
+    MessageLog messages;
+    Pending pending = Pending::None;
+    bool confirm_requested = false, quit = false;
+    std::array<char, 257> name{}; // The Details panel's name field.
+    int operation = 0, coordinates = 0;
+    bool gizmo_active = false;
+    bool show_colliders = true;
+    std::set<std::string> reported_issues; // Physics issues already in the Console; re-reported if they return.
+    std::string reported_physics_error;
+    std::set<std::string> reported_asset_problems; // The same for asset references and the asset folder.
+    std::array<char, 1024> import_path{};
+    assets::AssetId selected_asset;
+    EntityId gizmo_id = 0;
+    float gizmo_matrix[16]{};
+    renderer::Frame frame;
+    ImVec2 viewport_center{}, viewport_size{}; // Window coordinates; used by the GPU smoke readback checks.
+    GameInput &game_input;
+    GLFWwindow *window;
+    assets::MaterialData material_edit; // The Material Editor's working copy of the chosen material.
+    assets::AssetId material_edit_id;
+    std::array<char, 128> new_material_name{};
+    std::array<char, 1024> project_path{};
+    bool project_prompt = false, project_create = true;
+    std::uint64_t preview_token = 0;
+    // ---- Commands: every action has one definition, and menus, buttons and shortcuts are built from it ----
+    CommandRegistry registry;
+    std::filesystem::path config_folder; // Empty: nothing is read or saved, as in test runs.
+    UiMap ui_map;
+    std::string_view hovered_context, focused_context; // Of the panels drawn this frame.
+    bool show_history = false, show_shortcuts = false;
+    std::size_t history_scrolled = ~std::size_t(0);
+    std::array<char, 128> shortcut_search{};
+    std::string rebind_command; // The Keyboard Shortcuts panel is waiting for keys for this command.
+    int rebind_index = -1;      // Which binding it replaces; -1 adds one.
+    KeyChord rebind_chord;      // Set when the keys conflict, while the panel asks what to do.
+    std::array<float, 16> gizmo_start{};
+    std::array<float, 3> gizmo_last_position{};
+    bool gizmo_cancelled = false; // Esc during the drag: nothing more happens until the button comes up.
+    // Shift during a move: the camera goes along. The gizmo then works from the view as it was when that began, because
+    // measured against the moving view the object would never catch up with the cursor and would run away.
+    bool gizmo_following = false;
+    std::array<float, 16> gizmo_frozen_view{};
+    OrbitCamera gizmo_camera_start;
+    std::string drag_error; // The latest failed step of a gizmo drag, reported when it ends.
+    // Typing during a drag: where it began, exactly, and what was typed. Once confirmed, nothing more happens until the
+    // button comes up.
+    GizmoEntry gizmo_entry;
+    WorldTransform gizmo_start_world, gizmo_typed_change_now;
+    std::string gizmo_typed_applied;
+    int gizmo_handle = -1;
+    bool gizmo_confirmed = false;
+    std::array<float, 16> gizmo_final{};
+    // ---- Viewport ----
+    CameraController camera_control;
+    bool camera_holding = false; // Navigating: the cursor is hidden and held, and comes back where it was.
+    double cursor_x = 0, cursor_y = 0;
+    float saved_speed = 0;
+    int view_kind = 0; // Perspective, front, top, side.
+    double perspective_yaw = 0.7, perspective_pitch = 0.4;
+    bool overlay_hovered = false, game_view = false, viewport_maximized = false, show_markers = true, show_grid = true;
+    struct SnapSettings {
+        bool grid = false, rotation = false, scale = false;
+        double grid_size = 1, rotation_step = 15, scale_step = 0.25;
+    } snap;
+    EditorSettings settings;
+    void update_camera(bool hovered, float height);
+    void hold_cursor(bool hold);
+    bool key_held(const char *id) const;
+    void set_view(int kind);
+    void step_grid(int direction);
+    void viewport_overlay(ImVec2 origin, ImVec2 size);
+    void load_settings();
+    void save_settings();
+    // The UI's state, for the --game-log line.
+    std::string log_fields() const;
+    // Registers every command and binds its behavior; throws if the table and the bindings disagree.
+    void bind_commands();
+    void load_keymap();
+    void save_keymap();
+    // Set by the host before NewFrame, which is where Esc closes a popup: that press must not also act as a shortcut.
+    bool popup_before_frame = false;
+    void route_shortcuts(bool rebinding_at_frame_start);
+    void main_menu();
+    // Begin() that records the panel's context for shortcuts and its place for the UI map. `control` is its title without any ID suffix.
+    bool begin_panel(const char *title, std::string_view control, std::string_view context, bool *open = nullptr, ImGuiWindowFlags flags = 0);
+    // A menu item, button or checkbox built from a command: its label, shortcut, enabled and checked state and tooltip.
+    bool command_item(const char *id, const char *label = nullptr);
+    bool command_button(const char *id, const char *label = nullptr);
+    bool command_checkbox(const char *id, const char *label = nullptr);
+    void mark(std::string_view control);
+    void history_panel();
+    void shortcuts_panel();
+    void begin_rebind(const std::string &id, int index);
+    void finish_rebind();
+    void move_selection_to_root();
+    explicit EditorUI(EditorSession &s, renderer::DesktopRenderer &r, GameInput &g, GLFWwindow *w);
+    bool scroll_console = false, scroll_message_log = false;
+    // Into the log only. Most messages are this: the user is looking at what they just did.
+    void log(std::string text, LogLink link = {});
+    void log(Severity severity, std::string text, LogLink link = {});
+    // Into the log, and a toast: for what the user is waiting to hear, or would otherwise miss.
+    void notify(Severity severity, std::string text, LogLink link = {});
+    void log_error(std::string text);
+    template<class T> bool report(const Result<T> &r, const char *success) {
+        if (r) { log(Severity::Success, success); return true; } log_error(r.error().message); return false;
+    }
+    template<class T> bool announce(const Result<T> &r, const char *success) {
+        if (r) { notify(Severity::Success, success); return true; } log_error(r.error().message); return false;
+    }
+    // ---- Toasts, tasks and the Message Log ----
+    ToastQueue toasts;
+    TaskList tasks;
+    LogFilter log_filter;
+    bool show_message_log = true;
+    std::map<std::uint64_t, std::uint64_t> import_tasks; // Task to import.
+    std::uint64_t thumbnail_task = 0;
+    std::size_t thumbnails_made = 0;
+    double thumbnails_idle = 0;
+    std::optional<LogLink> link_clicked; // Followed after the panels are drawn, since it may change what they show.
+    void console_line(Severity severity, std::string text);
+    void open_link(const LogLink &link);
+    void draw_log_entry(const LogEntry &entry, int index, const char *where);
+    void message_log_panel();
+    void toast_windows();
+    void cancel_task(std::uint64_t id);
+    // ---- Help where the mouse is ----
+    bool cheat_sheet_open = false;
+    std::string shown_tooltip; // For the --game-log line.
+    void tip(const std::string &text);
+    bool tip_button(const char *label, const char *tooltip);
+    bool tip_small_button(const char *label, const char *tooltip);
+    void cheat_sheet_overlay();
+    bool playing() const { return session.play_state() != PlayState::Editing; }
+    // Creates and selects an entity in one command, so it is one undo step.
+    void spawn(const char *label, Components c, Transform t = {{0,0.5,0}, {}, {1,1,1}}, EntityId parent = 0);
+    static Transform aimed(Vec3 position, double pitch_degrees, double yaw_degrees);
+    // A collider matching a built-in mesh. The plane's is a thin box whose top face is the plane itself.
+    static ColliderComponent fitted_collider(BuiltinMesh mesh);
+    // A box around a model, in its local space. Falls back to the built-in shape without one.
+    ColliderComponent fitted_collider(const std::optional<MeshComponent> &mesh);
+    static Components physical(BuiltinMesh mesh);
+    void create_items();
+    void create_menu();
+    std::string title() const;
+    LightComponent point_light() const;
+    void set_scene_path(const std::filesystem::path &path);
+    void open_sample();
+    // A folder with an Assets folder and an empty scene: nothing of the sample comes along.
+    void create_project(const std::filesystem::path &folder);
+    void open_project(const std::filesystem::path &folder);
+    void perform(Pending action);
+    void project_dialog();
+    void request(Pending action);
+    void confirm();
+    void docking();
+    void toolbar();
+    // ---- Scene Hierarchy: a tree in stable-ID order. Drag a row onto another to parent it there, or onto the
+    // empty area below the tree to move it to the root; both keep the world transform. Right-click for actions.
+    static constexpr const char *entity_payload = "ENGINE_ENTITY";
+    static constexpr const char *asset_payload = "ENGINE_ASSET";
+    std::map<EntityId, EntityRecord> records;
+    std::map<EntityId, std::vector<EntityId>> children;
+    EntityId revealed = 0; // Selection whose ancestors were last opened, so viewport picks show up in the tree.
+    static constexpr const char *folder_payload = "ENGINE_FOLDER";
+    std::vector<EntityId> visible_rows, shown_rows; // Rows of the tree in draw order, this frame and last: Shift+click ranges over them.
+    EntityId selection_anchor = 0, click_row_on_release = 0;
+    std::uint64_t selected_folder = 0;
+    std::array<char, 128> outliner_search{};
+    bool outliner_show_mesh = false, outliner_show_light = false, outliner_show_camera = false, outliner_show_physics = false;
+    EntityId rename_entity = 0;
+    std::uint64_t rename_folder_id = 0;
+    bool rename_focus = false;
+    std::array<char, 257> rename_text{};
+    void click_row(EntityId id);
+    void drop_onto(EntityId parent);
+    bool entity_shown(const EntityRecord &e) const;
+    void folder_node(const SceneFolder &folder, const std::set<EntityId> &open_path, const std::set<EntityId> &passes);
+    void duplicate_selection();
+    void delete_selection();
+    // `passes`: when filtering, the rows to show. Empty: all of them.
+    void tree_node(EntityId id, const std::set<EntityId> &open_path, const std::set<EntityId> &passes);
+    void hierarchy();
+    // ---- Details panel, generated from the property tables ----
+    std::vector<EntityRecord> details_targets; // This frame's, the primary one last.
+    std::vector<EntityId> details_pinned;
+    bool details_locked = false, details_only_modified = false;
+    std::array<char, 128> details_search{};
+    bool details_transaction = false; // A drag or typing in a field is open as one undo step.
+    std::string details_error;
+    EntityId details_name_id = 0;
+    std::string details_euler_key;
+    std::array<double, 3> details_euler{};
+    void inspector();
+    void details_apply(std::string label, std::vector<commands::Command> edits);
+    void details_add(const char *what, const std::function<std::optional<commands::Command>(const EntityRecord &)> &make);
+    void finish_details_edit();
+    void behavior_sections();
+    // Field helpers the Lighting panel also uses: drags commit on release; combos and checkboxes at once.
+    static bool committed(bool changed);
+    static bool color_edit(const char *label, Vec3 &c);
+    static bool drag(const char *label, double &value, float speed, double low, double high, const char *format = "%.3f");
+    // Lists the project's assets of one type. True when the reference changed.
+    bool asset_combo(const char *label, AssetRef &ref, assets::AssetType type, const char *none);
+    // The field of an asset reference: a picture, a searchable list, use-selected and find buttons, and a drop target.
+    bool asset_field(std::string_view type_name, AssetRef &ref, bool mixed);
+    void lighting();
+    // One texture slot of the material: a combo of the project's textures. True when it changed.
+    bool texture_slot(const char *label, assets::MaterialTexture &slot);
+    void material_editor();
+    // Puts physics problems in the Console once, when they appear.
+    void report_physics();
+    // Puts asset problems in the Console once, when they appear.
+    void report_assets();
+    // Decodes on a worker; the Console reports when it lands, with how long it took.
+    std::map<std::string, std::chrono::steady_clock::time_point> import_started;
+    std::vector<std::pair<std::string, long long>> import_times; // For --perf-log.
+    void import_file(const std::filesystem::path &file);
+    void finish_imports();
+    void viewport();
+    // The game's HUD, and the choices it offers: a click on the view starts or resumes and takes the mouse.
+    void game_overlay(gameplay::Game &game, ImVec2 origin, ImVec2 size, bool hovered);
+    void stop_play();
+    // Screen position of a world point in the current frame; empty behind the camera.
+    std::optional<ImVec2> project(glm::dvec3 p, ImVec2 origin, ImVec2 size) const;
+    // Collider wireframes from the physics bridge, drawn over the image without depth testing (contract C-4a).
+    // An edge with an end behind the camera is skipped rather than clipped.
+    void collider_outlines(ImVec2 origin, ImVec2 size);
+    // Lights and cameras have no mesh, so they get clickable screen-space markers. Returns the hovered one.
+    EntityId markers(ImVec2 origin, ImVec2 size);
+    // A box around each selected entity, so a multi-selection shows without a gizmo on each.
+    void selection_outlines(ImVec2 origin, ImVec2 size);
+    void gizmo(ImVec2 origin, ImVec2 size);
+    // ---- Asset Browser ----
+    enum class AssetSource { All, Favorites, Folder, Builtin, Scenes };
+    AssetSource asset_source = AssetSource::All;
+    std::string asset_folder;
+    std::array<char, 128> asset_search{}, asset_field_search{};
+    std::array<bool, 4> asset_chips{};
+    bool asset_list_view = false;
+    assets::AssetId asset_scroll_to;
+    bool asset_drawer_open = false, asset_drawer_focus = false;
+    float asset_drawer_amount = 0;
+    bool rename_asset_prompt = false;
+    std::array<char, 1024> rename_asset_path{};
+    struct AssetThumbnail {
+        bool requested = false, failed = false;
+        renderer::MaterialHandle material;
+        std::uint32_t width = 0, height = 0;
+        std::size_t vertices = 0, triangles = 0;
+    };
+    std::map<assets::AssetId, AssetThumbnail> thumbnails;
+    int thumbnail_cooldown = 0;
+    void update_thumbnails();
+    void want_thumbnail(const assets::AssetMetadata &meta);
+    void draw_asset_picture(const assets::AssetMetadata &meta, ImVec2 at, float size);
+    void asset_tooltip(const assets::AssetMetadata &meta);
+    bool asset_is_favorite(assets::AssetId id) const;
+    void asset_menu(const assets::AssetMetadata &meta);
+    void asset_item_input(const assets::AssetMetadata &meta);
+    void reveal_asset(assets::AssetId id);
+    void asset_folder_tree(const std::map<std::string, std::vector<std::string>> &tree, const std::string &folder);
+    void asset_browser_contents();
+    void rename_asset_dialog();
+    void assets();
+    // ---- Typing to reach things ----
+    enum class Picker { None, Commands, QuickOpen };
+    Picker picker = Picker::None;
+    bool picker_focus = false;
+    std::array<char, 256> picker_text{};
+    int picker_index = 0, picker_scrolled = -1;
+    std::vector<std::string> recent_commands;
+    void open_picker(Picker kind);
+    void remember_recent(const std::string &id);
+    void picker_window();
+    ConsoleRegistry console;
+    ConsoleHistory console_history;
+    std::array<char, 512> console_input{};
+    bool console_focus = false, console_close = false, console_opened_by_key = false;
+    bool stat_fps = false, stat_timings = false;
+    double stat_frame_ms = 16;
+    std::uint64_t frames_drawn = 0;
+    std::chrono::steady_clock::time_point last_drawn{};
+    // Filament may skip a frame when the GPU is behind, so stat fps counts these and not trips round the loop.
+    void frame_drawn();
+    void bind_console();
+    void console_panel();
+    void console_print(const std::string &text);
+    void draw_stats(ImVec2 origin, ImVec2 size);
+    // ---- While something runs ----
+    // Gives the mouse back to the editor. The game, if it is running, gets no more input until it is taken again.
+    void free_mouse();
+    // The game has the view: its camera, its HUD, and no gizmo or picking.
+    bool possessed() const { return session.game() && !session.ejected(); }
+    // ---- Panels and layouts ----
+    bool show_toolbar = true, show_hierarchy = true, show_inspector = true, show_lighting = true, show_material = true, show_assets = true, show_console = true;
+    bool layout_reset_requested = false, layout_prompt = false;
+    std::array<char, 128> layout_name{};
+    std::string pending_layout; // ImGui settings to load before the next frame.
+    std::string saved_panels;   // Which panels were open when settings were last saved.
+    std::array<bool *, 8> panel_flags();
+    void layout_dialog();
+    std::vector<std::string> saved_layouts() const;
+    void apply_pending_layout();
+    void draw();
+};
+} // namespace engine::editor

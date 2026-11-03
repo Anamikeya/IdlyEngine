@@ -195,6 +195,7 @@ struct DesktopRenderer::Impl {
     RenderTarget *target = nullptr;
     utils::Entity camera_entity, grid, sun, fill;
     bool editor_lights = true, grid_shown = true;
+    double grid_spacing = 1;
     Mesh grid_mesh;
     std::map<uint32_t, GpuMesh> meshes; // By handle index: the built-ins, then uploaded assets.
     std::map<uint32_t, GpuTexture> textures;
@@ -225,6 +226,21 @@ struct DesktopRenderer::Impl {
     Skybox *preview_sky = nullptr;
     MaterialHandle preview_material;
     std::optional<Parameters> preview_applied;
+    // Thumbnails share one scene, view and depth buffer; each has its own color texture.
+    static constexpr uint32_t thumbnail_size = 128;
+    struct ThumbnailRequest { uint64_t key; MeshHandle mesh; MaterialHandle material; };
+    struct ThumbnailImage { Texture *color = nullptr; RenderTarget *target = nullptr; bool flipped = false; };
+    std::vector<ThumbnailRequest> thumbnail_requests;
+    std::map<uint64_t, ThumbnailImage> thumbnails;
+    std::vector<ThumbnailImage> retired_thumbnails;
+    filament::Scene *thumbnail_scene = nullptr;
+    View *thumbnail_view = nullptr;
+    Camera *thumbnail_camera = nullptr;
+    Skybox *thumbnail_sky = nullptr;
+    Texture *thumbnail_depth = nullptr;
+    utils::Entity thumbnail_camera_entity, thumbnail_light, thumbnail_object;
+    std::vector<MaterialInstance *> thumbnail_instances;
+    std::optional<ThumbnailRequest> thumbnail_drawing; // In case the frame that should draw it is skipped.
 
     // Null when the GPU cannot take the image; the caller falls back to white, so the asset still draws.
     Texture *upload(const assets::TextureData &data, bool srgb) {
@@ -407,6 +423,7 @@ struct DesktopRenderer::Impl {
         LightManager::Builder(LightManager::Type::DIRECTIONAL).direction({0.7f,-0.2f,0.8f}).color({0.55f,0.7f,1}).intensity(30000).castShadows(false).build(*engine, fill);
         scene->addEntity(sun); scene->addEntity(fill);
         init_preview();
+        init_thumbnails();
         ui = std::make_unique<detail::ImGuiRenderer>(*engine, materials);
     }
     void init_preview() {
@@ -439,6 +456,77 @@ struct DesktopRenderer::Impl {
         LightManager::Builder(LightManager::Type::DIRECTIONAL).direction({-0.5f,-0.7f,-0.6f}).intensity(70000).castShadows(false).build(*engine, preview_light);
         preview_scene->addEntity(preview_light);
     }
+    void init_thumbnails() {
+        thumbnail_scene = engine->createScene(); thumbnail_view = engine->createView();
+        thumbnail_camera_entity = utils::EntityManager::get().create(); thumbnail_camera = engine->createCamera(thumbnail_camera_entity);
+        thumbnail_view->setScene(thumbnail_scene); thumbnail_view->setCamera(thumbnail_camera);
+        thumbnail_view->setAntiAliasing(AntiAliasing::FXAA);
+        thumbnail_view->setViewport({0, 0, thumbnail_size, thumbnail_size});
+        thumbnail_sky = Skybox::Builder().color({0.09f, 0.1f, 0.12f, 1}).build(*engine);
+        thumbnail_scene->setSkybox(thumbnail_sky);
+        thumbnail_depth = Texture::Builder().width(thumbnail_size).height(thumbnail_size).levels(1).sampler(Texture::Sampler::SAMPLER_2D)
+            .format(Texture::InternalFormat::DEPTH24).usage(Texture::Usage::DEPTH_ATTACHMENT).build(*engine);
+        thumbnail_light = utils::EntityManager::get().create();
+        LightManager::Builder(LightManager::Type::DIRECTIONAL).direction({-0.5f,-0.7f,-0.6f}).intensity(70000).castShadows(false).build(*engine, thumbnail_light);
+        thumbnail_scene->addEntity(thumbnail_light);
+    }
+    void clear_thumbnail_object() {
+        if (!thumbnail_object) return;
+        thumbnail_scene->remove(thumbnail_object);
+        remove(thumbnail_object);
+        thumbnail_object = {};
+        for (auto *instance : thumbnail_instances) engine->destroy(instance);
+        thumbnail_instances.clear();
+    }
+    void retire(const ThumbnailImage &image) { retired_thumbnails.push_back(image); }
+    void destroy_retired_thumbnails() {
+        for (const auto &image : retired_thumbnails) {
+            if (image.target) engine->destroy(image.target);
+            if (image.color) engine->destroy(image.color);
+        }
+        retired_thumbnails.clear();
+    }
+    // Sets up the next thumbnail for this frame. True when there is one to draw.
+    bool prepare_thumbnail(const ResourceRegistry &registry, std::set<uint32_t> &used) {
+        while (!thumbnail_requests.empty()) {
+            const auto request = thumbnail_requests.front();
+            thumbnail_requests.erase(thumbnail_requests.begin());
+            thumbnail_drawing = request;
+            const GpuMesh *gpu = geometry(request.mesh, registry);
+            if (!gpu) continue;
+            thumbnail_object = utils::EntityManager::get().create();
+            RenderableManager::Builder builder(gpu->parts.size());
+            builder.boundingBox(gpu->bounds).castShadows(false).receiveShadows(false);
+            const RenderObject probe{0, request.mesh, request.material, {}, Surface{}, {}};
+            for (std::size_t i = 0; i < gpu->parts.size(); ++i) {
+                const Parameters wanted = parameters(probe, gpu->parts[i], static_cast<std::uint32_t>(i), registry, used);
+                auto *instance = pbr[size_t(wanted.alpha_mode)]->createInstance();
+                apply(*instance, wanted, nullptr);
+                thumbnail_instances.push_back(instance);
+                builder.geometry(i, RenderableManager::PrimitiveType::TRIANGLES, gpu->vertices, gpu->indices, gpu->parts[i].first, gpu->parts[i].count).material(i, instance);
+            }
+            builder.build(*engine, thumbnail_object);
+            thumbnail_scene->addEntity(thumbnail_object);
+            // Frames the bounds from a three-quarter view.
+            const float3 center = gpu->bounds.center, half = gpu->bounds.halfExtent;
+            const float radius = std::max(length(half), 0.001f);
+            const float distance = radius / std::sin(17.5f * 3.14159265f / 180) * 1.05f;
+            const float3 eye = center + normalize(float3{0.6f, 0.45f, 1}) * distance;
+            thumbnail_camera->setProjection(35, 1, std::max(distance - radius * 1.5f, distance * 0.01f), distance + radius * 1.5f);
+            thumbnail_camera->lookAt(eye, center);
+            ThumbnailImage image;
+            image.flipped = true;
+            image.color = Texture::Builder().width(thumbnail_size).height(thumbnail_size).levels(1).sampler(Texture::Sampler::SAMPLER_2D)
+                .format(Texture::InternalFormat::RGBA8).usage(Texture::Usage::COLOR_ATTACHMENT | Texture::Usage::SAMPLEABLE).build(*engine);
+            image.target = RenderTarget::Builder().texture(RenderTarget::AttachmentPoint::COLOR, image.color)
+                .texture(RenderTarget::AttachmentPoint::DEPTH, thumbnail_depth).build(*engine);
+            thumbnail_view->setRenderTarget(image.target);
+            if (const auto old = thumbnails.find(request.key); old != thumbnails.end()) retire(old->second);
+            thumbnails[request.key] = image;
+            return true;
+        }
+        return false;
+    }
     void remove(utils::Entity e) { engine->destroy(e); utils::EntityManager::get().destroy(e); }
     void remove(const Object &o) { scene->remove(o.entity); remove(o.entity); for (const auto &part : o.parts) engine->destroy(part.instance); }
     void remove(const Light &l) { scene->remove(l.entity); remove(l.entity); }
@@ -450,7 +538,7 @@ struct DesktopRenderer::Impl {
     void destroy(Texture *texture) { if (texture) engine->destroy(texture); }
     void destroy(const GpuTexture &gpu) { destroy(gpu.srgb); destroy(gpu.linear); }
     void destroy_environment() {
-        if (indirect) { scene->setIndirectLight(nullptr); preview_scene->setIndirectLight(nullptr); engine->destroy(indirect); indirect = nullptr; }
+        if (indirect) { scene->setIndirectLight(nullptr); preview_scene->setIndirectLight(nullptr); thumbnail_scene->setIndirectLight(nullptr); engine->destroy(indirect); indirect = nullptr; }
         if (image_sky) { scene->setSkybox(flat_sky); engine->destroy(image_sky); image_sky = nullptr; }
         destroy(sky_cubemap); destroy(reflections); destroy(irradiance);
         sky_cubemap = reflections = irradiance = nullptr;
@@ -460,6 +548,12 @@ struct DesktopRenderer::Impl {
         engine->flushAndWait();
         ui.reset();
         engine->destroy(view);
+        clear_thumbnail_object();
+        for (const auto &[key, image] : thumbnails) { (void)key; retire(image); }
+        destroy_retired_thumbnails();
+        thumbnail_scene->remove(thumbnail_light); remove(thumbnail_light);
+        engine->destroy(thumbnail_view); engine->destroy(thumbnail_depth); engine->destroy(thumbnail_sky);
+        engine->destroyCameraComponent(thumbnail_camera_entity); utils::EntityManager::get().destroy(thumbnail_camera_entity);
         engine->destroy(preview_view); preview_scene->remove(preview_object); preview_scene->remove(preview_light);
         remove(preview_object); remove(preview_light);
         for (auto *instance : preview_instances) engine->destroy(instance);
@@ -469,6 +563,8 @@ struct DesktopRenderer::Impl {
         for (const auto &[key, light] : lights) { (void)key; remove(light); }
         destroy_environment();
         ibl_context.reset();
+        // After destroy_environment(), which takes the indirect light back from all three scenes.
+        engine->destroy(thumbnail_scene);
         engine->destroy(preview_scene);
         engine->destroy(scene);
         remove(grid); remove(sun); remove(fill);
@@ -609,6 +705,13 @@ struct DesktopRenderer::Impl {
             if (frame.show_grid) scene->addEntity(grid); else scene->remove(grid);
             grid_shown = frame.show_grid;
         }
+        if (frame.grid_spacing != grid_spacing) {
+            auto &transforms = engine->getTransformManager();
+            if (!transforms.hasComponent(grid)) transforms.create(grid);
+            const auto spacing = float(frame.grid_spacing);
+            transforms.setTransform(transforms.getInstance(grid), filament::math::mat4f::scaling(filament::math::float3{spacing, 1.f, spacing}));
+            grid_spacing = frame.grid_spacing;
+        }
     }
     // Builds the cubemaps from an equirectangular image with Filament's GPU prefilter. Outside beginFrame/endFrame.
     void build_environment(const float *pixels, uint32_t width, uint32_t height, const RenderEnvironment &e) {
@@ -669,12 +772,14 @@ struct DesktopRenderer::Impl {
                 build_environment(pixels.data(), width, height, e);
                 scene->setIndirectLight(indirect);
                 preview_scene->setIndirectLight(indirect);
+                thumbnail_scene->setIndirectLight(indirect);
             }
         }
         if (indirect) indirect->setIntensity(float(e.intensity));
         scene->setSkybox(e.show_skybox && image_sky ? image_sky : flat_sky);
         set_exposure(*camera, e.ev100);
         set_exposure(*preview_camera, e.ev100);
+        set_exposure(*thumbnail_camera, e.ev100);
         if (!applied_environment || applied_environment->tone_mapping != e.tone_mapping) {
             if (grading) engine->destroy(grading);
             std::unique_ptr<const ToneMapper> tone(new_tone_mapper(e.tone_mapping));
@@ -710,6 +815,30 @@ void DesktopRenderer::resize_viewport(unsigned width, unsigned height) {
 std::uint64_t DesktopRenderer::viewport_texture() const { return reinterpret_cast<std::uint64_t>(impl_->color); }
 void DesktopRenderer::set_material_preview(MaterialHandle handle) { impl_->preview_material = handle; }
 std::uint64_t DesktopRenderer::preview_texture() const { return reinterpret_cast<std::uint64_t>(impl_->preview_color); }
+void DesktopRenderer::request_thumbnail(std::uint64_t key, MeshHandle mesh, MaterialHandle material) {
+    auto &requests = impl_->thumbnail_requests;
+    std::erase_if(requests, [&](const Impl::ThumbnailRequest &request) { return request.key == key; });
+    requests.push_back({key, mesh, material});
+}
+void DesktopRenderer::set_thumbnail_image(std::uint64_t key, const std::vector<std::uint8_t> &rgba, unsigned width, unsigned height) {
+    auto &p = *impl_;
+    if (!width || !height || rgba.size() != std::size_t(width) * height * 4) return;
+    Impl::ThumbnailImage image;
+    image.color = Texture::Builder().width(width).height(height).levels(1).sampler(Texture::Sampler::SAMPLER_2D).format(Texture::InternalFormat::RGBA8).build(*p.engine);
+    image.color->setImage(*p.engine, 0, Texture::PixelBufferDescriptor(detail::copy_bytes(rgba.data(), rgba.size()), rgba.size(), Texture::Format::RGBA, Texture::Type::UBYTE, detail::release));
+    if (const auto old = p.thumbnails.find(key); old != p.thumbnails.end()) p.retire(old->second);
+    p.thumbnails[key] = image;
+}
+DesktopRenderer::Thumbnail DesktopRenderer::thumbnail(std::uint64_t key) const {
+    const auto found = impl_->thumbnails.find(key);
+    if (found == impl_->thumbnails.end()) return {};
+    return {reinterpret_cast<std::uint64_t>(found->second.color), found->second.flipped};
+}
+void DesktopRenderer::forget_thumbnail(std::uint64_t key) {
+    auto &p = *impl_;
+    std::erase_if(p.thumbnail_requests, [&](const Impl::ThumbnailRequest &request) { return request.key == key; });
+    if (const auto old = p.thumbnails.find(key); old != p.thumbnails.end()) { p.retire(old->second); p.thumbnails.erase(old); }
+}
 RendererStats DesktopRenderer::stats() const {
     RendererStats s;
     const auto &p = *impl_;
@@ -731,17 +860,25 @@ std::vector<std::string> DesktopRenderer::take_issues() { return std::exchange(i
 bool DesktopRenderer::render(const FrameSnapshot &frame, const ResourceRegistry &registry, ImDrawData *data, unsigned width, unsigned height) {
     auto &p = *impl_;
     if (!width || !height || !p.target) return false;
+    p.clear_thumbnail_object(); // Before the sweep in sync_objects, which would free what it draws.
     p.sync_environment(frame, registry);
     p.sync_objects(frame, registry);
     p.sync_lights(frame);
+    std::set<uint32_t> thumbnail_textures;
+    const bool draw_thumbnail = p.prepare_thumbnail(registry, thumbnail_textures);
     p.camera->setModelMatrix(matrix(frame.camera.world));
     p.camera->setCustomProjection(matrix(frame.camera.projection), frame.camera.lens.near_plane, frame.camera.lens.far_plane);
     p.ui->update(data, width, height);
-    if (!p.renderer->beginFrame(p.swap)) return false;
+    if (!p.renderer->beginFrame(p.swap)) {
+        if (draw_thumbnail && p.thumbnail_drawing) p.thumbnail_requests.push_back(*p.thumbnail_drawing);
+        return false;
+    }
+    if (draw_thumbnail) p.renderer->render(p.thumbnail_view);
     if (p.preview_material.index) p.renderer->render(p.preview_view);
     p.renderer->render(p.view);
     p.renderer->render(p.ui->view());
     p.renderer->endFrame();
+    p.destroy_retired_thumbnails();
     return true;
 }
 std::vector<std::uint8_t> DesktopRenderer::readback(unsigned width, unsigned height) {

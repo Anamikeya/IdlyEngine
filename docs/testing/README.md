@@ -20,7 +20,14 @@ Real mouse and keyboard runs are scripts, on a Release build, with no one using 
 ```powershell
 powershell -ExecutionPolicy Bypass -File Tests/RealInput/shooter_acceptance.ps1 -Editor <engine_editor.exe> -Output <folder>
 powershell -ExecutionPolicy Bypass -File Tests/RealInput/editor_workflow.ps1 -Editor <engine_editor.exe> -Output <folder>
+powershell -ExecutionPolicy Bypass -File Tests/RealInput/editor_ux_phase1.ps1 -Editor <engine_editor.exe> -Output <folder>
+powershell -ExecutionPolicy Bypass -File Tests/RealInput/editor_ux_phase2.ps1 -Editor <engine_editor.exe> -Output <folder>
+powershell -ExecutionPolicy Bypass -File Tests/RealInput/editor_ux_phase3.ps1 -Editor <engine_editor.exe> -Output <folder>
+powershell -ExecutionPolicy Bypass -File Tests/RealInput/editor_ux_phase4.ps1 -Editor <engine_editor.exe> -Output <folder>
+powershell -ExecutionPolicy Bypass -File Tests/RealInput/editor_ux_phase5.ps1 -Editor <engine_editor.exe> -Output <folder>
 ```
+
+They use a settings folder of their own (`--config-dir`) and find controls by name (`--ui-map`).
 
 They read the editor's `--game-log` and the files on disk, and save captures. `SendInput` goes to whatever has focus, so
 `Tests/RealInput/InputDriver.psm1` waits for an idle desktop and stops the run if the editor loses focus or the cursor moves
@@ -48,7 +55,7 @@ LIBRARIES ...)` (`cmake/GameEngineTesting.cmake`). After each build the executab
 runs in a fresh process, which isolates process-global state such as Box3D's world table.
 Case names must be unique within an executable.
 
-## Current suites (207 CTest entries)
+## Current suites (409 CTest entries)
 
 | Executable | Labels | Cases | Covers |
 |---|---|---|---|
@@ -58,6 +65,11 @@ Case names must be unique within an executable.
 | `asset_tests` | assets, unit | 47 | Paths and stable ids, OBJ, TGA, PPM, `.meta`, database catalogue, cache/reload/revision/unload, missing and failed files, scan issues. GLB: geometry, transforms, mirroring, materials, embedded images, warnings, invalid and unsupported files, real models from the dependency tree. PNG and JPEG decoding and rejection. `import_file` naming, ids, and leaving nothing behind on failure. Milestone 4: all five maps and their color spaces, alpha and sides, broken secondary maps, tangents, material text and files, `.hdr`, background import |
 | `systems_smoke_tests` | integration, smoke | 1 | OBJ asset sizes a collider, physics drives a scene entity, `extract_frame` sees the published pose |
 | `editor_dependency_smoke` | editor, smoke | 2 | `gameengine::imgui` renders frames through ImGui's null backend (no window, no GPU); `gameengine::glfw` links and reports its version without `glfwInit` |
+| `editor_ux_tests` | editor, unit | 61 | The editor's foundation without a window: chords, command registry, context routing, input blocks, conflicts, keymap files, the default command table and its generated document, bus and session transactions, history order and jumps, gizmo drags, selection, property tables |
+| `editor_viewport_tests` | editor, unit | 47 | The viewport without a window: the camera state machine and every navigation mode, field of view, eased moves, framing, rays, snapping to the floor, vertex snapping, Alt+drag, hiding, view state files, orthographic views, grid and show flags, settings files |
+| `editor_panels_tests` | editor, unit | 31 | What the panels stand on, without a window: folders and their undo, lock and hide, copy and paste, grouping, moving assets and fixing references, property and component text, thumbnail decoding, panel shortcuts |
+| `editor_workflow_tests` | editor, unit | 30 | Reaching things by typing and running without leaving the editor, without a window: fuzzy scoring and ranking, the real commands found by typing, console variables, actions, suggestions and history, simulate and eject, which keys work while the game holds the keyboard or a text field has it, asset type names |
+| `editor_feedback_tests` | editor, unit | 33 | What the editor says and how it answers, without a window: the message log and its filters, links, toasts, tasks, cancelled imports, the cheat sheet, tooltips, typing during a gizmo drag and the exact change it makes |
 | `networking_tests` | networking, unit | 41 | Serialization, loopback transport, connection manager |
 | `online_services_tests` | online, unit | 7 | NullOnlineService |
 | `engine_core_tests` | none | 1 entry, 24 scenarios | `engine.core.acceptance`: scene, commands, undo, components, serialization of all format versions, malformed input |

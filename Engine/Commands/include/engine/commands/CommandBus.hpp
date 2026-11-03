@@ -83,6 +83,7 @@ struct CommandDescriptor {
     std::string_view name;
     Capability permission;
     std::string_view contract;
+    std::string_view label; // What undo history calls it when the caller names nothing better.
 };
 std::span<const CommandDescriptor> registry() noexcept;
 const CommandDescriptor &describe(const Command &) noexcept;
@@ -97,13 +98,18 @@ class CommandBus final {
         std::optional<EntityRecord> before, after;
     };
     struct History {
+        std::string name;
         std::vector<Delta> deltas;
     };
     Scene &scene_;
     std::uint64_t revision_ = 0;
     std::deque<History> undo_, redo_;
     std::size_t history_limit_;
+    std::optional<History> open_; // Open transaction: what every execute since begin_transaction() changed.
+    std::uint64_t recorded_ = 0;
     bool executing_ = false;
+    void record(History);
+    static void merge(History &into, std::vector<Delta> deltas);
     Result<void> authorize(const Context &, Capability) const;
     Result<Receipt> replay(const Context &, std::uint64_t, bool undo);
 
@@ -121,11 +127,34 @@ class CommandBus final {
     std::size_t redo_size() const noexcept {
         return redo_.size();
     }
+    // Counts the undo steps ever added; an observer compares it to learn that one was.
+    std::uint64_t recorded() const noexcept {
+        return recorded_;
+    }
+    // The newest undo step's name; empty when there is none.
+    std::string_view latest_name() const noexcept {
+        return undo_.empty() ? std::string_view{} : std::string_view(undo_.back().name);
+    }
+    // For a host whose history also holds other kinds of step: a new step of another kind ends the redo chain here too.
+    void discard_redo() noexcept {
+        redo_.clear();
+    }
+    // Everything executed until end_transaction() becomes one undo step, while each execute still validates and commits,
+    // so a live drag is drawn as it happens. Undo and redo are refused meanwhile. A transaction that changes nothing
+    // adds no step and keeps the redo history. A bus without history has nothing to merge, so these only track the state.
+    bool in_transaction() const noexcept {
+        return open_.has_value();
+    }
+    Result<void> begin_transaction(std::string name);
+    Result<void> end_transaction();
+    // Restores what the open transaction changed. Refused on a bus without history: it keeps no record to restore from.
+    Result<Receipt> abort_transaction(const Context &);
     Result<SceneSnapshot> inspect(const Context &) const;
+    // `name` labels the undo step; empty uses the first command's label. Ignored inside a transaction, which has its own.
     Result<Receipt> execute(const Context &, std::uint64_t expected_revision,
-                            std::span<const Command>);
-    Result<Receipt> execute(const Context &c, std::uint64_t r, Command cmd) {
-        return execute(c, r, std::span<const Command>(&cmd, 1));
+                            std::span<const Command>, std::string_view name = {});
+    Result<Receipt> execute(const Context &c, std::uint64_t r, Command cmd, std::string_view name = {}) {
+        return execute(c, r, std::span<const Command>(&cmd, 1), name);
     }
     Result<Receipt> undo(const Context &c, std::uint64_t r) {
         return replay(c, r, true);

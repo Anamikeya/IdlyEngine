@@ -688,6 +688,10 @@ const char* to_string(AssetType type) noexcept
 		return "mesh";
 	case AssetType::Texture:
 		return "texture";
+	case AssetType::Material:
+		return "material";
+	case AssetType::Environment:
+		return "environment";
 	}
 	return "unknown";
 }

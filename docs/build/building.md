@@ -130,5 +130,5 @@ variables in PowerShell (`$env:INCLUDE = ...`) and run the cmake commands from t
 
 ## Running the sample
 
-The Physics Shooter sample is in `Samples/PhysicsShooter`. Start it with `engine_editor --sample`, or from the toolbar's **Project...** menu. See its `README.md`.
+The Physics Shooter sample is in `Samples/PhysicsShooter`. Start it with `engine_editor --sample`, or from the toolbar's **Project...** menu. See its `README.md`. For how to use the editor, see `../EDITOR_GUIDE.md`.
 

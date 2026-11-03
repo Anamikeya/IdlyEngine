@@ -134,6 +134,12 @@ function Assert-Cursor { param([int]$ScreenX, [int]$ScreenY)
     }
 }
 
+# The same, for a point given as fractions of the client area. Before a press that starts a drag.
+function Assert-CursorOn { param([double]$X, [double]$Y)
+    Update-Window
+    Assert-Cursor ($script:origin.X + [int]($X * $script:width)) ($script:origin.Y + [int]($Y * $script:height))
+}
+
 function Click-At { param([double]$X, [double]$Y, [switch]$Right)
     Move-To $X $Y
     $sx = $script:origin.X + [int]($X * $script:width); $sy = $script:origin.Y + [int]($Y * $script:height)
@@ -160,6 +166,88 @@ function Double-Click-At { param([double]$X, [double]$Y)
     Start-Sleep -Milliseconds 120
 }
 
+# ---- Controls by name: the editor's --ui-map file says where each one is, in client pixels ----
+$script:uiMap = $null
+function Set-UiMap { param([string]$Path) $script:uiMap = $Path; Remove-Item $Path -ErrorAction SilentlyContinue }
+function Get-Widget { param([string]$Name, [int]$TimeoutMilliseconds = 4000)
+    $clock = [Diagnostics.Stopwatch]::StartNew()
+    do {
+        try {
+            $stream = [IO.File]::Open($script:uiMap, 'Open', 'Read', 'ReadWrite,Delete')
+            $reader = New-Object IO.StreamReader $stream
+            $text = $reader.ReadToEnd(); $reader.Close(); $stream.Close()
+            foreach ($line in $text -split "`n") {
+                $p = $line.Split("`t")
+                if ($p.Count -eq 5 -and $p[0] -ceq $Name) {
+                    $culture = [Globalization.CultureInfo]::InvariantCulture
+                    return @{ X0 = [double]::Parse($p[1], $culture); Y0 = [double]::Parse($p[2], $culture); X1 = [double]::Parse($p[3], $culture); Y1 = [double]::Parse($p[4], $culture) }
+                }
+            }
+        } catch [IO.IOException] { }
+        Start-Sleep -Milliseconds 50
+    } while ($clock.ElapsedMilliseconds -lt $TimeoutMilliseconds)
+    throw "The editor shows no control called '$Name'."
+}
+# Whether the control is on screen now, without waiting long for it.
+function Test-Widget { param([string]$Name)
+    try { $null = Get-Widget $Name 400; return $true } catch { if ("$_" -like "*no control called*") { return $false }; throw }
+}
+# Client-area fractions of a point inside a control; Fx and Fy are fractions of the control.
+function Get-WidgetPoint { param([string]$Name, [double]$Fx = 0.5, [double]$Fy = 0.5)
+    $w = Get-Widget $Name
+    Update-Window
+    return @((($w.X0 + $Fx * ($w.X1 - $w.X0)) / $script:width), (($w.Y0 + $Fy * ($w.Y1 - $w.Y0)) / $script:height))
+}
+# Presses on one point and releases on another, with a real movement between: what a drag and drop is made of.
+function Drag-Between { param([double[]]$From, [double[]]$To, [string]$Capture)
+    Move-To $From[0] $From[1]; [Win32Input]::Mouse(1, 0, 1); Start-Sleep -Milliseconds 150
+    Assert-CursorOn $From[0] $From[1]
+    Mouse-Press 'Left' $true; Start-Sleep -Milliseconds 120
+    try {
+        Move-Relative 0 -12 120
+        Move-To $To[0] $To[1]; [Win32Input]::Mouse(1, 0, 1); Start-Sleep -Milliseconds 150
+        [Win32Input]::Mouse(1, 0, 1); Start-Sleep -Milliseconds 200
+        if ($Capture) { Save-Capture $Capture }
+    } finally { Mouse-Press 'Left' $false; Start-Sleep -Milliseconds 350 }
+}
+function Click-Widget { param([string]$Name, [double]$Fx = 0.5, [double]$Fy = 0.5, [switch]$Right)
+    $p = Get-WidgetPoint $Name $Fx $Fy
+    Click-At $p[0] $p[1] -Right:$Right
+}
+function Double-Click-Widget { param([string]$Name, [double]$Fx = 0.5, [double]$Fy = 0.5)
+    $p = Get-WidgetPoint $Name $Fx $Fy
+    Double-Click-At $p[0] $p[1]
+}
+function Move-ToWidget { param([string]$Name, [double]$Fx = 0.5, [double]$Fy = 0.5)
+    $p = Get-WidgetPoint $Name $Fx $Fy
+    Move-To $p[0] $p[1]
+    # Hover needs a real movement, and a few frames.
+    [Win32Input]::Mouse(1, 0, 1); Start-Sleep -Milliseconds 80
+}
+# A row of the list a combo has opened, counted from zero. Its rows are not named, so this goes by the combo's own height.
+function Click-ComboRow { param([string]$Name, [int]$Row)
+    $w = Get-Widget $Name
+    $unit = ($w.Y1 - $w.Y0) / 23
+    Update-Window
+    Click-At (($w.X0 + 0.5 * ($w.X1 - $w.X0)) / $script:width) (($w.Y1 + (8 + ($Row + 0.5) * 17) * $unit) / $script:height)
+}
+# Any mouse button. As with the left button, a release is always sent.
+function Mouse-Press { param([string]$Button, [bool]$Down)
+    if ($Down) { Assert-EditorFocused }
+    $flags = switch ($Button) { 'Left' { if ($Down) { 2 } else { 4 } } 'Right' { if ($Down) { 8 } else { 16 } } 'Middle' { if ($Down) { 32 } else { 64 } } }
+    [Win32Input]::Mouse(0, 0, $flags)
+}
+function Scroll-Wheel { param([int]$Notches)
+    Assert-EditorFocused
+    # mouseData holds a signed amount in an unsigned field.
+    [Win32Input]::Mouse(0, 0, 0x800, [uint32]([BitConverter]::ToUInt32([BitConverter]::GetBytes([int32](120 * $Notches)), 0)))
+    Start-Sleep -Milliseconds 40
+}
+function Get-CursorPosition {
+    $p = New-Object Win32Input+POINT
+    [void][Win32Input]::GetCursorPos([ref]$p)
+    return @($p.X, $p.Y)
+}
 # A release is always sent: a button left down would be worse wherever focus went.
 function Mouse-Button { param([bool]$Down)
     if ($Down) { Assert-EditorFocused }
@@ -191,7 +279,9 @@ function Hold-Key { param([string[]]$Keys, [int]$Milliseconds)
 function Get-VirtualKey { param([string]$Key)
     switch ($Key) {
         'Space' { return [uint16]0x20 } 'Shift' { return [uint16]0xA0 } 'Esc' { return [uint16]0x1B } 'Enter' { return [uint16]0x0D }
-        'Ctrl' { return [uint16]0xA2 } 'Delete' { return [uint16]0x2E }
+        'Ctrl' { return [uint16]0xA2 } 'Delete' { return [uint16]0x2E } 'Alt' { return [uint16]0xA4 } 'End' { return [uint16]0x23 } 'F1' { return [uint16]0x70 } 'F2' { return [uint16]0x71 } 'F8' { return [uint16]0x77 } 'F11' { return [uint16]0x7A }
+        'Up' { return [uint16]0x26 } 'Down' { return [uint16]0x28 } 'Tab' { return [uint16]0x09 } 'Slash' { return [uint16]0xBF } 'Backspace' { return [uint16]0x08 }
+        'Grave' { return [uint16]0xC0 } 'LeftBracket' { return [uint16]0xDB } 'RightBracket' { return [uint16]0xDD }
         default { return [uint16][char]$Key.ToUpper() }
     }
 }

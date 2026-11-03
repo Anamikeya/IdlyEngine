@@ -108,6 +108,11 @@ public:
 	std::vector<AssetIssue> validate_all();
 
 	[[nodiscard]] AssetState state(AssetId id) const;
+	// What renderers compare to see a reload; 0 for an unknown id.
+	[[nodiscard]] std::uint32_t revision(AssetId id) const;
+	// Moves or renames the file and its .meta inside the root, keeping the id, so references by id keep working.
+	// Fails without touching anything when the target exists or would be another asset type.
+	Result<void> move(AssetId id, std::string_view new_path);
 	// Checks every catalogued source file still exists; marks and returns the missing ones.
 	std::vector<AssetId> find_missing();
 	// Drops the cached data and bumps the revision; the next load re-imports.

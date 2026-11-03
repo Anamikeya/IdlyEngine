@@ -7,9 +7,9 @@
   editor's --game-log, which reports true state; captures are saved as evidence. Keep hands off the mouse while it runs.
 
 .EXAMPLE
-  powershell -ExecutionPolicy Bypass -File Tests/RealInput/shooter_acceptance.ps1 -Editor build-m4-windows-msvc-release\bin\engine_editor.exe -Output docs\evidence\m4
+  powershell -ExecutionPolicy Bypass -File Tests/RealInput/shooter_acceptance.ps1 -Editor build-ux-windows-msvc-release\bin\engine_editor.exe -Output real-input-run
 #>
-param([string]$Editor = 'build-m4-windows-msvc-release\bin\engine_editor.exe', [string]$Output = 'real-input-run', [string]$Work = "$env:TEMP\engine-m4-acceptance")
+param([string]$Editor = 'build-ux-windows-msvc-release\bin\engine_editor.exe', [string]$Output = 'real-input-run', [string]$Work = "$env:TEMP\engine-m4-acceptance")
 $ErrorActionPreference = 'Stop'
 $WarningPreference = 'SilentlyContinue'
 Import-Module (Join-Path $PSScriptRoot 'InputDriver.psm1') -Force
@@ -126,8 +126,10 @@ function Ambush-Target { param([string]$Name, [double[]]$Point, [int]$Tries = 4)
     return -not (Get-State).ContainsKey("t:$Name")
 }
 
+$map = Join-Path $Work 'ui-map.txt'
+Set-UiMap $map
 Wait-ForIdleDesktop
-$process = Start-Editor -Executable $Editor -Arguments @('--project', "`"$project`"", '--scene', "`"$scene`"", '--game-log', "`"$log`"", '--perf-log', "`"$(Join-Path $Output 'performance.txt')`"") -WorkingDirectory $Work -Log (Join-Path $Output 'editor')
+$process = Start-Editor -Executable $Editor -Arguments @('--project', "`"$project`"", '--scene', "`"$scene`"", '--game-log', "`"$log`"", '--perf-log', "`"$(Join-Path $Output 'performance.txt')`"", '--config-dir', "`"$(Join-Path $Work 'config')`"", '--ui-map', "`"$map`"") -WorkingDirectory $Work -Log (Join-Path $Output 'editor')
 try {
     Start-Sleep -Seconds 3
 
@@ -141,11 +143,11 @@ try {
 
     # 2. The arena renders: the player's view, once Play starts.
     $clicks = 0
-    do { Click-At 0.5365 0.047; $clicks++; Start-Sleep -Seconds 2; $state = Get-State } while ($state.state -ne 'playing' -and $clicks -lt 3)
+    do { Click-Widget 'Play.Play'; $clicks++; Start-Sleep -Seconds 2; $state = Get-State } while ($state.state -ne 'playing' -and $clicks -lt 3)
     if ($clicks -gt 1) { Write-Host "Note: the Play click took $clicks attempts" }
     Save-Capture (Join-Path $Output '02_ready_overlay.jpg')
     Step 2 'Play shows the arena, ready to start' ($state.state -eq 'playing' -and $state.phase -eq 'ready') "phase $($state.phase), $($state.targets) targets"
-    Click-At 0.48 0.62
+    Click-Widget 'Panel.3D Viewport' 0.5 0.8
     Start-Sleep -Milliseconds 500
     Reset-Aim
     $state = Get-State
@@ -238,11 +240,17 @@ try {
     Step 11 'Reload works' ($during.reloading -eq '1' -and [int]$done.ammo -eq 15 -and [int]$done.reserve -lt [int]$low.reserve) "ammo $($low.ammo) reserve $($low.reserve), then $($done.ammo) and $($done.reserve)"
 
     # Sensor events: a crate pushed off the shelf lands in the bonus zone, a sensor, and scores.
+    # A light crate can bounce anywhere, so if one misses the zone the next is tried: what this checks is the sensor.
     $scoreBefore = [int](Get-State).score
-    Aim-At @(0, 2.92, -11.5)
-    Shoot 3
-    Start-Sleep -Milliseconds 1600
-    $scoreAfter = [int](Get-State).score
+    $scoreAfter = $scoreBefore
+    foreach ($x in 0, -0.8, 0.8, -1.6, 1.6) {
+        Reload-IfLow
+        Aim-At @($x, 2.92, -11.5)
+        Shoot 1
+        Start-Sleep -Milliseconds 1400
+        $scoreAfter = [int](Get-State).score
+        if ($scoreAfter -ge $scoreBefore + 50) { break }
+    }
     Save-Capture (Join-Path $Output '11_bonus_zone.jpg')
     Step 11 'A crate falling into the bonus zone scores through a sensor event' ($scoreAfter -ge $scoreBefore + 50) "score $scoreBefore to $scoreAfter"
 
@@ -294,7 +302,7 @@ try {
     Start-Sleep -Milliseconds 1000
     $timeB = [double](Get-State).time
     Save-Capture (Join-Path $Output 'pause.jpg')
-    Click-At 0.75 0.3
+    Click-Widget 'Panel.3D Viewport' 0.96 0.27
     Start-Sleep -Milliseconds 500
     $resumed = Get-State
     Step 14 'Esc pauses and frees the mouse; a click resumes' ($paused.phase -eq 'paused' -and $timeA -eq $timeB -and $resumed.phase -eq 'playing') "paused at $timeA, still $timeB; then phase $($resumed.phase)"
@@ -307,7 +315,7 @@ try {
     Step 13 'The game can be lost' ($state.phase -eq 'lost') "phase $($state.phase), targets left $($state.targets)"
 
     # 15. Stop returns the unchanged scene: saving again gives the same bytes.
-    Click-At 0.6095 0.047 # The toolbar's Stop.
+    Click-Widget 'Play.Stop'
     Start-Sleep -Milliseconds 800
     $state = Get-State
     Save-Capture (Join-Path $Output '15_stopped.jpg')
@@ -317,7 +325,7 @@ try {
 
     # 16. The editor still works.
     $count = [int](Get-State).entities
-    Click-At 0.0585 0.047
+    Click-Widget 'Create.Cube'
     Start-Sleep -Milliseconds 400
     $added = [int](Get-State).entities
     Key-Down 'Ctrl'; Press-Key 'Z'; Key-Up 'Ctrl'; Start-Sleep -Milliseconds 400

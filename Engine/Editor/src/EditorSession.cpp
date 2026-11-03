@@ -1,10 +1,17 @@
 #include <engine/editor/EditorSession.hpp>
 #include <engine/assets/importers.h>
+#include <engine/editor/EditorPrefs.hpp>
 #include <algorithm>
 #include <cmath>
 #include <fstream>
+#include <limits>
 #include <set>
+#include <sstream>
+#include <tuple>
 #include <stdexcept>
+#include <string>
+#include <utility>
+#include <variant>
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/quaternion.hpp>
@@ -76,22 +83,55 @@ std::string trimmed_name(std::string name) {
     return name;
 }
 }
-void OrbitCamera::orbit(double dx, double dy) {
-    yaw = std::remainder(yaw - dx * 0.008, 6.283185307179586);
-    pitch = std::clamp(pitch + dy * 0.008, -1.5, 1.5);
+std::string write_view_state(const EditorViewState &state) {
+    std::ostringstream out;
+    out.precision(17);
+    out << "EDITORVIEW 1\n";
+    for (const auto id : state.hidden) out << "HIDDEN " << id << '\n';
+    for (const auto id : state.locked) out << "LOCKED " << id << '\n';
+    for (std::size_t slot = 0; slot < state.bookmarks.size(); ++slot)
+        if (const auto &b = state.bookmarks[slot])
+            out << "BOOKMARK " << slot << ' ' << b->target.x << ' ' << b->target.y << ' ' << b->target.z << ' ' << b->yaw << ' ' << b->pitch << ' ' << b->distance << ' ' << (b->orthographic ? 1 : 0) << '\n';
+    if (!state.folders.folders.empty()) out << "NEXTFOLDER " << state.folders.next_id << '\n';
+    for (const auto &folder : state.folders.folders) out << "FOLDER " << folder.id << ' ' << folder.parent << ' ' << folder.name << '\n';
+    for (const auto &[entity, folder] : state.folders.members) out << "MEMBER " << entity << ' ' << folder << '\n';
+    return out.str();
 }
-void OrbitCamera::pan(double dx, double dy, double height) {
-    const auto m = glm::make_mat4(world().matrix.data());
-    const auto shift = (-dx * glm::dvec3(m[0]) + dy * glm::dvec3(m[1])) *
-        (2 * distance * std::tan(0.523598775598) / std::max(height, 1.0));
-    target = {target.x + shift.x, target.y + shift.y, target.z + shift.z};
-}
-void OrbitCamera::zoom(double steps) { distance = std::clamp(distance * std::exp(-steps * 0.15), 0.2, 500.0); }
-WorldTransform OrbitCamera::world() const {
-    const auto center = vector(target);
-    const auto eye = center + distance * glm::dvec3(std::cos(pitch) * std::sin(yaw),
-        std::sin(pitch), std::cos(pitch) * std::cos(yaw));
-    return copy(glm::inverse(glm::lookAtRH(eye, center, glm::dvec3(0, 1, 0))));
+Result<EditorViewState> read_view_state(std::string_view text) {
+    std::istringstream in{std::string(text)};
+    std::string word;
+    int version = 0;
+    if (!(in >> word >> version) || word != "EDITORVIEW" || version != 1) return fail(ErrorCode::ParseError, "Not an editor view state file");
+    EditorViewState state;
+    while (in >> word) {
+        if (word == "HIDDEN" || word == "LOCKED") {
+            EntityId id = 0;
+            if (!(in >> id) || !id) return fail(ErrorCode::ParseError, "Bad " + word + " record");
+            (word == "HIDDEN" ? state.hidden : state.locked).insert(id);
+        } else if (word == "BOOKMARK") {
+            std::size_t slot = 0;
+            CameraBookmark b;
+            int flat = 0;
+            if (!(in >> slot >> b.target.x >> b.target.y >> b.target.z >> b.yaw >> b.pitch >> b.distance >> flat) || slot >= state.bookmarks.size() || !(b.distance > 0))
+                return fail(ErrorCode::ParseError, "Bad BOOKMARK record");
+            b.orthographic = flat != 0;
+            state.bookmarks[slot] = b;
+        } else if (word == "NEXTFOLDER") {
+            if (!(in >> state.folders.next_id)) return fail(ErrorCode::ParseError, "Bad NEXTFOLDER record");
+        } else if (word == "FOLDER") {
+            SceneFolder folder;
+            if (!(in >> folder.id >> folder.parent) || !folder.id) return fail(ErrorCode::ParseError, "Bad FOLDER record");
+            std::getline(in >> std::ws, folder.name); // The rest of the line: names have spaces.
+            if (!folder.name.empty() && folder.name.back() == '\r') folder.name.pop_back();
+            state.folders.folders.push_back(std::move(folder));
+        } else if (word == "MEMBER") {
+            EntityId entity = 0;
+            std::uint64_t folder = 0;
+            if (!(in >> entity >> folder) || !entity) return fail(ErrorCode::ParseError, "Bad MEMBER record");
+            state.folders.members[entity] = folder;
+        } else return fail(ErrorCode::ParseError, "Unknown record " + word);
+    }
+    return state;
 }
 struct EditorSession::Runtime {
     Scene scene;
@@ -117,13 +157,87 @@ const commands::Context physics_context{"physics", 3};
 EditorSession::EditorSession() : edit_physics_(make_physics(false)) {}
 EditorSession::~EditorSession() = default;
 const Scene &EditorSession::scene() const { return runtime_ ? runtime_->scene : scene_; }
-void EditorSession::reconcile() { if (!scene().inspect(selected_)) selected_ = 0; }
-void EditorSession::select(EntityId id) { selected_ = scene().inspect(id) ? id : 0; }
+void EditorSession::reconcile() { selection_.retain([this](EntityId id) { return scene().inspect(id).has_value(); }); }
+void EditorSession::select(EntityId id) { selection_.set(scene().inspect(id) ? id : 0); }
+void EditorSession::select_all() {
+    std::vector<EntityId> ids;
+    for (const auto &e : scene().snapshot().entities) ids.push_back(e.id);
+    selection_.set(std::span<const EntityId>(ids));
+}
+std::vector<EntityId> EditorSession::selection_roots() const {
+    std::vector<EntityId> roots;
+    for (const auto id : selection_.items()) {
+        const auto record = scene().inspect(id);
+        if (!record) continue;
+        bool covered = false;
+        for (EntityId p = record->parent; p && !covered; p = scene().inspect(p)->parent) covered = selection_.contains(p);
+        if (!covered) roots.push_back(id);
+    }
+    return roots;
+}
+void EditorSession::sync_history() {
+    if (bus_.recorded() == bus_recorded_) return;
+    bus_recorded_ = bus_.recorded();
+    undo_steps_.push_back({std::string(bus_.latest_name()), std::nullopt, std::nullopt, true});
+    redo_steps_.clear();
+    // The bus forgets its oldest step past its limit, so its name has to go too.
+    auto scene_steps = std::size_t(std::ranges::count_if(undo_steps_, [](const HistoryStep &step) { return step.scene; }));
+    for (auto it = undo_steps_.begin(); it != undo_steps_.end() && scene_steps > bus_.undo_size();)
+        if (it->scene) { it = undo_steps_.erase(it); --scene_steps; } else ++it;
+}
+Result<void> EditorSession::begin_transaction(std::string name) {
+    if (transaction_depth_++ == 0 && !runtime_) {
+        transaction_cancelled_ = false;
+        transaction_name_ = name;
+        transaction_folders_.reset();
+        if (auto begun = bus_.begin_transaction(std::move(name)); !begun) { --transaction_depth_; return begun; }
+    }
+    return {};
+}
+Result<void> EditorSession::end_transaction() {
+    if (!transaction_depth_) return fail(ErrorCode::InvalidState, "No transaction is open");
+    if (--transaction_depth_ || !bus_.in_transaction()) return {};
+    const auto folders_before = std::exchange(transaction_folders_, std::nullopt);
+    if (std::exchange(transaction_cancelled_, false)) {
+        auto restored = bus_.abort_transaction(context_);
+        if (folders_before) { view_state_.folders = *folders_before; store_view_state(); }
+        reconcile();
+        if (!restored) return restored.error();
+        return {};
+    }
+    const auto recorded = bus_.recorded();
+    auto ended = bus_.end_transaction();
+    sync_history();
+    reconcile();
+    if (folders_before && *folders_before != view_state_.folders) {
+        // Filed with the scene's step when there is one, so one undo restores both.
+        if (bus_.recorded() != recorded) undo_steps_.back().folders = FolderEdit{*folders_before, view_state_.folders};
+        else {
+            undo_steps_.push_back({transaction_name_, std::nullopt, FolderEdit{*folders_before, view_state_.folders}, false});
+            redo_steps_.clear();
+            bus_.discard_redo();
+        }
+        store_view_state();
+    }
+    return ended;
+}
+std::vector<std::string> EditorSession::history_names() const {
+    std::vector<std::string> names;
+    for (const auto &step : undo_steps_) names.push_back(step.name);
+    for (auto it = redo_steps_.rbegin(); it != redo_steps_.rend(); ++it) names.push_back(it->name);
+    return names;
+}
+Result<void> EditorSession::jump_history(std::size_t position) {
+    if (position > undo_steps_.size() + redo_steps_.size()) return fail(ErrorCode::InvalidArgument, "No such point in the history");
+    while (undo_steps_.size() > position) if (auto r = undo(); !r) return r.error();
+    while (undo_steps_.size() < position) if (auto r = redo(); !r) return r.error();
+    return {};
+}
 Result<void> EditorSession::editing_only(const char *action) const {
     if (runtime_) return fail(ErrorCode::InvalidState, std::string(action) + " is unavailable in Play mode; press Stop first");
     return {};
 }
-Result<commands::Receipt> EditorSession::execute(commands::Command cmd) {
+Result<commands::Receipt> EditorSession::execute(commands::Command cmd, std::string_view label) {
     if (runtime_) {
         if (std::holds_alternative<commands::ReplaceScene>(cmd))
             return fail(ErrorCode::InvalidState, "Replacing the scene is unavailable in Play mode; press Stop first");
@@ -131,49 +245,82 @@ Result<commands::Receipt> EditorSession::execute(commands::Command cmd) {
         reconcile();
         return result;
     }
-    auto result = bus_.execute(context_, bus_.revision(), std::move(cmd));
-    if (result) material_redo_.clear();
+    auto result = bus_.execute(context_, bus_.revision(), std::move(cmd), label);
+    sync_history();
+    reconcile();
+    return result;
+}
+Result<commands::Receipt> EditorSession::execute(std::span<const commands::Command> batch, std::string_view label) {
+    if (runtime_) {
+        if (std::ranges::any_of(batch, [](const commands::Command &c) { return std::holds_alternative<commands::ReplaceScene>(c); }))
+            return fail(ErrorCode::InvalidState, "Replacing the scene is unavailable in Play mode; press Stop first");
+        auto result = runtime_->bus.execute(context_, runtime_->bus.revision(), batch);
+        reconcile();
+        return result;
+    }
+    auto result = bus_.execute(context_, bus_.revision(), batch, label);
+    sync_history();
     reconcile();
     return result;
 }
 Result<commands::Receipt> EditorSession::create(std::string name, EntityId parent, Components components) {
     Transform t; t.position.y = 0.5;
-    auto r = execute(commands::CreateEntity{std::move(name), t, parent, 0, std::move(components)});
-    if (r) selected_ = r.value().created.front();
+    const auto label = "Create " + name;
+    auto r = execute(commands::CreateEntity{std::move(name), t, parent, 0, std::move(components)}, label);
+    if (r) selection_.set(r.value().created.front());
     return r;
 }
 Result<commands::Receipt> EditorSession::undo() {
     if (auto allowed = editing_only("Undo"); !allowed) return allowed.error();
-    // Nothing happened to the scene since this material edit, so it is the latest step.
-    if (!material_undo_.empty() && material_undo_.back().scene_depth == bus_.undo_size()) {
-        auto edit = std::move(material_undo_.back());
-        material_undo_.pop_back();
-        if (auto saved = assets_->save_material(edit.id, edit.before); !saved) return saved.error();
-        forget_materials();
-        material_redo_.push_back(std::move(edit));
-        return commands::Receipt{bus_.revision(), {}, 0};
+    if (in_transaction()) return fail(ErrorCode::InvalidState, "Finish the drag before undoing");
+    if (undo_steps_.empty()) return fail(ErrorCode::InvalidState, "History is empty");
+    auto &step = undo_steps_.back();
+    commands::Receipt receipt{bus_.revision(), {}, 0};
+    if (step.scene) {
+        auto r = bus_.undo(context_, bus_.revision());
+        reconcile();
+        if (!r) return r;
+        receipt = r.value();
     }
-    auto r = bus_.undo(context_, bus_.revision()); reconcile(); return r;
+    if (step.material) {
+        if (auto saved = assets_->save_material(step.material->id, step.material->before); !saved) return saved.error();
+        forget_materials();
+    }
+    if (step.folders) { view_state_.folders = step.folders->before; store_view_state(); }
+    redo_steps_.push_back(std::move(step));
+    undo_steps_.pop_back();
+    return receipt;
 }
 Result<commands::Receipt> EditorSession::redo() {
     if (auto allowed = editing_only("Redo"); !allowed) return allowed.error();
-    if (!material_redo_.empty() && material_redo_.back().scene_depth == bus_.undo_size()) {
-        auto edit = std::move(material_redo_.back());
-        material_redo_.pop_back();
-        if (auto saved = assets_->save_material(edit.id, edit.after); !saved) return saved.error();
-        forget_materials();
-        material_undo_.push_back(std::move(edit));
-        return commands::Receipt{bus_.revision(), {}, 0};
+    if (in_transaction()) return fail(ErrorCode::InvalidState, "Finish the drag before redoing");
+    if (redo_steps_.empty()) return fail(ErrorCode::InvalidState, "History is empty");
+    auto &step = redo_steps_.back();
+    commands::Receipt receipt{bus_.revision(), {}, 0};
+    if (step.scene) {
+        auto r = bus_.redo(context_, bus_.revision());
+        reconcile();
+        if (!r) return r;
+        receipt = r.value();
     }
-    auto r = bus_.redo(context_, bus_.revision()); reconcile(); return r;
+    if (step.material) {
+        if (auto saved = assets_->save_material(step.material->id, step.material->after); !saved) return saved.error();
+        forget_materials();
+    }
+    if (step.folders) { view_state_.folders = step.folders->after; store_view_state(); }
+    undo_steps_.push_back(std::move(step));
+    redo_steps_.pop_back();
+    return receipt;
 }
 Result<void> EditorSession::new_scene() {
     if (auto allowed = editing_only("New Scene"); !allowed) return allowed;
     // next_id is kept by ReplaceScene, so stable IDs are never recycled within a session.
-    auto r = execute(commands::ReplaceScene{SceneSnapshot{}});
+    auto r = execute(commands::ReplaceScene{SceneSnapshot{}}, "New Scene");
     if (!r) return r.error();
-    selected_ = 0;
+    selection_.clear();
     clean_.clear(); dirty_revision_ = ~std::uint64_t(0);
+    document_.clear();
+    view_state_ = {};
     return {};
 }
 bool EditorSession::dirty() const {
@@ -187,6 +334,7 @@ void EditorSession::mark_clean() { clean_ = scene_.snapshot().entities; dirty_re
 Result<void> EditorSession::save(const std::filesystem::path &path) {
     if (auto allowed = editing_only("Save"); !allowed) return allowed;
     if (path.empty()) return fail(ErrorCode::InvalidArgument, "Choose a scene filename");
+    document_ = path;
     auto temp = path; temp += ".tmp";
     std::ofstream stream(temp, std::ios::binary | std::ios::trunc);
     if (!stream) return fail(ErrorCode::InvalidState, "Cannot open temporary scene file");
@@ -203,6 +351,7 @@ Result<void> EditorSession::save(const std::filesystem::path &path) {
     if (ec) return fail(ErrorCode::InvalidState, ec.message());
 #endif
     mark_clean();
+    store_view_state();
     return {};
 }
 Result<void> EditorSession::load(const std::filesystem::path &path) {
@@ -211,10 +360,12 @@ Result<void> EditorSession::load(const std::filesystem::path &path) {
     if (!stream) return fail(ErrorCode::NotFound, "Cannot open scene file");
     auto snapshot = read_scene(stream);
     if (!snapshot) return snapshot.error();
-    auto r = execute(commands::ReplaceScene{std::move(snapshot.value())});
+    auto r = execute(commands::ReplaceScene{std::move(snapshot.value())}, "Load Scene");
     if (!r) return r.error();
-    selected_ = 0;
+    selection_.clear();
     mark_clean();
+    document_ = path;
+    load_view_state();
     return {};
 }
 Result<Transform> EditorSession::local_from_world(EntityId parent, const WorldTransform &world) const {
@@ -249,10 +400,7 @@ Result<commands::Receipt> EditorSession::reparent(EntityId id, EntityId parent) 
     auto local = local_from_world(parent, *scene().world_transform(id));
     if (!local) return fail(ErrorCode::InvalidArgument, "Cannot keep the world transform under that parent: " + local.error().message);
     const commands::Command batch[] = {commands::SetParent{id, parent}, commands::SetTransform{id, local.value()}};
-    auto &bus = runtime_ ? runtime_->bus : bus_;
-    auto result = bus.execute(context_, bus.revision(), std::span<const commands::Command>(batch));
-    reconcile();
-    return result;
+    return execute(std::span<const commands::Command>(batch), parent ? "Reparent " + record->name : "Move " + record->name + " to Root");
 }
 Result<commands::Receipt> EditorSession::duplicate(EntityId id) {
     const auto record = scene().inspect(id);
@@ -265,26 +413,516 @@ Result<commands::Receipt> EditorSession::duplicate(EntityId id) {
         while (!name.empty() && (static_cast<unsigned char>(name.back()) & 0xC0) == 0x80) name.pop_back();
         if (!name.empty() && static_cast<unsigned char>(name.back()) >= 0xC0) name.pop_back();
     }
-    auto result = execute(commands::DuplicateEntity{id, name + std::string(suffix)});
-    if (result) selected_ = result.value().created.front();
+    auto result = execute(commands::DuplicateEntity{id, name + std::string(suffix)}, "Duplicate " + record->name);
+    if (result) selection_.set(result.value().created.front());
     return result;
 }
-void EditorSession::focus() {
-    if (const auto w = scene().world_transform(selected_)) {
-        const auto m = glm::make_mat4(w->matrix.data());
-        const double scale = std::max({glm::length(glm::dvec3(m[0])), glm::length(glm::dvec3(m[1])), glm::length(glm::dvec3(m[2]))});
-        glm::dvec3 center(m[3]);
-        double size = 3.0 / 1.75; // Diagonal-like size that puts a unit cube 3 m away.
-        const auto record = scene().inspect(selected_);
-        // A model's origin can be far from its geometry, and its size is anything.
-        if (const auto data = record->components.mesh ? model(record->components.mesh->mesh_asset) : nullptr) {
-            const auto low = vector(data->bounds.min), high = vector(data->bounds.max);
-            center = glm::dvec3(m * glm::dvec4((low + high) / 2.0, 1));
-            size = glm::length(high - low);
-        }
-        camera.target = {center.x, center.y, center.z};
-        camera.distance = std::clamp(1.75 * scale * size, 0.2, 500.0);
+namespace {
+std::string many(std::string_view verb, std::size_t count, const std::string &single) {
+    return std::string(verb) + ' ' + (count == 1 ? single : std::to_string(count) + " Entities");
+}
+}
+Result<void> EditorSession::duplicate_selection() {
+    const auto roots = selection_roots();
+    if (roots.empty()) return fail(ErrorCode::InvalidState, "Nothing is selected");
+    ScopedTransaction transaction(*this, many("Duplicate", roots.size(), scene().inspect(roots.front())->name));
+    std::vector<EntityId> copies;
+    for (const auto id : roots) {
+        auto copied = duplicate(id);
+        if (!copied) { transaction.cancel(); return copied.error(); }
+        copies.push_back(copied.value().created.front());
     }
+    selection_.set(std::span<const EntityId>(copies));
+    return {};
+}
+Result<void> EditorSession::delete_selection() {
+    const auto roots = selection_roots();
+    if (roots.empty()) return fail(ErrorCode::InvalidState, "Nothing is selected");
+    ScopedTransaction transaction(*this, many("Delete", roots.size(), scene().inspect(roots.front())->name));
+    for (const auto id : roots)
+        if (auto deleted = execute(commands::DeleteEntity{id}); !deleted) { transaction.cancel(); return deleted.error(); }
+    return {};
+}
+Result<void> EditorSession::begin_drag(std::string_view verb, bool duplicate) {
+    if (dragging()) return fail(ErrorCode::InvalidState, "A drag is already in progress");
+    const auto roots = selection_roots();
+    if (roots.empty()) return fail(ErrorCode::InvalidState, "Nothing is selected");
+    const auto name = many(verb, roots.size(), scene().inspect(roots.front())->name);
+    if (auto begun = begin_transaction(duplicate ? "Duplicate and " + name : name); !begun) return begun;
+    if (duplicate) {
+        if (auto copied = duplicate_selection(); !copied) { cancel_transaction(); (void)end_transaction(); return copied; }
+    }
+    for (const auto id : selection_roots()) drag_start_.emplace_back(id, *scene().world_transform(id));
+    return {};
+}
+Result<void> EditorSession::update_drag(const WorldTransform &delta) {
+    if (!dragging()) return fail(ErrorCode::InvalidState, "No drag is in progress");
+    const auto change = glm::make_mat4(delta.matrix.data());
+    std::vector<commands::Command> moves;
+    // Worked out before anything is applied, so one entity that cannot follow leaves them all where they were.
+    for (const auto &[id, start] : drag_start_) {
+        const auto record = scene().inspect(id);
+        if (!record) continue;
+        auto local = local_from_world(record->parent, copy(change * glm::make_mat4(start.matrix.data())));
+        if (!local) return local.error();
+        moves.emplace_back(commands::SetTransform{id, local.value()});
+    }
+    for (std::size_t at = 0; at < moves.size(); at += commands::CommandBus::max_transaction) {
+        const auto count = std::min(moves.size() - at, commands::CommandBus::max_transaction);
+        if (auto moved = execute(std::span<const commands::Command>(moves).subspan(at, count), {}); !moved) return moved.error();
+    }
+    return {};
+}
+Result<void> EditorSession::end_drag() {
+    if (!dragging()) return fail(ErrorCode::InvalidState, "No drag is in progress");
+    drag_start_.clear();
+    return end_transaction();
+}
+Result<void> EditorSession::cancel_drag() {
+    if (!dragging()) return fail(ErrorCode::InvalidState, "No drag is in progress");
+    // A runtime scene keeps no record to restore from, so it is put back by hand.
+    if (runtime_) {
+        WorldTransform unchanged;
+        std::copy_n(glm::value_ptr(glm::dmat4(1)), 16, unchanged.matrix.begin());
+        if (auto restored = update_drag(unchanged); !restored) return restored;
+    }
+    drag_start_.clear();
+    cancel_transaction();
+    return end_transaction();
+}
+std::set<EntityId> EditorSession::selection_subtrees() const {
+    std::set<EntityId> all(selection_.items().begin(), selection_.items().end());
+    for (const auto &e : scene().snapshot().entities)
+        for (EntityId p = e.parent; p; p = scene().inspect(p)->parent)
+            if (all.contains(p)) { all.insert(e.id); break; }
+    return all;
+}
+namespace {
+// World-space box around a local box.
+std::pair<glm::dvec3, glm::dvec3> world_box(const glm::dmat4 &m, const Vec3 &low, const Vec3 &high) {
+    glm::dvec3 lo(std::numeric_limits<double>::max()), hi(std::numeric_limits<double>::lowest());
+    for (int i = 0; i < 8; ++i) {
+        const glm::dvec3 corner(m * glm::dvec4(i & 1 ? high.x : low.x, i & 2 ? high.y : low.y, i & 4 ? high.z : low.z, 1));
+        lo = glm::min(lo, corner); hi = glm::max(hi, corner);
+    }
+    return {lo, hi};
+}
+}
+std::optional<OrbitCamera> EditorSession::focus_goal() const {
+    if (selection_.empty()) return std::nullopt;
+    glm::dvec3 lo(std::numeric_limits<double>::max()), hi(std::numeric_limits<double>::lowest());
+    bool boxed = false;
+    for (const auto id : selection_.items()) {
+        const auto w = scene().world_transform(id);
+        if (!w) continue;
+        const auto m = glm::make_mat4(w->matrix.data());
+        if (const auto bounds = local_bounds(id)) {
+            const auto [low, high] = world_box(m, bounds->first, bounds->second);
+            lo = glm::min(lo, low); hi = glm::max(hi, high);
+            boxed = true;
+        } else { lo = glm::min(lo, glm::dvec3(m[3])); hi = glm::max(hi, glm::dvec3(m[3])); }
+    }
+    auto goal = camera;
+    const auto center = (lo + hi) / 2.0;
+    goal.target = {center.x, center.y, center.z};
+    const double size = glm::length(hi - lo);
+    // A marker with no size is framed as a unit cube would be.
+    goal.distance = std::clamp(boxed || size > 0 ? 1.75 * size : 3.0, 0.2, 500.0);
+    return goal;
+}
+std::optional<Vec3> EditorSession::selection_center() const {
+    const auto goal = focus_goal();
+    if (!goal) return std::nullopt;
+    return goal->target;
+}
+std::pair<EntityId, std::optional<double>> EditorSession::cast_ray(const renderer::FrameSnapshot &frame, const Vec3 &from, const Vec3 &direction, double limit, const std::set<EntityId> &exclude) const {
+    const glm::dvec4 a(from.x, from.y, from.z, 1), d(direction.x, direction.y, direction.z, 0);
+    double nearest = limit;
+    EntityId entity = 0;
+    for (const auto &object : frame.objects) {
+        if (exclude.contains(object.entity)) continue;
+        const auto inverse = glm::inverse(glm::make_mat4(object.world.matrix.data()));
+        // The local ray is not normalized, so t stays a world-space distance along the ray.
+        const glm::dvec3 origin(inverse * a), ray(inverse * d);
+        // Models are tested by their bounding box.
+        const auto data = resources_.find(object.mesh);
+        const double t = data ? box_hit(vector(data->bounds.min), vector(data->bounds.max), origin, ray, nearest) : hit(object.mesh, origin, ray, nearest);
+        if (t >= 0 && t < nearest) { nearest = t; entity = object.entity; }
+    }
+    if (!entity) return {0, std::nullopt};
+    return {entity, nearest};
+}
+std::optional<Vec3> EditorSession::ray_hit(const renderer::FrameSnapshot &frame, double x, double y) const {
+    const auto inv = glm::inverse(glm::make_mat4(frame.camera.projection.matrix.data()) * glm::make_mat4(frame.camera.view.matrix.data()));
+    auto a = inv * glm::dvec4(x, y, -1, 1), b = inv * glm::dvec4(x, y, 1, 1);
+    a /= a.w; b /= b.w;
+    const auto segment = glm::dvec3(b - a);
+    const double length = glm::length(segment);
+    const auto direction = segment / length;
+    const auto [entity, t] = cast_ray(frame, {a.x, a.y, a.z}, {direction.x, direction.y, direction.z}, length, {});
+    if (entity) { const auto p = glm::dvec3(a) + direction * *t; return Vec3{p.x, p.y, p.z}; }
+    if (direction.y >= -1e-9 || a.y <= 0) return std::nullopt;
+    const auto p = glm::dvec3(a) + direction * (-a.y / direction.y);
+    return Vec3{p.x, 0, p.z};
+}
+Result<void> EditorSession::snap_selection_to_floor(const renderer::FrameSnapshot &frame) {
+    const auto roots = selection_roots();
+    if (roots.empty()) return fail(ErrorCode::InvalidState, "Nothing is selected");
+    const auto exclude = selection_subtrees();
+    ScopedTransaction transaction(*this, many("Snap", roots.size(), scene().inspect(roots.front())->name) + " to Floor");
+    bool moved = false;
+    for (const auto id : roots) {
+        const auto w = scene().world_transform(id);
+        const auto m = glm::make_mat4(w->matrix.data());
+        glm::dvec3 lo(m[3]), hi(m[3]);
+        if (const auto bounds = local_bounds(id)) std::tie(lo, hi) = world_box(m, bounds->first, bounds->second);
+        const auto middle = (lo + hi) / 2.0;
+        const auto [entity, t] = cast_ray(frame, {middle.x, middle.y, middle.z}, {0, -1, 0}, 100000, exclude);
+        double surface = 0;
+        if (entity) surface = middle.y - *t;
+        else if (lo.y <= 0) continue; // Nothing below, and already at or under the ground plane.
+        if (std::abs(surface - lo.y) < 1e-9) continue;
+        auto placed = glm::make_mat4(w->matrix.data());
+        placed[3].y += surface - lo.y;
+        auto local = local_from_world(scene().inspect(id)->parent, copy(placed));
+        if (!local) { transaction.cancel(); return local.error(); }
+        if (auto done = execute(commands::SetTransform{id, local.value()}); !done) { transaction.cancel(); return done.error(); }
+        moved = true;
+    }
+    if (!moved) return fail(ErrorCode::NotFound, "Nothing to snap to below the selection");
+    return {};
+}
+std::optional<Vec3> EditorSession::nearest_vertex(const renderer::FrameSnapshot &frame, double x, double y, double width, double height, double radius) const {
+    const auto clip_from_world = glm::make_mat4(frame.camera.projection.matrix.data()) * glm::make_mat4(frame.camera.view.matrix.data());
+    const auto exclude = selection_subtrees();
+    std::optional<Vec3> best;
+    double best_distance = radius * radius;
+    const auto consider = [&](const glm::dmat4 &world, const glm::dvec3 &local) {
+        const glm::dvec4 at = world * glm::dvec4(local, 1);
+        const auto clip = clip_from_world * at;
+        if (clip.w <= 1e-6) return;
+        const double sx = (clip.x / clip.w + 1) / 2 * width - x, sy = (1 - clip.y / clip.w) / 2 * height - y;
+        const double squared = sx * sx + sy * sy;
+        if (squared < best_distance) { best_distance = squared; best = Vec3{at.x, at.y, at.z}; }
+    };
+    for (const auto &object : frame.objects) {
+        if (exclude.contains(object.entity)) continue;
+        const auto world = glm::make_mat4(object.world.matrix.data());
+        if (const auto data = resources_.find(object.mesh)) {
+            // A model far from the cursor is passed over by its box, so one with many vertices costs nothing unless near.
+            double min_x = std::numeric_limits<double>::max(), max_x = std::numeric_limits<double>::lowest(), min_y = min_x, max_y = max_x;
+            bool behind = false;
+            const auto low = vector(data->bounds.min), high = vector(data->bounds.max);
+            for (int i = 0; i < 8; ++i) {
+                const auto clip = clip_from_world * world * glm::dvec4(i & 1 ? high.x : low.x, i & 2 ? high.y : low.y, i & 4 ? high.z : low.z, 1);
+                if (clip.w <= 1e-6) { behind = true; break; }
+                const double sx = (clip.x / clip.w + 1) / 2 * width, sy = (1 - clip.y / clip.w) / 2 * height;
+                min_x = std::min(min_x, sx); max_x = std::max(max_x, sx); min_y = std::min(min_y, sy); max_y = std::max(max_y, sy);
+            }
+            if (!behind && (x < min_x - radius || x > max_x + radius || y < min_y - radius || y > max_y + radius)) continue;
+            for (const auto &vertex : data->vertices) consider(world, vector(vertex.position));
+        } else if (object.mesh == renderer::builtin_plane) {
+            for (const double sx : {-0.5, 0.5}) for (const double sz : {-0.5, 0.5}) consider(world, {sx, 0, sz});
+        } else if (object.mesh == renderer::builtin_sphere) {
+            for (const auto &p : {glm::dvec3(0.5, 0, 0), glm::dvec3(-0.5, 0, 0), glm::dvec3(0, 0.5, 0), glm::dvec3(0, -0.5, 0), glm::dvec3(0, 0, 0.5), glm::dvec3(0, 0, -0.5)}) consider(world, p);
+        } else {
+            for (int i = 0; i < 8; ++i) consider(world, {i & 1 ? 0.5 : -0.5, i & 2 ? 0.5 : -0.5, i & 4 ? 0.5 : -0.5});
+        }
+    }
+    return best;
+}
+void EditorSession::hide_selection() {
+    const auto all = selection_subtrees();
+    view_state_.hidden.insert(all.begin(), all.end());
+    selection_.clear();
+    store_view_state();
+}
+void EditorSession::unhide_all() {
+    view_state_.hidden.clear();
+    store_view_state();
+}
+void EditorSession::set_flag_on_subtree(std::set<EntityId> &flags, EntityId id, bool on) {
+    const auto entities = scene().snapshot().entities;
+    std::set<EntityId> subtree{id};
+    // Entities are in ID order, and a child may have a lower ID than its parent after a reparent, so walk up from each.
+    for (const auto &e : entities)
+        for (EntityId p = e.parent; p; p = scene().inspect(p)->parent)
+            if (p == id) { subtree.insert(e.id); break; }
+    for (const auto entity : subtree) { if (on) flags.insert(entity); else flags.erase(entity); }
+    store_view_state();
+}
+void EditorSession::set_hidden(EntityId id, bool on) {
+    set_flag_on_subtree(view_state_.hidden, id, on);
+    if (on) for (const auto entity : view_state_.hidden) selection_.remove(entity);
+}
+void EditorSession::set_locked(EntityId id, bool on) { set_flag_on_subtree(view_state_.locked, id, on); }
+Result<void> EditorSession::commit_folders(EditorFolders next, std::string name) {
+    if (auto allowed = editing_only("Changing folders"); !allowed) return allowed;
+    if (next == view_state_.folders) return {};
+    if (in_transaction()) {
+        if (!transaction_folders_) transaction_folders_ = view_state_.folders;
+        view_state_.folders = std::move(next);
+        return {};
+    }
+    undo_steps_.push_back({std::move(name), std::nullopt, FolderEdit{view_state_.folders, next}, false});
+    redo_steps_.clear();
+    bus_.discard_redo();
+    view_state_.folders = std::move(next);
+    store_view_state();
+    return {};
+}
+Result<std::uint64_t> EditorSession::create_folder(const std::string &name, std::uint64_t parent) {
+    if (name.empty()) return fail(ErrorCode::InvalidArgument, "A folder needs a name");
+    auto next = view_state_.folders;
+    if (parent && !next.find(parent)) return fail(ErrorCode::NotFound, "That folder no longer exists");
+    const auto id = next.next_id++;
+    next.folders.push_back({id, parent, name});
+    if (auto done = commit_folders(std::move(next), "Create Folder " + name); !done) return done.error();
+    return id;
+}
+Result<void> EditorSession::rename_folder(std::uint64_t id, const std::string &name) {
+    if (name.empty()) return fail(ErrorCode::InvalidArgument, "A folder needs a name");
+    auto next = view_state_.folders;
+    const auto at = std::ranges::find(next.folders, id, &SceneFolder::id);
+    if (at == next.folders.end()) return fail(ErrorCode::NotFound, "That folder no longer exists");
+    at->name = name;
+    return commit_folders(std::move(next), "Rename Folder");
+}
+Result<void> EditorSession::delete_folder(std::uint64_t id) {
+    auto next = view_state_.folders;
+    const auto at = std::ranges::find(next.folders, id, &SceneFolder::id);
+    if (at == next.folders.end()) return fail(ErrorCode::NotFound, "That folder no longer exists");
+    const auto parent = at->parent;
+    const auto name = at->name;
+    next.folders.erase(at);
+    for (auto &folder : next.folders) if (folder.parent == id) folder.parent = parent;
+    for (auto it = next.members.begin(); it != next.members.end();) {
+        if (it->second != id) { ++it; continue; }
+        if (parent) { it->second = parent; ++it; } else it = next.members.erase(it);
+    }
+    return commit_folders(std::move(next), "Delete Folder " + name);
+}
+Result<void> EditorSession::move_folder(std::uint64_t id, std::uint64_t parent) {
+    auto next = view_state_.folders;
+    const auto at = std::ranges::find(next.folders, id, &SceneFolder::id);
+    if (at == next.folders.end()) return fail(ErrorCode::NotFound, "That folder no longer exists");
+    for (auto p = parent; p; ) {
+        if (p == id) return fail(ErrorCode::Cycle, "Cannot put a folder inside itself");
+        const auto *up = next.find(p);
+        if (!up) return fail(ErrorCode::NotFound, "That folder no longer exists");
+        p = up->parent;
+    }
+    at->parent = parent;
+    return commit_folders(std::move(next), "Move Folder");
+}
+Result<void> EditorSession::file_entity(EntityId id, std::uint64_t folder) {
+    const auto record = scene().inspect(id);
+    if (!record) return fail(ErrorCode::NotFound, "Entity no longer exists");
+    auto next = view_state_.folders;
+    if (folder && !next.find(folder)) return fail(ErrorCode::NotFound, "That folder no longer exists");
+    if (folder) next.members[id] = folder; else next.members.erase(id);
+    ScopedTransaction transaction(*this, "Move " + record->name + " to Folder");
+    if (record->parent)
+        if (auto moved = reparent(id, 0); !moved) { transaction.cancel(); return moved.error(); }
+    if (auto filed = commit_folders(std::move(next), {}); !filed) { transaction.cancel(); return filed; }
+    return {};
+}
+std::uint64_t EditorSession::folder_of(EntityId id) const {
+    const auto found = view_state_.folders.members.find(id);
+    return found == view_state_.folders.members.end() ? 0 : found->second;
+}
+Result<std::string> EditorSession::copy_selection() const {
+    const auto roots = selection_roots();
+    if (roots.empty()) return fail(ErrorCode::InvalidState, "Nothing is selected");
+    const auto all = selection_subtrees();
+    SceneSnapshot copied;
+    for (const auto &e : scene().snapshot().entities) {
+        if (!all.contains(e.id)) continue;
+        auto entity = e;
+        if (std::ranges::find(roots, e.id) != roots.end()) {
+            // Without its parent, a root takes its place in the world as its own transform.
+            entity.parent = 0;
+            if (const auto local = local_from_world(0, *scene().world_transform(e.id))) entity.transform = local.value();
+        } else if (!all.contains(e.parent)) entity.parent = 0;
+        copied.entities.push_back(std::move(entity));
+        copied.next_id = std::max(copied.next_id, e.id + 1);
+    }
+    std::ostringstream out;
+    if (auto written = write_scene(out, copied); !written) return written.error();
+    return out.str();
+}
+Result<void> EditorSession::paste(std::string_view text) {
+    std::istringstream in{std::string(text)};
+    const auto copied = read_scene(in);
+    if (!copied || copied.value().entities.empty()) return fail(ErrorCode::ParseError, "The clipboard holds no entities");
+    const auto &entities = copied.value().entities;
+    ScopedTransaction transaction(*this, entities.size() == 1 ? "Paste " + entities.front().name : "Paste " + std::to_string(entities.size()) + " Entities");
+    std::map<EntityId, EntityId> created;
+    std::vector<EntityId> roots;
+    // Parents first, however the IDs happen to be ordered.
+    std::vector<const EntityRecord *> waiting;
+    for (const auto &e : entities) waiting.push_back(&e);
+    while (!waiting.empty()) {
+        const auto before = waiting.size();
+        std::erase_if(waiting, [&](const EntityRecord *e) {
+            if (e->parent && !created.contains(e->parent)) return false;
+            const auto made = execute(commands::CreateEntity{e->name, e->transform, e->parent ? created.at(e->parent) : 0, 0, e->components});
+            if (!made) return false;
+            created[e->id] = made.value().created.front();
+            if (!e->parent) roots.push_back(made.value().created.front());
+            return true;
+        });
+        if (waiting.size() == before) { transaction.cancel(); return fail(ErrorCode::InvalidArgument, "The clipboard's entities could not be added"); }
+    }
+    selection_.set(std::span<const EntityId>(roots));
+    return {};
+}
+Result<EntityId> EditorSession::group_selection() {
+    const auto roots = selection_roots();
+    if (roots.empty()) return fail(ErrorCode::InvalidState, "Nothing is selected");
+    const auto center = selection_center();
+    Transform t;
+    t.position = *center;
+    ScopedTransaction transaction(*this, roots.size() == 1 ? "Group " + scene().inspect(roots.front())->name : "Group " + std::to_string(roots.size()) + " Entities");
+    const auto group = execute(commands::CreateEntity{"Group", t, 0, 0, Components{}});
+    if (!group) { transaction.cancel(); return group.error(); }
+    const auto id = group.value().created.front();
+    for (const auto root : roots) {
+        const auto moved = reparent(root, id);
+        if (!moved) { transaction.cancel(); return moved.error(); }
+    }
+    selection_.set(id);
+    return id;
+}
+Result<void> EditorSession::rename_asset(assets::AssetId id, const std::string &new_path) {
+    if (auto allowed = editing_only("Renaming an asset"); !allowed) return allowed;
+    if (!assets_) return fail(ErrorCode::NotFound, "No asset folder");
+    if (auto moved = assets_->move(id, new_path); !moved) return moved;
+    const auto meta = assets_->find(id);
+    if (!meta) return fail(ErrorCode::NotFound, "The asset could not be found after moving it");
+    resolved_.clear();
+    const auto fix = [&](AssetRef &ref) {
+        if (ref.id != id.value || ref.path == meta->path) return false;
+        ref.path = meta->path;
+        return true;
+    };
+    std::vector<commands::Command> edits;
+    for (const auto &e : scene_.snapshot().entities) {
+        if (auto mesh = e.components.mesh) {
+            bool changed = fix(mesh->mesh_asset);
+            changed |= fix(mesh->texture);
+            changed |= fix(mesh->material);
+            for (auto &slot : mesh->material_slots) changed |= fix(slot.material);
+            if (changed) edits.emplace_back(commands::SetMesh{e.id, std::move(mesh)});
+        }
+        if (auto environment = e.components.environment; environment && fix(environment->image)) edits.emplace_back(commands::SetEnvironment{e.id, std::move(environment)});
+    }
+    ScopedTransaction transaction(*this, "Update References to " + meta->path);
+    for (std::size_t at = 0; at < edits.size(); at += commands::CommandBus::max_transaction) {
+        const auto count = std::min(edits.size() - at, commands::CommandBus::max_transaction);
+        if (auto done = execute(std::span<const commands::Command>(edits).subspan(at, count), {}); !done) return done.error();
+    }
+    // Materials name their maps too. These are not scene edits, so they are saved straight away.
+    for (const auto &other : assets_->assets()) {
+        if (other.type != assets::AssetType::Material) continue;
+        auto data = material(other.id);
+        if (!data) continue;
+        bool changed = false;
+        for (auto *map : {&data->base_color_map, &data->metallic_roughness_map, &data->normal_map, &data->occlusion_map, &data->emissive_map})
+            if (map->id == id && map->path != meta->path) { map->path = meta->path; changed = true; }
+        if (changed) if (auto saved = assets_->save_material(other.id, *data); !saved) return saved;
+    }
+    forget_materials();
+    return {};
+}
+void EditorSession::request_thumbnail_data(assets::AssetId id) {
+    const auto meta = assets_ ? assets_->find(id) : std::nullopt;
+    if (!meta || (meta->type != assets::AssetType::Mesh && meta->type != assets::AssetType::Texture)) return;
+    auto source = asset_folder() / std::filesystem::path(std::u8string(reinterpret_cast<const char8_t *>(meta->path.data()), meta->path.size()));
+    // The worker touches only its own copy of the path, like an import.
+    thumbnail_jobs_.push_back({id, meta->type, std::async(std::launch::async, [source = std::move(source)]() -> std::shared_ptr<const assets::PreparedImport> {
+        auto prepared = assets::prepare_import(source);
+        return prepared ? std::make_shared<const assets::PreparedImport>(std::move(prepared.value())) : nullptr;
+    })});
+}
+std::vector<EditorSession::ThumbnailData> EditorSession::poll_thumbnail_data() {
+    std::vector<ThumbnailData> done;
+    for (std::size_t i = 0; i < thumbnail_jobs_.size();) {
+        auto &job = thumbnail_jobs_[i];
+        if (job.result.wait_for(std::chrono::seconds(0)) != std::future_status::ready) { ++i; continue; }
+        ThumbnailData data;
+        data.id = job.id; data.type = job.type;
+        const auto prepared = job.result.get();
+        thumbnail_jobs_.erase(thumbnail_jobs_.begin() + std::ptrdiff_t(i));
+        if (prepared && prepared->mesh && assets_ && assets_->find(data.id)) {
+            data.mesh = resources_.mesh(data.id, assets_->revision(data.id), prepared->mesh);
+            data.vertices = prepared->mesh->vertices.size();
+            data.triangles = prepared->mesh->indices.size() / 3;
+        } else if (prepared && prepared->texture && prepared->texture->width && prepared->texture->height) {
+            const auto &image = *prepared->texture;
+            data.source_width = image.width; data.source_height = image.height;
+            const auto longest = std::max(image.width, image.height);
+            const double step = std::max(double(longest) / thumbnail_size, 1.0);
+            data.width = std::max(std::uint32_t(image.width / step), 1u);
+            data.height = std::max(std::uint32_t(image.height / step), 1u);
+            data.pixels.resize(std::size_t(data.width) * data.height * 4);
+            const auto stride = image.pixels.size() / (std::size_t(image.width) * image.height);
+            for (std::uint32_t y = 0; y < data.height; ++y)
+                for (std::uint32_t x = 0; x < data.width; ++x) {
+                    const auto source_x = std::min(std::uint32_t(x * step), image.width - 1), source_y = std::min(std::uint32_t(y * step), image.height - 1);
+                    const auto *from = image.pixels.data() + (std::size_t(source_y) * image.width + source_x) * stride;
+                    auto *to = data.pixels.data() + (std::size_t(y) * data.width + x) * 4;
+                    to[0] = from[0]; to[1] = stride > 1 ? from[1] : from[0]; to[2] = stride > 2 ? from[2] : from[0]; to[3] = stride > 3 ? from[3] : 255;
+                }
+        } else data.failed = true;
+        done.push_back(std::move(data));
+    }
+    return done;
+}
+void EditorSession::set_bookmark(std::size_t slot) {
+    if (slot >= view_state_.bookmarks.size()) return;
+    view_state_.bookmarks[slot] = CameraBookmark{camera.target, camera.yaw, camera.pitch, camera.distance, camera.orthographic};
+    store_view_state();
+}
+std::optional<OrbitCamera> EditorSession::bookmark(std::size_t slot) const {
+    if (slot >= view_state_.bookmarks.size() || !view_state_.bookmarks[slot]) return std::nullopt;
+    const auto &b = *view_state_.bookmarks[slot];
+    auto goal = camera;
+    goal.target = b.target; goal.yaw = b.yaw; goal.pitch = b.pitch; goal.distance = b.distance; goal.orthographic = b.orthographic;
+    return goal;
+}
+void EditorSession::store_view_state() {
+    if (document_.empty()) return;
+    auto file = document_;
+    file += ".editor";
+    std::error_code error;
+    if (view_state_.empty()) { std::filesystem::remove(file, error); return; }
+    if (auto written = write_text_file(file, write_view_state(view_state_)); !written) view_state_problem_ = written.error().message;
+}
+void EditorSession::load_view_state() {
+    view_state_ = {};
+    auto file = document_;
+    file += ".editor";
+    std::error_code error;
+    if (!std::filesystem::exists(file, error)) return;
+    const auto text = read_text_file(file);
+    auto state = text ? read_view_state(text.value()) : Result<EditorViewState>(text.error());
+    if (state) view_state_ = std::move(state.value());
+    else view_state_problem_ = file.generic_string() + " was ignored: " + state.error().message;
+}
+std::optional<std::pair<Vec3, Vec3>> EditorSession::local_bounds(EntityId id) const {
+    const auto record = scene().inspect(id);
+    if (!record || !record->components.mesh) return std::nullopt;
+    const auto &mesh = *record->components.mesh;
+    if (const auto data = model(mesh.mesh_asset)) {
+        const auto low = vector(data->bounds.min), high = vector(data->bounds.max);
+        return std::pair<Vec3, Vec3>{{low.x, low.y, low.z}, {high.x, high.y, high.z}};
+    }
+    if (mesh.mesh == BuiltinMesh::Plane) return std::pair<Vec3, Vec3>{{-0.5, 0, -0.5}, {0.5, 0, 0.5}};
+    return std::pair<Vec3, Vec3>{{-0.5, -0.5, -0.5}, {0.5, 0.5, 0.5}};
+}
+void EditorSession::focus() {
+    if (const auto goal = focus_goal()) { camera.target = goal->target; camera.distance = goal->distance; }
 }
 Result<renderer::Frame> EditorSession::frame(double aspect) {
     sync_physics();
@@ -326,9 +964,9 @@ Result<renderer::Frame> EditorSession::frame(double aspect) {
                 if (resolved.material.index) parts.push_back({slot.slot, resolved.material});
                 if (!resolved.problem.empty()) problem(resolved.problem);
             }
-            meshes.push_back({e.id, handle, material, true, surface, std::move(parts)});
+            meshes.push_back({e.id, handle, material, runtime_ || !hidden(e.id), surface, std::move(parts)});
         }
-        if (const auto &l = e.components.light) {
+        if (const auto &l = e.components.light; l && (runtime_ || !hidden(e.id))) {
             const auto kind = l->type == LightType::Point ? renderer::LightKind::Point : l->type == LightType::Spot ? renderer::LightKind::Spot : renderer::LightKind::Directional;
             lights.push_back({e.id, kind, linear(l->color), l->intensity, l->range, glm::radians(l->inner_cone_degrees), glm::radians(l->outer_cone_degrees), l->cast_shadows});
         }
@@ -341,13 +979,15 @@ Result<renderer::Frame> EditorSession::frame(double aspect) {
     environment_settings.ground_color = linear(authored.ground_color);
     environment_settings.intensity = authored.intensity;
     environment_settings.rotation_radians = glm::radians(authored.rotation_degrees);
-    environment_settings.show_skybox = authored.show_skybox;
+    // A sky has no meaning in a parallel view, where every pixel would look the same way.
+    const bool editor_view = !runtime_ || ejected_;
+    environment_settings.show_skybox = authored.show_skybox && view_flags.skybox && !(camera.orthographic && editor_view);
     environment_settings.ev100 = authored.ev100;
     environment_settings.tone_mapping = authored.tone_mapping;
-    environment_settings.shadow_quality = authored.shadow_quality;
+    environment_settings.shadow_quality = view_flags.shadows ? authored.shadow_quality : ShadowQuality::Off;
     environment_settings.shadow_distance = authored.shadow_distance;
-    environment_settings.ambient_occlusion = authored.ambient_occlusion;
-    environment_settings.bloom = authored.bloom;
+    environment_settings.ambient_occlusion = authored.ambient_occlusion && view_flags.ambient_occlusion;
+    environment_settings.bloom = authored.bloom && view_flags.bloom;
     if (authored.source == EnvironmentSource::Image) {
         const auto &resolved = resolve(authored.image, assets::AssetType::Environment);
         environment_settings.image = resolved.environment;
@@ -359,19 +999,28 @@ Result<renderer::Frame> EditorSession::frame(double aspect) {
     // Each play session is a distinct scene identity, so the renderer never reuses editor objects for it.
     const renderer::FrameStamp stamp{scene_identity(), scene_revision(), ++frame_};
     view_camera_ = 0; view_camera_issue_.clear();
-    if (runtime_) {
+    if (runtime_ && !ejected_) {
         const auto primary = std::find_if(entities.begin(), entities.end(),
             [](const EntityRecord &e) { return e.components.camera && e.components.camera->primary; });
         if (primary != entities.end()) {
             const auto &c = *primary->components.camera;
             const renderer::PerspectiveCamera lens{primary->id, glm::radians(c.vertical_fov_degrees), aspect, c.near_plane, c.far_plane};
-            auto through_camera = renderer::extract_frame(shown, stamp, lens, meshes, lights, environment_settings, !runtime_);
+            auto through_camera = renderer::extract_frame(shown, stamp, lens, meshes, lights, environment_settings, !runtime_ && view_flags.grid, grid_spacing);
             if (through_camera) { view_camera_ = primary->id; return through_camera; }
             view_camera_issue_ = "Camera '" + primary->name + "' cannot be used: " + through_camera.error().message;
         }
     }
     renderer::PerspectiveCamera lens; lens.aspect_ratio = aspect;
-    return renderer::extract_frame(shown, stamp, lens, camera.world(), meshes, lights, environment_settings, !runtime_);
+    lens.vertical_fov_radians = glm::radians(camera.fov_degrees);
+    auto eye = camera;
+    if (camera.orthographic) {
+        // Distance does not change what an orthographic view shows, so the eye stands far back and nothing is behind it.
+        constexpr double stand_back = 1000;
+        lens.orthographic_half_height = camera.half_height();
+        eye.distance += stand_back;
+        lens.far_plane = eye.distance + 2 * stand_back;
+    }
+    return renderer::extract_frame(shown, stamp, lens, eye.world(), meshes, lights, environment_settings, editor_view && view_flags.grid, grid_spacing);
 }
 std::uint64_t EditorSession::scene_identity() const { return runtime_ ? 1 + play_sessions_ : 1; }
 std::uint64_t EditorSession::scene_revision() const { return runtime_ ? runtime_->bus.revision() : bus_.revision(); }
@@ -380,6 +1029,7 @@ PlayState EditorSession::play_state() const {
     return runtime_->paused ? PlayState::Paused : PlayState::Playing;
 }
 Result<void> EditorSession::play() {
+    if (in_transaction()) return fail(ErrorCode::InvalidState, "Finish the drag before Play");
     if (runtime_) {
         runtime_->paused = false;
         if (runtime_->game) runtime_->game->resume();
@@ -398,6 +1048,18 @@ Result<void> EditorSession::play() {
     reconcile();
     return {};
 }
+Result<void> EditorSession::simulate() {
+    if (runtime_) return fail(ErrorCode::InvalidState, "Stop first");
+    if (auto started = play(); !started) return started;
+    ejected_ = simulating_ = true;
+    return {};
+}
+Result<void> EditorSession::set_ejected(bool ejected) {
+    if (!runtime_) return fail(ErrorCode::InvalidState, "Nothing is running");
+    ejected_ = ejected;
+    if (!ejected) simulating_ = false; // Possessing turns a simulation into a run.
+    return {};
+}
 Result<void> EditorSession::pause() {
     if (!runtime_) return fail(ErrorCode::InvalidState, "Pause requires Play mode");
     runtime_->paused = true;
@@ -414,6 +1076,8 @@ Result<void> EditorSession::stop() {
     if (!runtime_) return fail(ErrorCode::InvalidState, "Not in Play mode");
     runtime_.reset();
     physics_error_.clear();
+    transaction_depth_ = 0; drag_start_.clear(); // A runtime transaction has nothing to finish.
+    ejected_ = simulating_ = false;
     reconcile();
     return {};
 }
@@ -421,6 +1085,8 @@ Result<void> EditorSession::restart() {
     if (!runtime_) return fail(ErrorCode::InvalidState, "Not in Play mode");
     runtime_.reset();
     physics_error_.clear();
+    transaction_depth_ = 0; drag_start_.clear();
+    ejected_ = simulating_ = false;
     return play();
 }
 gameplay::Game *EditorSession::game() const { return runtime_ ? runtime_->game.get() : nullptr; }
@@ -463,22 +1129,12 @@ EntityId EditorSession::pick(const renderer::FrameSnapshot &frame, double x, dou
     auto a = inv * glm::dvec4(x, y, -1, 1), b = inv * glm::dvec4(x, y, 1, 1);
     a /= a.w; b /= b.w;
     const auto segment = glm::dvec3(b - a);
-    double nearest = glm::length(segment);
-    const auto direction = segment / nearest;
-    EntityId nearest_entity = 0;
-    for (const auto &object : frame.objects) {
-        const auto inverse = glm::inverse(glm::make_mat4(object.world.matrix.data()));
-        // The local ray is not normalized, so t stays a world-space distance along the pick ray.
-        const glm::dvec3 origin(inverse * a), ray(inverse * glm::dvec4(direction, 0));
-        // Models pick by their bounding box.
-        const auto data = resources_.find(object.mesh);
-        const double t = data ? box_hit(vector(data->bounds.min), vector(data->bounds.max), origin, ray, nearest)
-                              : hit(object.mesh, origin, ray, nearest);
-        if (t >= 0 && t < nearest) { nearest = t; nearest_entity = object.entity; }
-    }
-    return nearest_entity;
+    const double length = glm::length(segment);
+    const auto direction = segment / length;
+    // A locked entity cannot be picked, and what is behind it can.
+    return cast_ray(frame, {a.x, a.y, a.z}, {direction.x, direction.y, direction.z}, length, runtime_ ? std::set<EntityId>{} : view_state_.locked).first;
 }
-const EditorSession::Resolved &EditorSession::resolve(const AssetRef &ref, assets::AssetType type) {
+const EditorSession::Resolved &EditorSession::resolve(const AssetRef &ref, assets::AssetType type) const {
     const auto key = std::make_tuple(ref.id, ref.path, type);
     if (const auto found = resolved_.find(key); found != resolved_.end()) return found->second;
     Resolved result;
@@ -558,20 +1214,30 @@ Result<ImportedAsset> EditorSession::finish_import(const assets::PreparedImport 
     if (prepared.mesh) imported.warnings = prepared.mesh->warnings;
     return imported;
 }
-void EditorSession::begin_import(const std::filesystem::path &file) {
+std::uint64_t EditorSession::begin_import(const std::filesystem::path &file) {
     // std::async: the worker touches only its own copy of the path; the catalogue is left to poll_imports().
     imports_.push_back(std::async(std::launch::async, [file] { return assets::prepare_import(file); }).share());
     import_sources_.push_back(file);
+    import_ids_.push_back(next_import_id_);
+    return next_import_id_++;
+}
+bool EditorSession::cancel_import(std::uint64_t id) {
+    if (std::ranges::find(import_ids_, id) == import_ids_.end()) return false;
+    cancelled_imports_.insert(id);
+    return true;
 }
 std::vector<FinishedImport> EditorSession::poll_imports() {
     std::vector<FinishedImport> finished;
     for (std::size_t i = 0; i < imports_.size();) {
         if (imports_[i].wait_for(std::chrono::seconds(0)) != std::future_status::ready) { ++i; continue; }
         const auto &decoded = imports_[i].get();
-        if (decoded) finished.push_back({import_sources_[i], finish_import(decoded.value())});
-        else finished.push_back({import_sources_[i], decoded.error()});
+        const auto id = import_ids_[i];
+        if (cancelled_imports_.erase(id)) finished.push_back({import_sources_[i], fail(ErrorCode::InvalidState, "Cancelled"), id, true});
+        else if (decoded) finished.push_back({import_sources_[i], finish_import(decoded.value()), id});
+        else finished.push_back({import_sources_[i], decoded.error(), id});
         imports_.erase(imports_.begin() + std::ptrdiff_t(i));
         import_sources_.erase(import_sources_.begin() + std::ptrdiff_t(i));
+        import_ids_.erase(import_ids_.begin() + std::ptrdiff_t(i));
     }
     return finished;
 }
@@ -648,7 +1314,7 @@ Result<assets::AssetId> EditorSession::duplicate_material(assets::AssetId id) {
     const auto stem = std::filesystem::path(std::u8string(reinterpret_cast<const char8_t *>(meta->path.data()), meta->path.size())).stem().u8string();
     return create_material(std::string(reinterpret_cast<const char *>(stem.data()), stem.size()) + " copy", *data);
 }
-std::optional<assets::MaterialData> EditorSession::material(assets::AssetId id) {
+std::optional<assets::MaterialData> EditorSession::material(assets::AssetId id) const {
     if (const auto draft = material_drafts_.find(id); draft != material_drafts_.end()) return draft->second;
     if (!assets_) return std::nullopt;
     auto loaded = assets_->load_material(id);
@@ -671,9 +1337,13 @@ Result<void> EditorSession::save_material(assets::AssetId id, const assets::Mate
     material_drafts_.erase(id);
     forget_materials();
     if (before != data) {
-        material_undo_.push_back({id, before, data, bus_.undo_size()});
-        material_redo_.clear();
-        if (material_undo_.size() > 128) material_undo_.erase(material_undo_.begin());
+        const auto meta = assets_->find(id);
+        const auto stem = std::filesystem::path(std::u8string(reinterpret_cast<const char8_t *>(meta->path.data()), meta->path.size())).stem().u8string();
+        undo_steps_.push_back({"Edit Material " + std::string(reinterpret_cast<const char *>(stem.data()), stem.size()), MaterialEdit{id, before, data}, std::nullopt, false});
+        redo_steps_.clear();
+        bus_.discard_redo();
+        if (std::ranges::count_if(undo_steps_, [](const HistoryStep &step) { return step.material.has_value(); }) > 128)
+            undo_steps_.erase(std::ranges::find_if(undo_steps_, [](const HistoryStep &step) { return step.material.has_value(); }));
     }
     return {};
 }
@@ -702,7 +1372,7 @@ Result<commands::Receipt> EditorSession::assign_material(EntityId id, assets::As
         else if (exists) at->material = ref;
         else slots.insert(at, MaterialSlot{*slot, ref});
     }
-    return execute(commands::SetMesh{id, mesh});
+    return execute(commands::SetMesh{id, mesh}, "Assign Material");
 }
 renderer::MaterialHandle EditorSession::material_handle(assets::AssetId id) {
     const auto meta = assets_ ? assets_->find(id) : std::nullopt;
@@ -725,7 +1395,7 @@ Result<commands::Receipt> EditorSession::set_environment(const EnvironmentCompon
     if (const auto id = environment_entity()) return execute(commands::SetEnvironment{id, environment});
     Components components;
     components.environment = environment;
-    return execute(commands::CreateEntity{"Environment", Transform{}, 0, 0, std::move(components)});
+    return execute(commands::CreateEntity{"Environment", Transform{}, 0, 0, std::move(components)}, "Add Environment");
 }
 EnvironmentComponent EditorSession::outdoor_environment() { return {}; }
 EnvironmentComponent EditorSession::indoor_environment() {
@@ -762,7 +1432,7 @@ Result<commands::Receipt> EditorSession::create_preset_lights(bool outdoor) {
         t.position = {0, 4, 0};
     }
     components.light = light;
-    return execute(commands::CreateEntity{outdoor ? "Sun" : "Key Light", t, 0, 0, std::move(components)});
+    return execute(commands::CreateEntity{outdoor ? "Sun" : "Key Light", t, 0, 0, std::move(components)}, outdoor ? "Add Sun" : "Add Key Light");
 }
 Result<void> EditorSession::open_project(const std::filesystem::path &root) {
     std::error_code ec;
@@ -770,7 +1440,9 @@ Result<void> EditorSession::open_project(const std::filesystem::path &root) {
     project_ = root;
     assets_.reset(); resolved_.clear();
     // Material edits belong to the old project's files.
-    material_drafts_.clear(); material_undo_.clear(); material_redo_.clear();
+    material_drafts_.clear();
+    std::erase_if(undo_steps_, [](const HistoryStep &step) { return step.material.has_value(); });
+    std::erase_if(redo_steps_, [](const HistoryStep &step) { return step.material.has_value(); });
     if (!std::filesystem::is_directory(asset_folder(), ec)) return {};
     auto database = assets::AssetDatabase::open(asset_folder());
     if (!database) return database.error();
@@ -826,9 +1498,10 @@ Result<commands::Receipt> EditorSession::assign_asset(EntityId id, assets::Asset
     auto mesh = record->components.mesh.value_or(MeshComponent{});
     mesh.color = {1, 1, 1};
     (meta->type == assets::AssetType::Mesh ? mesh.mesh_asset : mesh.texture) = reference(*meta);
-    return execute(commands::SetMesh{id, mesh});
+    return execute(commands::SetMesh{id, mesh}, "Assign " + std::string(assets::to_string(meta->type)));
 }
-Result<commands::Receipt> EditorSession::place_asset(assets::AssetId asset) {
+Result<commands::Receipt> EditorSession::place_asset(assets::AssetId asset) { return place_asset_at(asset, {}); }
+Result<commands::Receipt> EditorSession::place_asset_at(assets::AssetId asset, const Vec3 &point) {
     const auto meta = assets_ ? assets_->find(asset) : std::nullopt;
     if (!meta) return fail(ErrorCode::NotFound, "Asset is not in the asset folder");
     if (meta->type != assets::AssetType::Mesh) return fail(ErrorCode::InvalidArgument, meta->path + " is not a model; assign it to an entity instead");
@@ -838,13 +1511,15 @@ Result<commands::Receipt> EditorSession::place_asset(assets::AssetId asset) {
     MeshComponent mesh;
     mesh.color = {1, 1, 1};
     mesh.mesh_asset = ref;
-    Transform t; t.position.y = -double(data->bounds.min[1]);
+    Transform t; t.position = {point.x, point.y - double(data->bounds.min[1]), point.z};
     const auto stem = std::filesystem::path(std::u8string(reinterpret_cast<const char8_t *>(meta->path.data()), meta->path.size())).stem().u8string();
-    auto result = execute(commands::CreateEntity{trimmed_name(std::string(reinterpret_cast<const char *>(stem.data()), stem.size())), t, 0, 0, Components{mesh, {}, {}}});
-    if (result) selected_ = result.value().created.front();
+    auto name = trimmed_name(std::string(reinterpret_cast<const char *>(stem.data()), stem.size()));
+    const auto label = "Place " + name;
+    auto result = execute(commands::CreateEntity{std::move(name), t, 0, 0, Components{mesh, {}, {}}}, label);
+    if (result) selection_.set(result.value().created.front());
     return result;
 }
-std::shared_ptr<const assets::MeshData> EditorSession::model(const AssetRef &ref) {
+std::shared_ptr<const assets::MeshData> EditorSession::model(const AssetRef &ref) const {
     return ref.empty() ? nullptr : resources_.find(resolve(ref, assets::AssetType::Mesh).mesh);
 }
 std::optional<ColliderComponent> EditorSession::model_collider(const AssetRef &ref) {

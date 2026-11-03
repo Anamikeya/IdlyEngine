@@ -40,6 +40,34 @@ if(TARGET engine::networking)
 		LIBRARIES engine::networking)
 endif()
 
+# The editor's foundation without a window. The editor builds on Windows/MSVC only, so its session library may not exist.
+if(TARGET engine_editor_session)
+	gameengine_add_test_executable(editor_ux_tests
+		LABELS editor unit
+		SOURCES Editor/editor_ux_tests.cpp
+		LIBRARIES engine_editor_session)
+	target_compile_definitions(editor_ux_tests PRIVATE "GAMEENGINE_TEST_DOCS_DIR=\"${CMAKE_SOURCE_DIR}/docs\"")
+	gameengine_add_test_executable(editor_viewport_tests
+		LABELS editor unit
+		SOURCES Editor/editor_viewport_tests.cpp
+		LIBRARIES engine_editor_session)
+	target_compile_definitions(editor_viewport_tests PRIVATE "GAMEENGINE_TEST_ASSETS_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/Assets\"")
+	gameengine_add_test_executable(editor_workflow_tests
+		LABELS editor unit
+		SOURCES Editor/editor_workflow_tests.cpp
+		LIBRARIES engine_editor_session)
+	gameengine_add_test_executable(editor_feedback_tests
+		LABELS editor unit
+		SOURCES Editor/editor_feedback_tests.cpp
+		LIBRARIES engine_editor_session)
+	target_include_directories(editor_feedback_tests SYSTEM PRIVATE "${GAMEENGINE_RESOURCES_DIR}/glm")
+	gameengine_add_test_executable(editor_panels_tests
+		LABELS editor unit
+		SOURCES Editor/editor_panels_tests.cpp
+		LIBRARIES engine_editor_session)
+	target_compile_definitions(editor_panels_tests PRIVATE "GAMEENGINE_TEST_ASSETS_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/Assets\"")
+endif()
+
 if(TARGET engine::online_services)
 	gameengine_add_test_executable(online_services_tests
 		LABELS online unit

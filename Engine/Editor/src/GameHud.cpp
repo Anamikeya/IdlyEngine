@@ -84,7 +84,7 @@ HudAction draw_game_hud(const gameplay::HudState &hud, ImVec2 origin, ImVec2 siz
         detail = buffer;
     } else if (hud.phase == GamePhase::Paused) {
         title = "PAUSED";
-        detail = "Click the view to resume.";
+        detail = "Click the view to resume. Esc again stops.";
     } else if (hud.phase == GamePhase::Won) {
         title = "YOU WIN";
         color = IM_COL32(120, 235, 140, 255);
@@ -102,7 +102,7 @@ HudAction draw_game_hud(const gameplay::HudState &hud, ImVec2 origin, ImVec2 siz
     if (captured) return HudAction::None;
     float y = top + 84 * unit;
     if (hud.phase == GamePhase::Ready) {
-        centered(draw, {center.x, y}, line, dim, "W A S D move   |   Mouse look   |   Left mouse fire   |   Space jump   |   Shift sprint   |   R reload   |   Esc pause", size.x * 0.94f);
+        centered(draw, {center.x, y}, line, dim, "W A S D move   |   Mouse look   |   Left mouse fire   |   Space jump   |   Shift sprint   |   R reload   |   Esc pause   |   F8 look around", size.x * 0.94f);
         y += 34 * unit;
     }
     HudAction action = HudAction::None;
