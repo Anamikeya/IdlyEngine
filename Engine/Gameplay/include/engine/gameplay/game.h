@@ -24,7 +24,9 @@
 //   impact_damage  min_speed 3, scale 6. Hit events above min_speed hurt: (speed - min_speed) * scale.
 //   bonus_zone     points 50. A sensor awarding points once for each dynamic body that enters.
 //   pickup         ammo 0, time 0. A sensor the player collects; it is then removed.
-//   impact_effect  lifetime 0.25, scale 0.12. Template entity: copies of its mesh mark where shots land.
+//   impact_effect  lifetime 0.25, scale 0.12. Template entity marking where shots land. With a particle emitter, each
+//                  hit fires that emitter's effect along the surface normal (effect_events()). Without one, copies of its
+//                  mesh appear there for `lifetime` seconds at `scale`.
 //
 // Physics collision layers used by convention: a ray from the player's weapon skips the player's own body.
 
@@ -83,6 +85,15 @@ struct DamageEvent {
 	DamageCause cause = DamageCause::Weapon;
 };
 
+// A one-shot particle effect gameplay asks for: the effect of the emitter on `source`, fired at `point` along
+// `direction`. Particles are visual, so the host plays them or not; the game does not depend on it.
+struct EffectEvent {
+	EntityId source = 0;
+	physics::Vec3 point;
+	physics::Vec3 direction;
+	double strength = 1;
+};
+
 // One shot's result this tick.
 struct ShotResult {
 	EntityId entity = 0; // 0: a miss.
@@ -124,6 +135,8 @@ public:
 	// Damage dealt and shots fired in the last tick.
 	[[nodiscard]] const std::vector<DamageEvent>& damage_events() const noexcept;
 	[[nodiscard]] const std::vector<ShotResult>& shots() const noexcept;
+	// Particle effects asked for in the last tick.
+	[[nodiscard]] const std::vector<EffectEvent>& effect_events() const noexcept;
 	// Behaviors that could not be used, and failed runtime commands.
 	[[nodiscard]] const std::vector<std::string>& setup_issues() const noexcept;
 

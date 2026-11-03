@@ -207,6 +207,7 @@ struct Game::Impl {
 	std::string fall_notice;
 	std::vector<DamageEvent> damage;
 	std::vector<ShotResult> shots;
+	std::vector<EffectEvent> effects;
 	std::vector<std::string> issues;
 	std::vector<commands::Command> batch;
 	std::set<EntityId> removing;
@@ -403,6 +404,12 @@ struct Game::Impl {
 		t.scale = {effect_scale, effect_scale, effect_scale};
 		Components components;
 		if (const auto source = effect_template ? scene.inspect(effect_template) : std::nullopt) {
+			if (source->components.emitter) {
+				// Particles instead of an entity: nothing enters the scene, so the bus is not touched.
+				effects.push_back({effect_template, {static_cast<float>(t.position.x), static_cast<float>(t.position.y), static_cast<float>(t.position.z)},
+					normal, 1.0});
+				return;
+			}
 			components.mesh = source->components.mesh;
 		}
 		if (!components.mesh) {
@@ -726,6 +733,7 @@ void Game::pre_physics()
 	++g.ticks;
 	g.damage.clear();
 	g.shots.clear();
+	g.effects.clear();
 	g.removing.clear();
 	g.fall_notice.clear();
 	auto& rules = g.state();
@@ -799,6 +807,7 @@ bool Game::grounded() const noexcept { return impl_->grounded; }
 std::uint64_t Game::ticks() const noexcept { return impl_->ticks; }
 const std::vector<DamageEvent>& Game::damage_events() const noexcept { return impl_->damage; }
 const std::vector<ShotResult>& Game::shots() const noexcept { return impl_->shots; }
+const std::vector<EffectEvent>& Game::effect_events() const noexcept { return impl_->effects; }
 const std::vector<std::string>& Game::setup_issues() const noexcept { return impl_->issues; }
 
 } // namespace engine::gameplay

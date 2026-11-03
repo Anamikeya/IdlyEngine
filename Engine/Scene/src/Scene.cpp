@@ -88,6 +88,12 @@ Result<void> validate_components(const Components &c) {
                     return fail(ErrorCode::InvalidArgument, "A behavior key appears twice");
         }
     }
+    if (const auto &p = c.emitter) {
+        if (!valid_ref(p->effect))
+            return fail(ErrorCode::InvalidArgument, "An asset reference needs both an ID and a short path, or neither");
+        if (!std::isfinite(p->rate_scale) || p->rate_scale < 0 || p->rate_scale > 1000)
+            return fail(ErrorCode::InvalidArgument, "Emitter rate scale must be within [0, 1000]");
+    }
     if (const auto &b = c.body) {
         if (b->kind != BodyKind::Static && b->kind != BodyKind::Kinematic && b->kind != BodyKind::Dynamic)
             return fail(ErrorCode::InvalidArgument, "Unknown rigid body kind");
@@ -221,6 +227,7 @@ Scene::Scene() {
     w.component<ColliderList>();
     w.component<EnvironmentComponent>();
     w.component<BehaviorList>();
+    w.component<ParticleEmitterComponent>();
 }
 std::optional<EntityRecord> Scene::inspect(EntityId id) const {
     if (!on_owner_thread())
@@ -231,7 +238,8 @@ std::optional<EntityRecord> Scene::inspect(EntityId id) const {
     const auto e = world_.native().entity(it->second);
     return EntityRecord{id, e.get<Name>().value, e.get<Parent>().value, e.get<Transform>(),
                         {read<MeshComponent>(e), read<CameraComponent>(e), read<LightComponent>(e),
-                         read<RigidBodyComponent>(e), read_colliders(e), read<EnvironmentComponent>(e), read_behaviors(e)}};
+                         read<RigidBodyComponent>(e), read_colliders(e), read<EnvironmentComponent>(e), read_behaviors(e),
+                         read<ParticleEmitterComponent>(e)}};
 }
 SceneSnapshot Scene::snapshot() const {
     if (!on_owner_thread())
@@ -304,6 +312,7 @@ Result<void> Scene::commit(const SceneSnapshot &s) {
         mirror(e, record.components.colliders);
         mirror(e, record.components.environment);
         mirror(e, record.components.behaviors);
+        mirror(e, record.components.emitter);
         const auto &desired_transform = transforms.value().at(record.id);
         if (!e.has<WorldTransform>() || e.get<WorldTransform>().matrix != desired_transform.matrix)
             e.set<WorldTransform>(desired_transform);

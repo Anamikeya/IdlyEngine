@@ -42,19 +42,45 @@ bool unit(double value) {
 Result<Frame> extract_frame(const Scene &scene, FrameStamp stamp, const PerspectiveCamera &camera,
                             std::span<const MeshBinding> meshes,
                             std::span<const LightBinding> lights,
-                            const RenderEnvironment &environment, bool show_grid, double grid_spacing) {
+                            const RenderEnvironment &environment, bool show_grid, double grid_spacing,
+                            std::vector<RenderParticles> particles) {
     if (!scene.on_owner_thread())
         return fail(ErrorCode::WrongThread, "Frame extraction requires the scene owner thread");
     const auto camera_world = scene.world_transform(camera.entity);
     if (!camera_world)
         return fail(ErrorCode::NotFound, "Camera entity does not exist");
-    return extract_frame(scene, stamp, camera, *camera_world, meshes, lights, environment, show_grid, grid_spacing);
+    return extract_frame(scene, stamp, camera, *camera_world, meshes, lights, environment, show_grid, grid_spacing,
+                         std::move(particles));
+}
+std::vector<RenderParticles> clean_particles(std::vector<RenderParticles> particles) {
+    std::stable_sort(particles.begin(), particles.end(), [](const auto &a, const auto &b) { return a.key < b.key; });
+    std::vector<RenderParticles> out;
+    out.reserve(particles.size());
+    std::size_t total = 0;
+    const auto finite3 = [](const std::array<float, 3> &v) { return std::isfinite(v[0]) && std::isfinite(v[1]) && std::isfinite(v[2]); };
+    for (auto &batch : particles) {
+        if (!out.empty() && out.back().key == batch.key)
+            continue;
+        if ((batch.blend != ParticleBlendMode::Additive && batch.blend != ParticleBlendMode::Alpha) ||
+            !batch.texture.index != !batch.texture.generation || !nonnegative(batch.strength) || !nonnegative(batch.stretch))
+            continue;
+        std::erase_if(batch.particles, [&](const RenderParticle &p) {
+            return !finite3(p.position) || !finite3(p.velocity) || !std::isfinite(p.size) || p.size < 0 || !std::isfinite(p.rotation) ||
+                   !std::all_of(p.color.begin(), p.color.end(), [](float c) { return std::isfinite(c) && c >= 0; });
+        });
+        if (total + batch.particles.size() > max_frame_particles)
+            batch.particles.resize(max_frame_particles - total);
+        total += batch.particles.size();
+        out.push_back(std::move(batch));
+    }
+    return out;
 }
 Result<Frame> extract_frame(const Scene &scene, FrameStamp stamp, const PerspectiveCamera &camera,
                             const WorldTransform &camera_world,
                             std::span<const MeshBinding> meshes,
                             std::span<const LightBinding> lights,
-                            const RenderEnvironment &environment, bool show_grid, double grid_spacing) {
+                            const RenderEnvironment &environment, bool show_grid, double grid_spacing,
+                            std::vector<RenderParticles> particles) {
     if (!scene.on_owner_thread())
         return fail(ErrorCode::WrongThread, "Frame extraction requires the scene owner thread");
     if (!stamp.scene || meshes.size() > Scene::max_entities || lights.size() > Scene::max_entities)
@@ -137,6 +163,7 @@ Result<Frame> extract_frame(const Scene &scene, FrameStamp stamp, const Perspect
               [](const auto &a, const auto &b) { return a.entity < b.entity; });
     std::sort(frame.lights.begin(), frame.lights.end(),
               [](const auto &a, const auto &b) { return a.entity < b.entity; });
+    frame.particles = clean_particles(std::move(particles));
     return Frame(std::make_shared<const FrameSnapshot>(std::move(frame)));
 }
 } // namespace engine::renderer

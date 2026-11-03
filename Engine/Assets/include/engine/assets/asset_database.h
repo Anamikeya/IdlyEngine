@@ -48,6 +48,7 @@ using MeshAsset = LoadedAsset<MeshData>;
 using TextureAsset = LoadedAsset<TextureData>;
 using MaterialAsset = LoadedAsset<MaterialData>;
 using EnvironmentAsset = LoadedAsset<EnvironmentData>;
+using EffectAsset = LoadedAsset<EffectData>;
 
 // A file decoded away from the database, ready for AssetDatabase::commit_import. Holds no database state.
 struct PreparedImport {
@@ -57,6 +58,7 @@ struct PreparedImport {
 	std::shared_ptr<const TextureData> texture;
 	std::shared_ptr<const MaterialData> material;
 	std::shared_ptr<const EnvironmentData> environment;
+	std::shared_ptr<const EffectData> effect;
 };
 
 // Reads and decodes a file with default settings. Touches nothing shared, so any thread may call it.
@@ -91,11 +93,15 @@ public:
 	Result<TextureAsset> load_texture(AssetId id);
 	Result<MaterialAsset> load_material(AssetId id);
 	Result<EnvironmentAsset> load_environment(AssetId id);
+	Result<EffectAsset> load_effect(AssetId id);
 
 	// Writes a new .material under a free name based on `path`, with a .meta holding a new random id, and rescans.
 	Result<AssetId> create_material(std::string_view path, const MaterialData& material);
 	// Replaces the file atomically; the cache holds the new value and the revision increases.
 	Result<void> save_material(AssetId id, const MaterialData& material);
+	// The same for particle effects (.effect).
+	Result<AssetId> create_effect(std::string_view path, const EffectData& effect);
+	Result<void> save_effect(AssetId id, const EffectData& effect);
 
 	// Copies an outside file into the root under a free name, writes a .meta with a new random id, rescans and
 	// loads it once. Nothing stays behind on failure. A file already under the root is just loaded.

@@ -5,6 +5,8 @@
 #include <charconv>
 #include <cmath>
 #include <map>
+#include <span>
+#include <string>
 #include <tuple>
 #include <vector>
 
@@ -692,6 +694,8 @@ const char* to_string(AssetType type) noexcept
 		return "material";
 	case AssetType::Environment:
 		return "environment";
+	case AssetType::Effect:
+		return "effect";
 	}
 	return "unknown";
 }
@@ -715,6 +719,9 @@ AssetType asset_type_for(std::string_view path) noexcept
 	}
 	if (iequals(ext, "hdr")) {
 		return AssetType::Environment;
+	}
+	if (iequals(ext, "effect")) {
+		return AssetType::Effect;
 	}
 	return AssetType::Unknown;
 }
@@ -856,7 +863,7 @@ void write_texture(std::string& out, std::string_view key, const MaterialTexture
 	out += "\"\n";
 }
 
-void write_numbers(std::string& out, std::string_view key, std::initializer_list<double> values)
+void write_numbers(std::string& out, std::string_view key, std::span<const double> values)
 {
 	out += key;
 	for (const double value : values) {
@@ -866,6 +873,11 @@ void write_numbers(std::string& out, std::string_view key, std::initializer_list
 		out.append(buffer, result.ptr);
 	}
 	out += '\n';
+}
+
+void write_numbers(std::string& out, std::string_view key, std::initializer_list<double> values)
+{
+	write_numbers(out, key, std::span<const double>(values.begin(), values.size()));
 }
 
 } // namespace
@@ -1041,6 +1053,246 @@ Result<MaterialData> parse_material(std::string_view text)
 		return valid.error();
 	}
 	return m;
+}
+
+// ---- Effect assets -------------------------------------------------------------------------------
+
+namespace {
+
+constexpr std::string_view effect_magic = "ENGINE_EFFECT";
+
+} // namespace
+
+Result<void> validate_effect(const EffectData& e)
+{
+	const auto invalid = [](const char* text) { return fail(ErrorCode::InvalidArgument, std::string("Invalid effect: ") + text); };
+	const auto finite = [](double v) { return std::isfinite(v); };
+	const auto nonnegative = [](double v) { return std::isfinite(v) && v >= 0.0; };
+	if (!finite(e.duration) || e.duration <= 0.0 || e.duration > 3600.0) {
+		return invalid("duration must be within (0, 3600] seconds");
+	}
+	if (!nonnegative(e.rate) || e.rate > 100000.0 || e.burst > max_effect_particles) {
+		return invalid("rate must be within [0, 100000] and burst at most 20000");
+	}
+	if (!finite(e.lifetime[0]) || !finite(e.lifetime[1]) || e.lifetime[0] <= 0.0 || e.lifetime[1] < e.lifetime[0] || e.lifetime[1] > 600.0) {
+		return invalid("lifetime needs 0 < min <= max <= 600 seconds");
+	}
+	if (!nonnegative(e.speed[0]) || !finite(e.speed[1]) || e.speed[1] < e.speed[0] || e.speed[1] > 10000.0) {
+		return invalid("speed needs 0 <= min <= max");
+	}
+	if (!finite(e.cone_degrees) || e.cone_degrees < 0.0 || e.cone_degrees > 180.0) {
+		return invalid("cone must be within [0, 180] degrees");
+	}
+	if (!nonnegative(e.spawn_radius) || !nonnegative(e.drag) || !nonnegative(e.stretch) || !nonnegative(e.emissive_strength)) {
+		return invalid("spawn radius, drag, stretch and emissive strength must be >= 0");
+	}
+	if (!finite(e.acceleration[0]) || !finite(e.acceleration[1]) || !finite(e.acceleration[2]) || !finite(e.spin_degrees[0]) ||
+		!finite(e.spin_degrees[1]) || e.spin_degrees[1] < e.spin_degrees[0] || !finite(e.floor_height) || !unit(e.bounce)) {
+		return invalid("acceleration, spin and floor must be finite, spin min <= max, bounce within [0, 1]");
+	}
+	if (e.blend != ParticleBlend::Additive && e.blend != ParticleBlend::Alpha) {
+		return invalid("unknown blend mode");
+	}
+	if (e.max_particles < 1 || e.max_particles > max_effect_particles) {
+		return invalid("max particles must be within [1, 20000]");
+	}
+	const auto keys_valid = [](const auto& keys, auto&& value_valid) {
+		if (keys.empty() || keys.size() > max_effect_keys) {
+			return false;
+		}
+		double previous = -1.0;
+		for (const auto& key : keys) {
+			if (!unit(key.time) || key.time <= previous || !value_valid(key)) {
+				return false;
+			}
+			previous = key.time;
+		}
+		return true;
+	};
+	if (!keys_valid(e.size, [&](const ParticleSizeKey& k) { return nonnegative(k.size) && k.size <= 1000.0; })) {
+		return invalid("size needs 1 to 8 keys at ascending times within [0, 1], sizes within [0, 1000]");
+	}
+	if (!keys_valid(e.color, [](const ParticleColorKey& k) {
+			return unit(k.color[0]) && unit(k.color[1]) && unit(k.color[2]) && unit(k.color[3]);
+		})) {
+		return invalid("color needs 1 to 8 keys at ascending times within [0, 1], channels within [0, 1]");
+	}
+	if (e.texture.empty() != e.texture.path.empty() || e.texture.path.size() > max_path_bytes) {
+		return invalid("a texture reference needs both an ID and a short path, or neither");
+	}
+	return {};
+}
+
+std::string write_effect(const EffectData& e)
+{
+	std::string out(effect_magic);
+	out += " 1\n";
+	write_numbers(out, "duration", {e.duration});
+	write_numbers(out, "rate", {e.rate});
+	write_numbers(out, "burst", {static_cast<double>(e.burst)});
+	write_numbers(out, "lifetime", {e.lifetime[0], e.lifetime[1]});
+	write_numbers(out, "speed", {e.speed[0], e.speed[1]});
+	write_numbers(out, "cone", {e.cone_degrees});
+	write_numbers(out, "spawn_radius", {e.spawn_radius});
+	write_numbers(out, "acceleration", {e.acceleration[0], e.acceleration[1], e.acceleration[2]});
+	write_numbers(out, "drag", {e.drag});
+	write_numbers(out, "spin", {e.spin_degrees[0], e.spin_degrees[1]});
+	write_numbers(out, "stretch", {e.stretch});
+	std::vector<double> values;
+	for (const auto& key : e.size) {
+		values.insert(values.end(), {key.time, key.size});
+	}
+	write_numbers(out, "size", values);
+	values.clear();
+	for (const auto& key : e.color) {
+		values.insert(values.end(), {key.time, key.color[0], key.color[1], key.color[2], key.color[3]});
+	}
+	write_numbers(out, "color", values);
+	write_numbers(out, "emissive_strength", {e.emissive_strength});
+	out += e.blend == ParticleBlend::Alpha ? "blend alpha\n" : "blend additive\n";
+	write_texture(out, "texture", e.texture);
+	write_numbers(out, "collide_floor", {e.collide_floor ? 1.0 : 0.0});
+	write_numbers(out, "floor_height", {e.floor_height});
+	write_numbers(out, "bounce", {e.bounce});
+	write_numbers(out, "world_space", {e.world_space ? 1.0 : 0.0});
+	write_numbers(out, "max_particles", {static_cast<double>(e.max_particles)});
+	return out;
+}
+
+Result<EffectData> parse_effect(std::string_view text)
+{
+	if (text.size() > 64 * 1024) {
+		return fail(ErrorCode::InvalidArgument, "the effect file is too large");
+	}
+	const auto malformed = [](const std::string& why) { return fail(ErrorCode::ParseError, "Invalid effect: " + why); };
+	EffectData e;
+	std::vector<std::string> seen;
+	bool header = false;
+	std::size_t start = 0;
+	while (start <= text.size()) {
+		const std::size_t end = std::min(text.find('\n', start), text.size());
+		const std::string_view line = text.substr(start, end - start);
+		start = end + 1;
+		bool valid = true;
+		const std::vector<std::string> tokens = line_tokens(line, valid);
+		if (tokens.empty()) {
+			continue;
+		}
+		if (!valid) {
+			return malformed("unterminated string");
+		}
+		if (!header) {
+			if (tokens.size() != 2 || tokens[0] != effect_magic || tokens[1] != "1") {
+				return malformed("missing header or unsupported version");
+			}
+			header = true;
+			continue;
+		}
+		const std::string& key = tokens[0];
+		if (std::find(seen.begin(), seen.end(), key) != seen.end()) {
+			return malformed("duplicate key " + key);
+		}
+		seen.push_back(key);
+		std::vector<double> v;
+		const auto read_numbers = [&] {
+			for (std::size_t i = 1; i < tokens.size(); ++i) {
+				double value = 0.0;
+				if (!number(tokens[i], value)) {
+					return false;
+				}
+				v.push_back(value);
+			}
+			return true;
+		};
+		const auto count = [&](std::size_t n) { return read_numbers() && v.size() == n; };
+		const auto flag = [&](bool& out) {
+			if (!count(1) || (v[0] != 0.0 && v[0] != 1.0)) {
+				return false;
+			}
+			out = v[0] == 1.0;
+			return true;
+		};
+		const auto whole = [&](std::uint32_t& out) {
+			if (!count(1) || v[0] < 0.0 || v[0] > 4294967295.0 || v[0] != std::floor(v[0])) {
+				return false;
+			}
+			out = static_cast<std::uint32_t>(v[0]);
+			return true;
+		};
+		bool parsed = false;
+		if (key == "duration") {
+			parsed = count(1) && ((e.duration = v[0]), true);
+		} else if (key == "rate") {
+			parsed = count(1) && ((e.rate = v[0]), true);
+		} else if (key == "burst") {
+			parsed = whole(e.burst);
+		} else if (key == "lifetime") {
+			parsed = count(2) && ((e.lifetime = {v[0], v[1]}), true);
+		} else if (key == "speed") {
+			parsed = count(2) && ((e.speed = {v[0], v[1]}), true);
+		} else if (key == "cone") {
+			parsed = count(1) && ((e.cone_degrees = v[0]), true);
+		} else if (key == "spawn_radius") {
+			parsed = count(1) && ((e.spawn_radius = v[0]), true);
+		} else if (key == "acceleration") {
+			parsed = count(3) && ((e.acceleration = {v[0], v[1], v[2]}), true);
+		} else if (key == "drag") {
+			parsed = count(1) && ((e.drag = v[0]), true);
+		} else if (key == "spin") {
+			parsed = count(2) && ((e.spin_degrees = {v[0], v[1]}), true);
+		} else if (key == "stretch") {
+			parsed = count(1) && ((e.stretch = v[0]), true);
+		} else if (key == "size") {
+			parsed = read_numbers() && !v.empty() && v.size() % 2 == 0;
+			e.size.clear();
+			for (std::size_t i = 0; parsed && i < v.size(); i += 2) {
+				e.size.push_back({v[i], v[i + 1]});
+			}
+		} else if (key == "color") {
+			parsed = read_numbers() && !v.empty() && v.size() % 5 == 0;
+			e.color.clear();
+			for (std::size_t i = 0; parsed && i < v.size(); i += 5) {
+				e.color.push_back({v[i], {v[i + 1], v[i + 2], v[i + 3], v[i + 4]}});
+			}
+		} else if (key == "emissive_strength") {
+			parsed = count(1) && ((e.emissive_strength = v[0]), true);
+		} else if (key == "blend") {
+			parsed = tokens.size() == 2 && (tokens[1] == "additive" || tokens[1] == "alpha");
+			e.blend = parsed && tokens[1] == "alpha" ? ParticleBlend::Alpha : ParticleBlend::Additive;
+		} else if (key == "texture") {
+			if (tokens.size() == 2 && tokens[1] == "-") {
+				e.texture = {};
+				parsed = true;
+			} else if (tokens.size() == 3) {
+				if (const auto id = parse_asset_id(tokens[1])) {
+					e.texture = {*id, tokens[2]};
+					parsed = true;
+				}
+			}
+		} else if (key == "collide_floor") {
+			parsed = flag(e.collide_floor);
+		} else if (key == "floor_height") {
+			parsed = count(1) && ((e.floor_height = v[0]), true);
+		} else if (key == "bounce") {
+			parsed = count(1) && ((e.bounce = v[0]), true);
+		} else if (key == "world_space") {
+			parsed = flag(e.world_space);
+		} else if (key == "max_particles") {
+			parsed = whole(e.max_particles);
+		} else {
+			return malformed("unknown key " + key);
+		}
+		if (!parsed) {
+			return malformed("bad value for " + key);
+		}
+	}
+	if (!header) {
+		return malformed("missing header or unsupported version");
+	}
+	if (auto valid = validate_effect(e); !valid) {
+		return valid.error();
+	}
+	return e;
 }
 
 } // namespace engine::assets

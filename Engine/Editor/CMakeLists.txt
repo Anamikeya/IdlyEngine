@@ -61,7 +61,7 @@ if(NOT TARGET engine::assets)
     message(FATAL_ERROR "Engine/Editor requires engine::assets")
 endif()
 # engine/renderer/ResourceRegistry.hpp is header-only, so the renderer library itself stays free of the asset module.
-target_link_libraries(engine_editor_session PUBLIC engine::renderer engine::physics_scene engine::assets engine::gameplay)
+target_link_libraries(engine_editor_session PUBLIC engine::renderer engine::physics_scene engine::assets engine::gameplay engine::effects)
 target_compile_options(engine_editor_session PRIVATE /W4 /WX /permissive- /utf-8)
 add_executable(engine_editor_tests tests/EditorTests.cpp)
 target_link_libraries(engine_editor_tests PRIVATE engine_editor_session)
@@ -90,6 +90,13 @@ foreach(blending opaque masked transparent)
         COMMAND matc -p desktop -a opengl "-TBLENDING=${blending}" "-TTRANSPARENCY=${transparency}" -o "${MATERIAL_DIR}/pbr_${blending}.filamat" "${RENDERER_ROOT}/materials/pbr.mat"
         DEPENDS matc "${RENDERER_ROOT}/materials/pbr.mat" VERBATIM)
     list(APPEND EDITOR_MATERIALS "${MATERIAL_DIR}/pbr_${blending}.filamat")
+endforeach()
+# Particles: one Filament material per blend mode (additive light, alpha over the scene).
+foreach(blending add transparent)
+    add_custom_command(OUTPUT "${MATERIAL_DIR}/particle_${blending}.filamat"
+        COMMAND matc -p desktop -a opengl "-TBLENDING=${blending}" -o "${MATERIAL_DIR}/particle_${blending}.filamat" "${RENDERER_ROOT}/materials/particle.mat"
+        DEPENDS matc "${RENDERER_ROOT}/materials/particle.mat" VERBATIM)
+    list(APPEND EDITOR_MATERIALS "${MATERIAL_DIR}/particle_${blending}.filamat")
 endforeach()
 add_custom_target(editor_materials DEPENDS ${EDITOR_MATERIALS})
 add_library(engine_desktop_renderer STATIC "${RENDERER_ROOT}/src/desktop/DesktopRenderer.cpp" "${RENDERER_ROOT}/src/desktop/ImGuiRenderer.cpp")

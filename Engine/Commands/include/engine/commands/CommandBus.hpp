@@ -76,9 +76,13 @@ struct SetBehaviors {
     EntityId id;
     std::vector<BehaviorComponent> behaviors;
 };
+struct SetParticleEmitter {
+    EntityId id;
+    std::optional<ParticleEmitterComponent> emitter;
+};
 using Command = std::variant<CreateEntity, DeleteEntity, RenameEntity, SetTransform, SetParent,
                              ReplaceScene, SetMesh, SetCamera, SetLight, DuplicateEntity,
-                             SetRigidBody, SetColliders, SetEnvironment, SetBehaviors>;
+                             SetRigidBody, SetColliders, SetEnvironment, SetBehaviors, SetParticleEmitter>;
 struct CommandDescriptor {
     std::string_view name;
     Capability permission;

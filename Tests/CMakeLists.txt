@@ -38,6 +38,13 @@ if(TARGET gameengine::ozz)
 		LIBRARIES gameengine::ozz)
 endif()
 
+if(TARGET engine::effects)
+	gameengine_add_test_executable(effects_tests
+		LABELS effects unit
+		SOURCES Effects/particle_tests.cpp
+		LIBRARIES engine::effects)
+endif()
+
 if(TARGET engine::networking)
 	gameengine_add_test_executable(networking_tests
 		LABELS networking unit

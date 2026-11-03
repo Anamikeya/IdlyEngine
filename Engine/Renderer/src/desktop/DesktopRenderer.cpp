@@ -29,6 +29,7 @@
 #include <array>
 #include <cmath>
 #include <map>
+#include <limits>
 #include <numbers>
 #include <optional>
 #include <set>
@@ -80,6 +81,18 @@ struct GpuMesh : Mesh {
 };
 // A standalone image, uploaded once per color space it is used in.
 struct GpuTexture { Texture *srgb = nullptr, *linear = nullptr; uint32_t generation = 0; };
+struct ParticleVertex { float3 position; float4 color; float2 uv; };
+// One particle batch on the GPU: a quad per particle, rewritten every frame. Capacity grows by doubling.
+struct GpuParticles {
+    utils::Entity entity;
+    VertexBuffer *vertices = nullptr;
+    IndexBuffer *indices = nullptr;
+    uint32_t capacity = 0;
+    MaterialInstance *instance = nullptr;
+    ParticleBlendMode blend = ParticleBlendMode::Additive;
+    Texture *image = nullptr;
+    float strength = -1;
+};
 Mesh mesh(Engine &engine, const std::vector<Vertex> &vertices, const std::vector<uint16_t> &indices, Box bounds) {
     Mesh result;
     result.vertices = VertexBuffer::Builder().vertexCount(static_cast<uint32_t>(vertices.size())).bufferCount(1)
@@ -190,6 +203,10 @@ struct DesktopRenderer::Impl {
     Skybox *flat_sky = nullptr, *image_sky = nullptr;
     Material *grid_material = nullptr;
     std::array<Material *, 3> pbr{}; // By AlphaMode.
+    std::array<Material *, 2> particle_materials{}; // By ParticleBlendMode.
+    Texture *particle_dot = nullptr;
+    std::map<std::uint64_t, GpuParticles> particles; // By batch key.
+    std::size_t particles_drawn = 0;
     Texture *color = nullptr, *depth = nullptr;
     std::array<Texture *, SlotCount> fallbacks{};
     RenderTarget *target = nullptr;
@@ -389,6 +406,22 @@ struct DesktopRenderer::Impl {
         pbr[size_t(AlphaMode::Mask)] = detail::material(*engine, materials / "pbr_masked.filamat");
         pbr[size_t(AlphaMode::Blend)] = detail::material(*engine, materials / "pbr_transparent.filamat");
         grid_material = detail::material(*engine, materials / "grid.filamat");
+        particle_materials[size_t(ParticleBlendMode::Additive)] = detail::material(*engine, materials / "particle_add.filamat");
+        particle_materials[size_t(ParticleBlendMode::Alpha)] = detail::material(*engine, materials / "particle_transparent.filamat");
+        {
+            // A soft round dot: alpha falls smoothly from the middle to nothing at the edge.
+            constexpr uint32_t size = 64;
+            std::vector<uint8_t> pixels(std::size_t(size) * size * 4);
+            for (uint32_t y = 0; y < size; ++y) for (uint32_t x = 0; x < size; ++x) {
+                const float dx = (float(x) + 0.5f) / size * 2 - 1, dy = (float(y) + 0.5f) / size * 2 - 1;
+                const float d = std::min(std::sqrt(dx * dx + dy * dy), 1.f);
+                const float a = (1 - d * d) * (1 - d * d);
+                uint8_t *p = pixels.data() + (std::size_t(y) * size + x) * 4;
+                p[0] = p[1] = p[2] = 255; p[3] = uint8_t(std::lround(a * 255));
+            }
+            assets::TextureData dot{size, size, assets::TextureFormat::Rgba8, true, std::move(pixels)};
+            particle_dot = upload(dot, true);
+        }
         meshes.emplace(builtin_cube.index, builtin(cube(*engine)));
         meshes.emplace(builtin_sphere.index, builtin(sphere(*engine)));
         meshes.emplace(builtin_plane.index, builtin(plane(*engine)));
@@ -537,6 +570,12 @@ struct DesktopRenderer::Impl {
     }
     void destroy(Texture *texture) { if (texture) engine->destroy(texture); }
     void destroy(const GpuTexture &gpu) { destroy(gpu.srgb); destroy(gpu.linear); }
+    void destroy(const GpuParticles &gpu) {
+        scene->remove(gpu.entity); remove(gpu.entity);
+        if (gpu.instance) engine->destroy(gpu.instance);
+        if (gpu.vertices) engine->destroy(gpu.vertices);
+        if (gpu.indices) engine->destroy(gpu.indices);
+    }
     void destroy_environment() {
         if (indirect) { scene->setIndirectLight(nullptr); preview_scene->setIndirectLight(nullptr); thumbnail_scene->setIndirectLight(nullptr); engine->destroy(indirect); indirect = nullptr; }
         if (image_sky) { scene->setSkybox(flat_sky); engine->destroy(image_sky); image_sky = nullptr; }
@@ -561,6 +600,7 @@ struct DesktopRenderer::Impl {
         engine->destroyCameraComponent(preview_camera_entity); utils::EntityManager::get().destroy(preview_camera_entity);
         for (const auto &[key, object] : objects) { (void)key; remove(object); }
         for (const auto &[key, light] : lights) { (void)key; remove(light); }
+        for (const auto &[key, gpu] : particles) { (void)key; destroy(gpu); }
         destroy_environment();
         ibl_context.reset();
         // After destroy_environment(), which takes the indirect light back from all three scenes.
@@ -576,6 +616,8 @@ struct DesktopRenderer::Impl {
         for (auto *texture : fallbacks) engine->destroy(texture);
         if (grading) engine->destroy(grading);
         for (auto *material : pbr) engine->destroy(material);
+        destroy(particle_dot);
+        for (auto *material : particle_materials) engine->destroy(material);
         engine->destroy(grid_material); engine->destroy(flat_sky);
         engine->destroy(renderer); engine->destroy(swap);
         engine->flushAndWait(); Engine::destroy(&engine);
@@ -637,10 +679,122 @@ struct DesktopRenderer::Impl {
         for (auto *texture : retired_textures) destroy(texture);
         retired_textures.clear();
         if (preview_material.index) update_preview(registry, used_textures);
+        sync_particles(frame, registry, used_textures);
         for (auto it = meshes.begin(); it != meshes.end();)
             if (it->first >= ResourceRegistry::first_index && !used_meshes.contains(it->first)) { destroy(it->second); it = meshes.erase(it); } else ++it;
         for (auto it = textures.begin(); it != textures.end();)
             if (!used_textures.contains(it->first)) { destroy(it->second); it = textures.erase(it); } else ++it;
+    }
+    // Builds each batch's quads on the CPU and hands them to its renderable. Alpha batches are sorted back to front.
+    // Textures the batches use are added to `used`, so the texture sweep keeps them.
+    void sync_particles(const FrameSnapshot &frame, const ResourceRegistry &registry, std::set<uint32_t> &used) {
+        const auto &w = frame.camera.world.matrix;
+        const float3 eye{float(w[12]), float(w[13]), float(w[14])};
+        const float3 right = normalize(float3{float(w[0]), float(w[1]), float(w[2])});
+        const float3 up = normalize(float3{float(w[4]), float(w[5]), float(w[6])});
+        auto &rm = engine->getRenderableManager();
+        std::set<std::uint64_t> live;
+        particles_drawn = 0;
+        std::vector<ParticleVertex> vertices;
+        std::vector<uint32_t> order;
+        for (const auto &batch : frame.particles) {
+            if (batch.particles.empty()) continue;
+            live.insert(batch.key);
+            auto &gpu = particles[batch.key];
+            const auto count = uint32_t(batch.particles.size());
+            if (!gpu.entity) gpu.entity = utils::EntityManager::get().create();
+            const bool grow = count > gpu.capacity;
+            if (grow) {
+                uint32_t capacity = std::max<uint32_t>(gpu.capacity * 2, 64);
+                while (capacity < count) capacity *= 2;
+                if (rm.hasComponent(gpu.entity)) { scene->remove(gpu.entity); rm.destroy(gpu.entity); }
+                if (gpu.vertices) engine->destroy(gpu.vertices);
+                if (gpu.indices) engine->destroy(gpu.indices);
+                gpu.vertices = VertexBuffer::Builder().vertexCount(capacity * 4).bufferCount(1)
+                    .attribute(VertexAttribute::POSITION, 0, VertexBuffer::AttributeType::FLOAT3, offsetof(ParticleVertex, position), sizeof(ParticleVertex))
+                    .attribute(VertexAttribute::COLOR, 0, VertexBuffer::AttributeType::FLOAT4, offsetof(ParticleVertex, color), sizeof(ParticleVertex))
+                    .attribute(VertexAttribute::UV0, 0, VertexBuffer::AttributeType::FLOAT2, offsetof(ParticleVertex, uv), sizeof(ParticleVertex)).build(*engine);
+                std::vector<uint32_t> indices(std::size_t(capacity) * 6);
+                for (uint32_t q = 0; q < capacity; ++q) {
+                    const uint32_t corner[6]{0, 1, 2, 0, 2, 3};
+                    for (int k = 0; k < 6; ++k) indices[std::size_t(q) * 6 + k] = q * 4 + corner[k];
+                }
+                gpu.indices = IndexBuffer::Builder().indexCount(uint32_t(indices.size())).bufferType(IndexBuffer::IndexType::UINT).build(*engine);
+                gpu.indices->setBuffer(*engine, detail::upload(indices.data(), indices.size() * sizeof(uint32_t)));
+                gpu.capacity = capacity;
+            }
+            if (!gpu.instance || gpu.blend != batch.blend) {
+                if (gpu.instance) engine->destroy(gpu.instance);
+                gpu.instance = particle_materials[size_t(batch.blend)]->createInstance();
+                gpu.blend = batch.blend;
+                gpu.image = nullptr;
+                gpu.strength = -1;
+                if (rm.hasComponent(gpu.entity)) rm.setMaterialInstanceAt(rm.getInstance(gpu.entity), 0, gpu.instance);
+            }
+            Texture *image = this->image(batch.texture, true, registry, used);
+            if (!image) image = particle_dot;
+            if (image != gpu.image) {
+                gpu.instance->setParameter("image", image, TextureSampler(TextureSampler::MinFilter::LINEAR_MIPMAP_LINEAR, TextureSampler::MagFilter::LINEAR));
+                gpu.image = image;
+            }
+            if (float(batch.strength) != gpu.strength) { gpu.strength = float(batch.strength); gpu.instance->setParameter("strength", gpu.strength); }
+            // Back to front for alpha; additive light needs no order.
+            order.resize(count);
+            for (uint32_t i = 0; i < count; ++i) order[i] = i;
+            if (batch.blend == ParticleBlendMode::Alpha) {
+                std::vector<float> distance(count);
+                for (uint32_t i = 0; i < count; ++i) {
+                    const auto &p = batch.particles[i].position;
+                    distance[i] = length(float3{p[0], p[1], p[2]} - eye);
+                }
+                std::sort(order.begin(), order.end(), [&](uint32_t a, uint32_t b) { return distance[a] > distance[b]; });
+            }
+            vertices.resize(std::size_t(count) * 4);
+            float3 low{std::numeric_limits<float>::max()}, high{-std::numeric_limits<float>::max()};
+            for (uint32_t i = 0; i < count; ++i) {
+                const auto &p = batch.particles[order[i]];
+                const float3 position{p.position[0], p.position[1], p.position[2]};
+                const float3 velocity{p.velocity[0], p.velocity[1], p.velocity[2]};
+                const float4 tint{p.color[0], p.color[1], p.color[2], p.color[3]};
+                const float half = p.size * 0.5f;
+                float3 corners[4];
+                const float speed = length(velocity);
+                if (batch.stretch > 0 && speed > 1e-4f) {
+                    // A streak: from the particle back along its path, as wide as its size, turned to face the eye.
+                    const float3 along = velocity / speed;
+                    float3 side = cross(along, eye - position);
+                    const float side_length = length(side);
+                    side = side_length > 1e-6f ? side / side_length * half : right * half;
+                    const float3 back = position - along * std::max(speed * float(batch.stretch), p.size);
+                    corners[0] = back - side; corners[1] = position - side; corners[2] = position + side; corners[3] = back + side;
+                } else {
+                    const float c = std::cos(p.rotation), s = std::sin(p.rotation);
+                    const float3 r = (right * c + up * s) * half, u = (up * c - right * s) * half;
+                    corners[0] = position - r + u; corners[1] = position + r + u; corners[2] = position + r - u; corners[3] = position - r - u;
+                }
+                const float2 uv[4]{{0, 0}, {1, 0}, {1, 1}, {0, 1}};
+                for (int k = 0; k < 4; ++k) {
+                    vertices[std::size_t(i) * 4 + k] = {corners[k], tint, uv[k]};
+                    low = min(low, corners[k]); high = max(high, corners[k]);
+                }
+            }
+            gpu.vertices->setBufferAt(*engine, 0, detail::upload(vertices.data(), vertices.size() * sizeof(ParticleVertex)));
+            Box bounds; bounds.set(low, high);
+            bounds.halfExtent = max(bounds.halfExtent, float3(0.001f));
+            if (!rm.hasComponent(gpu.entity)) {
+                RenderableManager::Builder(1).boundingBox(bounds).castShadows(false).receiveShadows(false)
+                    .geometry(0, RenderableManager::PrimitiveType::TRIANGLES, gpu.vertices, gpu.indices, 0, count * 6)
+                    .material(0, gpu.instance).build(*engine, gpu.entity);
+                scene->addEntity(gpu.entity);
+            } else {
+                const auto renderable = rm.getInstance(gpu.entity);
+                rm.setGeometryAt(renderable, 0, RenderableManager::PrimitiveType::TRIANGLES, gpu.vertices, gpu.indices, 0, count * 6);
+                rm.setAxisAlignedBoundingBox(renderable, bounds);
+            }
+            particles_drawn += count;
+        }
+        for (auto it = particles.begin(); it != particles.end();)
+            if (!live.contains(it->first)) { destroy(it->second); it = particles.erase(it); } else ++it;
     }
     // The preview sphere uses the chosen material; its textures count as used so the sweep above keeps them.
     void update_preview(const ResourceRegistry &registry, std::set<uint32_t> &used) {
@@ -846,6 +1000,7 @@ RendererStats DesktopRenderer::stats() const {
     for (const auto &[key, object] : p.objects) { (void)key; s.parts += object.parts.size(); s.material_instances += object.parts.size(); }
     s.meshes = asset_mesh_count(); s.textures = p.textures.size();
     s.environment_builds = p.environment_builds;
+    s.particle_batches = p.particles.size(); s.particles = p.particles_drawn;
     for (const auto &info : p.renderer->getFrameInfoHistory(4))
         if (info.gpuFrameDuration > 0) { s.gpu_frame_ms = double(info.gpuFrameDuration) / 1e6; break; }
     return s;

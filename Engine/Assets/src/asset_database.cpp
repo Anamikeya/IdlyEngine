@@ -77,14 +77,16 @@ struct AssetDatabase::Impl {
 		std::shared_ptr<const TextureData> texture;
 		std::shared_ptr<const MaterialData> material;
 		std::shared_ptr<const EnvironmentData> environment;
+		std::shared_ptr<const EffectData> effect;
 
-		[[nodiscard]] bool cached() const noexcept { return mesh || texture || material || environment; }
+		[[nodiscard]] bool cached() const noexcept { return mesh || texture || material || environment || effect; }
 		void drop() noexcept
 		{
 			mesh.reset();
 			texture.reset();
 			material.reset();
 			environment.reset();
+			effect.reset();
 		}
 	};
 
@@ -168,6 +170,64 @@ struct AssetDatabase::Impl {
 			return material.error();
 		}
 		return std::make_shared<const MaterialData>(std::move(material.value()));
+	}
+
+	Result<std::shared_ptr<const EffectData>> import_effect(const AssetMetadata& meta) const
+	{
+		auto bytes = read(source_of(meta), 1024 * 1024);
+		if (!bytes) {
+			return bytes.error();
+		}
+		const auto& b = bytes.value();
+		auto effect = parse_effect(std::string_view(reinterpret_cast<const char*>(b.data()), b.size()));
+		if (!effect) {
+			return effect.error();
+		}
+		return std::make_shared<const EffectData>(std::move(effect.value()));
+	}
+
+	// Writes a new text asset of `type` under a free name based on `path`, with a .meta holding a new random id.
+	Result<AssetId> create_text(AssetDatabase& db, std::string_view path, AssetType type, const char* noun,
+		const char* extension, const std::string& content)
+	{
+		auto normalized = normalize_asset_path(path);
+		if (!normalized) {
+			return fail(ErrorCode::InvalidArgument, std::string("the ") + noun + " name cannot be used: " + normalized.error().message);
+		}
+		if (asset_type_for(normalized.value()) != type) {
+			return fail(ErrorCode::InvalidArgument, std::string("a ") + noun + "'s file name must end in " + extension);
+		}
+		const fs::path target = free_name(root / from_utf8(normalized.value()));
+		std::error_code ec;
+		fs::create_directories(target.parent_path(), ec);
+		if (ec) {
+			return fail(ErrorCode::InvalidState, "cannot create the folder for " + normalized.value());
+		}
+		fs::path meta_path = target;
+		meta_path += ".meta";
+		const AssetId id = new_id();
+		const auto undo = [&] {
+			std::error_code ignored;
+			fs::remove(target, ignored);
+			fs::remove(meta_path, ignored);
+			(void)db.scan();
+		};
+		if (auto written = write_atomic(target, content); !written) {
+			return written.error();
+		}
+		if (auto written = write_atomic(meta_path, write_meta(MetaFile{id, {}})); !written) {
+			undo();
+			return written.error();
+		}
+		if (auto scanned = db.scan(); !scanned) {
+			undo();
+			return scanned.error();
+		}
+		if (!db.find(id)) {
+			undo();
+			return fail(ErrorCode::InvalidArgument, normalized.value() + " could not be catalogued");
+		}
+		return id;
 	}
 
 	Result<std::shared_ptr<const EnvironmentData>> import_environment(const AssetMetadata& meta) const
@@ -308,7 +368,7 @@ Result<std::size_t> AssetDatabase::scan()
 		meta.path = std::move(path.value());
 		meta.type = asset_type_for(meta.path);
 		if (meta.type == AssetType::Unknown) {
-			issues.push_back({meta.path, "unsupported format (supported: .glb, .obj, .png, .jpg, .jpeg, .tga, .ppm, .material, .hdr)"});
+			issues.push_back({meta.path, "unsupported format (supported: .glb, .obj, .png, .jpg, .jpeg, .tga, .ppm, .material, .effect, .hdr)"});
 			continue;
 		}
 		meta.source_bytes = it->file_size(ec);
@@ -436,6 +496,12 @@ Result<MaterialAsset> AssetDatabase::load_material(AssetId id)
 		[this](const AssetMetadata& meta) { return impl_->import_material(meta); });
 }
 
+Result<EffectAsset> AssetDatabase::load_effect(AssetId id)
+{
+	return impl_->load<EffectData>(id, AssetType::Effect, &Impl::Entry::effect,
+		[this](const AssetMetadata& meta) { return impl_->import_effect(meta); });
+}
+
 Result<EnvironmentAsset> AssetDatabase::load_environment(AssetId id)
 {
 	return impl_->load<EnvironmentData>(id, AssetType::Environment, &Impl::Entry::environment,
@@ -499,44 +565,7 @@ Result<AssetId> AssetDatabase::create_material(std::string_view path, const Mate
 	if (auto valid = validate_material(material); !valid) {
 		return valid.error();
 	}
-	auto normalized = normalize_asset_path(path);
-	if (!normalized) {
-		return fail(ErrorCode::InvalidArgument, "the material name cannot be used: " + normalized.error().message);
-	}
-	if (asset_type_for(normalized.value()) != AssetType::Material) {
-		return fail(ErrorCode::InvalidArgument, "a material's file name must end in .material");
-	}
-	const fs::path target = impl_->free_name(impl_->root / from_utf8(normalized.value()));
-	std::error_code ec;
-	fs::create_directories(target.parent_path(), ec);
-	if (ec) {
-		return fail(ErrorCode::InvalidState, "cannot create the folder for " + normalized.value());
-	}
-	fs::path meta_path = target;
-	meta_path += ".meta";
-	const AssetId id = impl_->new_id();
-	const auto undo = [&] {
-		std::error_code ignored;
-		fs::remove(target, ignored);
-		fs::remove(meta_path, ignored);
-		(void)scan();
-	};
-	if (auto written = impl_->write_atomic(target, write_material(material)); !written) {
-		return written.error();
-	}
-	if (auto written = impl_->write_atomic(meta_path, write_meta(MetaFile{id, {}})); !written) {
-		undo();
-		return written.error();
-	}
-	if (auto scanned = scan(); !scanned) {
-		undo();
-		return scanned.error();
-	}
-	if (!find(id)) {
-		undo();
-		return fail(ErrorCode::InvalidArgument, normalized.value() + " could not be catalogued");
-	}
-	return id;
+	return impl_->create_text(*this, path, AssetType::Material, "material", ".material", write_material(material));
 }
 
 Result<void> AssetDatabase::save_material(AssetId id, const MaterialData& material)
@@ -555,6 +584,35 @@ Result<void> AssetDatabase::save_material(AssetId id, const MaterialData& materi
 		return written.error();
 	}
 	it->second.material = std::make_shared<const MaterialData>(material);
+	it->second.state = AssetState::Loaded;
+	++it->second.revision;
+	return {};
+}
+
+Result<AssetId> AssetDatabase::create_effect(std::string_view path, const EffectData& effect)
+{
+	if (auto valid = validate_effect(effect); !valid) {
+		return valid.error();
+	}
+	return impl_->create_text(*this, path, AssetType::Effect, "effect", ".effect", write_effect(effect));
+}
+
+Result<void> AssetDatabase::save_effect(AssetId id, const EffectData& effect)
+{
+	const auto it = impl_->by_id.find(id);
+	if (it == impl_->by_id.end()) {
+		return fail(ErrorCode::NotFound, "unknown asset id " + to_string(id));
+	}
+	if (it->second.meta.type != AssetType::Effect) {
+		return fail(ErrorCode::InvalidArgument, it->second.meta.path + " is not an effect");
+	}
+	if (auto valid = validate_effect(effect); !valid) {
+		return valid.error();
+	}
+	if (auto written = impl_->write_atomic(impl_->source_of(it->second.meta), write_effect(effect)); !written) {
+		return written.error();
+	}
+	it->second.effect = std::make_shared<const EffectData>(effect);
 	it->second.state = AssetState::Loaded;
 	++it->second.revision;
 	return {};
@@ -582,7 +640,7 @@ Result<AssetId> AssetDatabase::import_source(const fs::path& source, const Prepa
 		const std::string extension = utf8(source.extension());
 		return fail(ErrorCode::InvalidArgument, "unsupported file type '" + extension + "'" +
 			(lowercase(extension) == ".gltf" ? " (re-export the model as a self-contained .glb)" : "") +
-			"; supported: .glb, .obj, .png, .jpg, .jpeg, .tga, .ppm, .material, .hdr");
+			"; supported: .glb, .obj, .png, .jpg, .jpeg, .tga, .ppm, .material, .effect, .hdr");
 	}
 	const auto load = [&](AssetId id) -> Result<void> {
 		if (prepared && prepared->type == type) {
@@ -593,6 +651,7 @@ Result<AssetId> AssetDatabase::import_source(const fs::path& source, const Prepa
 				entry.texture = prepared->texture;
 				entry.material = prepared->material;
 				entry.environment = prepared->environment;
+				entry.effect = prepared->effect;
 				entry.state = AssetState::Loaded;
 				return {};
 			}
@@ -603,6 +662,8 @@ Result<AssetId> AssetDatabase::import_source(const fs::path& source, const Prepa
 			return done(load_mesh(id));
 		case AssetType::Material:
 			return done(load_material(id));
+		case AssetType::Effect:
+			return done(load_effect(id));
 		case AssetType::Environment:
 			return done(load_environment(id));
 		default:
@@ -697,6 +758,9 @@ std::vector<AssetIssue> AssetDatabase::validate_all()
 		case AssetType::Material:
 			check(impl_->import_material(meta));
 			break;
+		case AssetType::Effect:
+			check(impl_->import_effect(meta));
+			break;
 		case AssetType::Environment:
 			check(impl_->import_environment(meta));
 			break;
@@ -753,7 +817,8 @@ std::size_t AssetDatabase::unload_unused()
 		const bool texture_unused = e.texture && e.texture.use_count() == 1;
 		const bool material_unused = e.material && e.material.use_count() == 1;
 		const bool environment_unused = e.environment && e.environment.use_count() == 1;
-		if (mesh_unused || texture_unused || material_unused || environment_unused) {
+		const bool effect_unused = e.effect && e.effect.use_count() == 1;
+		if (mesh_unused || texture_unused || material_unused || environment_unused || effect_unused) {
 			e.drop();
 			if (e.state == AssetState::Loaded) {
 				e.state = AssetState::Unloaded;
@@ -819,6 +884,14 @@ Result<PreparedImport> prepare_import(const fs::path& source, const ImportLimits
 			return failed(material.error());
 		}
 		prepared.material = std::make_shared<const MaterialData>(std::move(material.value()));
+		break;
+	}
+	case AssetType::Effect: {
+		auto effect = parse_effect(text);
+		if (!effect) {
+			return failed(effect.error());
+		}
+		prepared.effect = std::make_shared<const EffectData>(std::move(effect.value()));
 		break;
 	}
 	case AssetType::Environment: {

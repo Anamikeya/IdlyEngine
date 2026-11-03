@@ -8,7 +8,7 @@
 #include <type_traits>
 namespace engine::commands {
 namespace {
-constexpr std::array<CommandDescriptor, 14> descriptors{
+constexpr std::array<CommandDescriptor, 15> descriptors{
     {{"entity.create", Capability::Edit, "name, transform, parent, optional new stable ID, components", "Create Entity"},
      {"entity.delete", Capability::Edit, "stable ID; deletes subtree", "Delete Entity"},
      {"entity.rename", Capability::Edit, "stable ID, name", "Rename Entity"},
@@ -22,7 +22,8 @@ constexpr std::array<CommandDescriptor, 14> descriptors{
      {"component.body.set", Capability::Edit, "stable ID, rigid body kind and initial motion, or none to remove", "Change Rigid Body"},
      {"component.colliders.set", Capability::Edit, "stable ID, complete collider list (empty removes all)", "Change Colliders"},
      {"component.environment.set", Capability::Edit, "stable ID, environment lighting, exposure and shadow settings, or none to remove", "Change Environment"},
-     {"component.behaviors.set", Capability::Edit, "stable ID, complete behavior list (empty removes all)", "Change Behaviors"}}};
+     {"component.behaviors.set", Capability::Edit, "stable ID, complete behavior list (empty removes all)", "Change Behaviors"},
+     {"component.emitter.set", Capability::Edit, "stable ID, particle effect, auto play, loop and rate scale, or none to remove", "Change Particle Emitter"}}};
 struct Guard {
     bool &busy;
     explicit Guard(bool &b) : busy(b) {
@@ -228,6 +229,8 @@ Result<Receipt> CommandBus::execute(const Context &ctx, std::uint64_t expected,
                         it->second.components.environment = cmd.environment;
                     else if constexpr (std::is_same_v<T, SetBehaviors>)
                         it->second.components.behaviors = cmd.behaviors;
+                    else if constexpr (std::is_same_v<T, SetParticleEmitter>)
+                        it->second.components.emitter = cmd.emitter;
                     else if constexpr (std::is_same_v<T, DeleteEntity>) {
                         std::map<EntityId, std::vector<EntityId>> children;
                         for (const auto &[id, e] : staged)

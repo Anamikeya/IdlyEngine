@@ -141,6 +141,15 @@ struct BehaviorComponent {
     bool operator==(const BehaviorComponent &) const = default;
 };
 inline constexpr std::size_t max_behaviors_per_entity = 16, max_behavior_values = 32;
+// Plays a particle effect asset (.effect) at the entity. Particles are visual only: they never touch physics,
+// gameplay or the scene, so a run plays the same with or without them.
+struct ParticleEmitterComponent {
+    AssetRef effect;       // Empty: nothing is emitted.
+    bool auto_play = true; // Starts by itself in Play and in the editor's preview. Off: only gameplay fires it.
+    bool loop = true;      // Starts again each time the effect's duration ends.
+    double rate_scale = 1; // Multiplies the effect's rate and bursts; within [0, 1000].
+    bool operator==(const ParticleEmitterComponent &) const = default;
+};
 struct Components {
     std::optional<MeshComponent> mesh;
     std::optional<CameraComponent> camera;
@@ -149,6 +158,7 @@ struct Components {
     std::vector<ColliderComponent> colliders;
     std::optional<EnvironmentComponent> environment;
     std::vector<BehaviorComponent> behaviors; // Each type at most once.
+    std::optional<ParticleEmitterComponent> emitter;
     bool operator==(const Components &) const = default;
 };
 struct EntityRecord {
@@ -196,7 +206,7 @@ class Scene final {
     static Result<void> validate(const SceneSnapshot &);
 };
 // Text scene format, docs/architecture/006-scene-format.md. Writes the current version; reads 1..current.
-inline constexpr unsigned scene_format_version = 6;
+inline constexpr unsigned scene_format_version = 7;
 Result<void> write_scene(std::ostream &, const SceneSnapshot &);
 Result<SceneSnapshot> read_scene(std::istream &);
 } // namespace engine

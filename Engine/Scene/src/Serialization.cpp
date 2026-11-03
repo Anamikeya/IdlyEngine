@@ -228,7 +228,7 @@ Result<void> write_scene(std::ostream &out, const SceneSnapshot &s) {
             components += e.components.mesh.has_value() + e.components.camera.has_value() +
                           e.components.light.has_value() + e.components.body.has_value() +
                           e.components.colliders.size() + e.components.environment.has_value() +
-                          e.components.behaviors.size() +
+                          e.components.behaviors.size() + e.components.emitter.has_value() +
                           (e.components.mesh ? e.components.mesh->material_slots.size() : 0);
         out << "COMPONENTS " << components << '\n';
         for (const auto &e : s.entities) {
@@ -288,6 +288,11 @@ Result<void> write_scene(std::ostream &out, const SceneSnapshot &s) {
                     out << ' ' << key << ' ' << value;
                 out << '\n';
             }
+            if (const auto &p = e.components.emitter) {
+                out << "EMITTER " << e.id << ' ';
+                write_ref(out, p->effect);
+                out << ' ' << (p->auto_play ? 1 : 0) << ' ' << (p->loop ? 1 : 0) << ' ' << p->rate_scale << '\n';
+            }
         }
         if (!out)
             return fail(ErrorCode::ParseError, "Scene output stream failed");
@@ -330,8 +335,10 @@ Result<SceneSnapshot> read_scene(std::istream &in) {
                 return fail(ErrorCode::ParseError, "Missing or malformed COMPONENTS section");
             // Version 2 defined no component kinds; version 3 allows one MESH, CAMERA and LIGHT per entity;
             // version 4 adds one BODY and up to max_colliders_per_entity COLLIDER records; version 6 adds one
-            // ENVIRONMENT and up to max_material_slots MATSLOT and max_behaviors_per_entity BEHAVIOR records.
-            const std::size_t per_entity = version >= 6   ? 5 + max_colliders_per_entity + max_material_slots + max_behaviors_per_entity
+            // ENVIRONMENT and up to max_material_slots MATSLOT and max_behaviors_per_entity BEHAVIOR records;
+            // version 7 adds one EMITTER.
+            const std::size_t per_entity = version >= 7   ? 6 + max_colliders_per_entity + max_material_slots + max_behaviors_per_entity
+                                           : version >= 6 ? 5 + max_colliders_per_entity + max_material_slots + max_behaviors_per_entity
                                            : version >= 4 ? 4 + max_colliders_per_entity
                                            : version >= 3 ? 3
                                                           : 0;
@@ -348,8 +355,9 @@ Result<SceneSnapshot> read_scene(std::istream &in) {
                 const std::string kind = word;
                 const bool physics = kind == "BODY" || kind == "COLLIDER";
                 const bool v6_only = kind == "MATSLOT" || kind == "ENVIRONMENT" || kind == "BEHAVIOR";
-                if ((kind != "MESH" && kind != "CAMERA" && kind != "LIGHT" && !physics && !v6_only) || (physics && version < 4) ||
-                    (v6_only && version < 6))
+                const bool v7_only = kind == "EMITTER";
+                if ((kind != "MESH" && kind != "CAMERA" && kind != "LIGHT" && !physics && !v6_only && !v7_only) ||
+                    (physics && version < 4) || (v6_only && version < 6) || (v7_only && version < 7))
                     return fail(ErrorCode::ParseError, "Unsupported component kind '" + kind + "'");
                 if (!reader.number(id) || !index.contains(id))
                     return fail(ErrorCode::ParseError, kind + " record names a missing entity");
@@ -451,6 +459,15 @@ Result<SceneSnapshot> read_scene(std::istream &in) {
                         b.values.push_back(std::move(entry));
                     }
                     c.behaviors.push_back(std::move(b));
+                } else if (kind == "EMITTER") {
+                    ParticleEmitterComponent p;
+                    int autoplay = -1, loop = -1;
+                    duplicate = c.emitter.has_value();
+                    parsed = reader.asset_ref(p.effect) && reader.number(autoplay) && reader.number(loop) &&
+                             reader.number(p.rate_scale) && (autoplay == 0 || autoplay == 1) && (loop == 0 || loop == 1);
+                    p.auto_play = autoplay == 1;
+                    p.loop = loop == 1;
+                    c.emitter = p;
                 } else {
                     LightComponent l;
                     int shadows = 0;

@@ -63,6 +63,13 @@ Result<MaterialData> parse_material(std::string_view text);
 // The same range checks parse_material applies.
 Result<void> validate_material(const MaterialData& material);
 
+// Particle effects (.effect): a versioned key/value text file, like materials. Unknown or repeated keys are errors;
+// missing keys keep their defaults.
+Result<EffectData> parse_effect(std::string_view text);
+[[nodiscard]] std::string write_effect(const EffectData& effect);
+// The same range checks parse_effect applies.
+Result<void> validate_effect(const EffectData& effect);
+
 // Sidecar "<asset>.meta", version 1:
 //   version = 1
 //   id = 0123456789abcdef      (optional)

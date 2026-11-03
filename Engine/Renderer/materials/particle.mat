@@ -1,0 +1,25 @@
+// Particles (Milestone 5). Compiled twice with matc -TBLENDING=add and -TBLENDING=transparent. Unlit: the color is what
+// is seen, before tone mapping, so a strength above 1 blooms. Vertex color carries each particle's color and fade.
+material {
+    name: EngineParticle_${BLENDING},
+    shadingModel: unlit,
+    blending: ${BLENDING},
+    requires: [uv0, color],
+    flipUV: false,
+    culling: none,
+    depthWrite: false,
+    parameters: [
+        {type: sampler2d, name: image},
+        {type: float, name: strength}
+    ]
+}
+fragment {
+    void material(inout MaterialInputs material) {
+        prepareMaterial(material);
+        vec4 tint = getColor();
+        vec4 texel = texture(materialParams_image, getUV0());
+        float alpha = tint.a * texel.a;
+        // Premultiplied, as both blend modes expect.
+        material.baseColor = vec4(tint.rgb * texel.rgb * materialParams.strength * alpha, alpha);
+    }
+}

@@ -1,15 +1,15 @@
 # Scene file format
 
 Implemented in `Engine/Scene/src/Serialization.cpp` (`write_scene`, `read_scene`). The writer always emits the
-current version, `engine::scene_format_version` (6). The reader accepts versions 1 to 6.
+current version, `engine::scene_format_version` (7). The reader accepts versions 1 to 7.
 
-## Version 6
+## Version 7
 
 Line-based UTF-8 text, tokens separated by whitespace, numbers in the classic C locale. Doubles are written with
 `max_digits10`, so a save/load round trip is exact.
 
 ```
-ENGINE_SCENE 6 <next_id> <entity_count>
+ENGINE_SCENE 7 <next_id> <entity_count>
 ENTITY <id> <parent> "<name>" <px> <py> <pz> <qx> <qy> <qz> <qw> <sx> <sy> <sz>
 ...                                    (exactly entity_count ENTITY lines)
 COMPONENTS <component_count>
@@ -19,9 +19,9 @@ COMPONENTS <component_count>
 - `next_id`: the next stable entity ID the scene will allocate. IDs are never recycled.
 - `ENTITY`: stable ID, parent ID (0 = root), quoted name (`\"` and `\\` escapes, at most 256 bytes, no control
   characters), local translation, rotation quaternion (x, y, z, w) and scale.
-- `COMPONENTS`: at most one `MESH`, `CAMERA`, `LIGHT`, `BODY` and `ENVIRONMENT` per entity, and up to 64 `COLLIDER`,
+- `COMPONENTS`: at most one `MESH`, `CAMERA`, `LIGHT`, `BODY`, `ENVIRONMENT` and `EMITTER` per entity, and up to 64 `COLLIDER`,
   64 `MATSLOT` and 16 `BEHAVIOR` records per entity. The writer sorts them by entity, then `MESH` with its `MATSLOT`s,
-  `CAMERA`, `LIGHT`, `BODY`, `COLLIDER`, `ENVIRONMENT`, `BEHAVIOR`; the reader accepts any order, keeping colliders
+  `CAMERA`, `LIGHT`, `BODY`, `COLLIDER`, `ENVIRONMENT`, `BEHAVIOR`, `EMITTER`; the reader accepts any order, keeping colliders
   and behaviors in file order and slots sorted.
 
 ### Component records
@@ -38,6 +38,7 @@ Colors are sRGB in [0, 1], as picked in the editor. Renderers convert them to li
 | `COLLIDER <entity> <shape> <cx> <cy> <cz> <qx> <qy> <qz> <qw> <hx> <hy> <hz> <radius> <half_height> <density> <friction> <restitution> <sensor> <events> <category> <mask>` | `shape`: `sphere`, `box` or `capsule`; local center and unit rotation; half extents and radius > 0, half height ≥ 0; density and friction ≥ 0; restitution in [0, 1]; flags `0` or `1`; category and mask: 64-bit unsigned integers | Collision shape in the entity's unscaled local frame; world scale is applied when the body is built. A box uses the half extents, a sphere the radius, a capsule the radius and half height (segment along local Y). Every field is written for every shape. `sensor` detects overlaps without colliding; `events` reports contact, hit and sensor events. Two colliders touch when each one's mask has a bit of the other's category |
 | `ENVIRONMENT <entity> <source> <image> <sky r g b> <horizon r g b> <ground r g b> <intensity> <rotation> <skybox> <ev100> <tone> <shadows> <distance> <occlusion> <bloom>` | `source`: `none`, `procedural` or `image`; `image`: asset reference, required for `image`; colors in [0, 1]; intensity ≥ 0; rotation in degrees; EV100 in [−20, 30]; `tone`: `aces`, `filmic`, `agx`, `pbr_neutral` or `linear`; `shadows`: `off`, `low`, `medium` or `high`; distance > 0 m; flags `0` or `1` | How the scene is lit and exposed. The first by entity ID applies. Without one, a procedural sky at EV100 15 is used. An image that cannot be used is reported, and the procedural sky lights the scene instead |
 | `BEHAVIOR <entity> <type> <count> [<key> <value>]...` | type and keys: 1–32 of `[a-z0-9_]`, each at most once; at most 32 finite values | Named numbers a runtime system reads when Play starts. The scene gives them no meaning. See `Engine/Gameplay/include/engine/gameplay/game.h` for the ones the gameplay module understands |
+| `EMITTER <entity> <effect> <auto_play> <loop> <rate_scale>` | `effect`: asset reference to a `.effect` file, or `-`; flags `0` or `1`; rate scale in [0, 1000] | Plays a particle effect at the entity. `auto_play` starts it by itself in Play and in the editor's preview; otherwise only gameplay fires it. `loop` starts it again when the effect's duration ends. The rate scale multiplies its rate and bursts. Particles are visual only and never change the scene |
 
 An asset reference is `-` (none), or the 16 hex digit asset ID followed by the quoted path inside the project's
 `Assets` folder (at most 1024 bytes, no control characters): `MESH 1 cube 1 1 1 0.65 0 6a1f0c3e9b2d4a01 "models/helmet.glb" - - 1 1`.
@@ -53,7 +54,7 @@ exists, only scene lights are used.
 Example:
 
 ```
-ENGINE_SCENE 6 5 4
+ENGINE_SCENE 7 5 4
 ENTITY 1 0 "Ball" 0 0.5 0 0 0 0 1 1 1 1
 ENTITY 2 0 "Sun" 0 4 0 0 0 0 1 1 1 1
 ENTITY 3 0 "Camera" 0 1.5 6 0 0 0 1 1 1 1
@@ -96,8 +97,47 @@ emissive_map -
 Colors are sRGB in [0, 1] (alpha is linear). `alpha_mode` is `opaque`, `mask` or `blend`. Metallic-roughness maps read green
 as roughness and blue as metalness, multiplied by the factors; occlusion maps read red.
 
+## Effect files
+
+A `.effect` file in the asset folder (`engine::assets::write_effect`, `parse_effect`) is text like a material: the line
+`ENGINE_EFFECT 1`, then one `key values` line per field. Every key is optional and at most once; unknown keys and
+out-of-range values are errors.
+
+```
+ENGINE_EFFECT 1
+duration 1
+rate 30
+burst 0
+lifetime 0.6 1
+speed 1 2
+cone 20
+spawn_radius 0
+acceleration 0 -9.81 0
+drag 0
+spin 0 0
+stretch 0
+size 0 0.1 1 0.1
+color 0 1 1 1 1 1 1 1 1 0
+emissive_strength 1
+blend additive
+texture -
+collide_floor 0
+floor_height 0
+bounce 0.3
+world_space 1
+max_particles 500
+```
+
+Pairs are min and max (`lifetime`, `speed`, `spin` in degrees per second). Directions spread around the emitter's +Y
+axis, or the direction a one-shot effect is fired along, within the `cone` half angle (180 is every direction).
+`size` is 1 to 8 pairs of life fraction and quad width in metres; `color` is 1 to 8 groups of life fraction and an
+sRGB color with linear alpha. Both are interpolated linearly. `stretch` above 0 draws a quad along the velocity,
+speed times that many seconds long, for sparks. `blend` is `additive` or `alpha`. `texture` is an image asset
+reference or `-` for a soft round dot. `max_particles` is 1 to 20000.
+
 ## Earlier versions
 
+- **Version 6** (Milestone 4): no `EMITTER` record.
 - **Version 5** (Milestone 3 slice S5): `MESH` has no material or UV scale, `LIGHT` no cones or shadows, `BODY` no rotation
   lock, `COLLIDER` no filter; `MATSLOT`, `ENVIRONMENT`, `BEHAVIOR` and the `spot` type are rejected.
 - **Version 4** (Milestone 3 slice S4): `MESH` has no asset reference fields.

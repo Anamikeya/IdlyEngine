@@ -38,6 +38,7 @@ enum class AssetType : std::uint8_t {
 	Texture, // .png, .jpg, .jpeg, .tga, .ppm
 	Material, // .material: text, see parse_material
 	Environment, // .hdr: equirectangular radiance
+	Effect, // .effect: text, see parse_effect
 };
 
 [[nodiscard]] const char* to_string(AssetType type) noexcept;
@@ -187,6 +188,53 @@ struct MaterialData {
 	MaterialTexture emissive_map;
 
 	friend bool operator==(const MaterialData&, const MaterialData&) = default;
+};
+
+enum class ParticleBlend : std::uint8_t {
+	Additive, // Adds light: sparks, flashes, glows. Needs no sorting.
+	Alpha,    // Covers what is behind: smoke, dust. Sorted back to front within an emitter.
+};
+
+// A key of a curve over a particle's life; time is 0 at birth and 1 at death.
+struct ParticleSizeKey {
+	double time = 0.0;
+	double size = 0.1; // Quad width in metres.
+	friend bool operator==(const ParticleSizeKey&, const ParticleSizeKey&) = default;
+};
+struct ParticleColorKey {
+	double time = 0.0;
+	std::array<double, 4> color{1.0, 1.0, 1.0, 1.0}; // sRGB in [0, 1]; alpha is linear.
+	friend bool operator==(const ParticleColorKey&, const ParticleColorKey&) = default;
+};
+inline constexpr std::size_t max_effect_keys = 8;
+inline constexpr std::uint32_t max_effect_particles = 20000;
+
+// A particle effect asset (.effect): how one emitter spawns, moves and draws its particles. Visual only.
+// Directions are around the emitter's +Y axis, or the direction a one-shot effect is fired along.
+struct EffectData {
+	double duration = 1.0;                   // Seconds of one cycle; > 0.
+	double rate = 30.0;                      // Particles per second while a cycle runs; >= 0.
+	std::uint32_t burst = 0;                 // Particles at the start of each cycle.
+	std::array<double, 2> lifetime{0.6, 1.0}; // Seconds, min and max; 0 < min <= max.
+	std::array<double, 2> speed{1.0, 2.0};    // Metres per second, min and max; 0 <= min <= max.
+	double cone_degrees = 20.0;              // Half angle of the spread; [0, 180]. 180 is every direction.
+	double spawn_radius = 0.0;               // Particles start within a sphere this big; >= 0.
+	std::array<double, 3> acceleration{0.0, -9.81, 0.0}; // World space, m/s^2. Gravity by default.
+	double drag = 0.0;                       // Fraction of velocity lost per second, as 1/s; >= 0.
+	std::array<double, 2> spin_degrees{0.0, 0.0}; // Degrees per second, min and max.
+	double stretch = 0.0;                    // 0: square quads facing the camera. Above 0: stretched along the velocity, speed times this many seconds long.
+	std::vector<ParticleSizeKey> size{{0.0, 0.1}, {1.0, 0.1}};
+	std::vector<ParticleColorKey> color{{0.0, {1.0, 1.0, 1.0, 1.0}}, {1.0, {1.0, 1.0, 1.0, 0.0}}};
+	double emissive_strength = 1.0;          // Multiplies the color; above 1 it blooms. >= 0.
+	ParticleBlend blend = ParticleBlend::Additive;
+	MaterialTexture texture;                 // Empty: a soft round dot.
+	bool collide_floor = false;              // Particles bounce on a horizontal plane.
+	double floor_height = 0.0;               // World Y of that plane.
+	double bounce = 0.3;                     // Fraction of speed kept by a bounce; [0, 1].
+	bool world_space = true;                 // Particles stay where they were born when the emitter moves. Off: they move with it.
+	std::uint32_t max_particles = 500;       // Alive at once; 1..max_effect_particles.
+
+	friend bool operator==(const EffectData&, const EffectData&) = default;
 };
 
 } // namespace engine::assets

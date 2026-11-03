@@ -3,6 +3,7 @@
 #include <engine/commands/CommandBus.hpp>
 #include <engine/editor/CameraController.hpp>
 #include <engine/editor/Selection.hpp>
+#include <engine/effects/particles.h>
 #include <engine/gameplay/game.h>
 #include <engine/physics/scene_physics.h>
 #include <engine/renderer/RenderSnapshot.hpp>
@@ -10,6 +11,7 @@
 #include <array>
 #include <chrono>
 #include <filesystem>
+#include <functional>
 #include <future>
 #include <map>
 #include <memory>
@@ -59,6 +61,7 @@ Result<EditorViewState> read_view_state(std::string_view);
 // What the viewport leaves out. These only take things away from what the scene says.
 struct ViewFlags {
     bool grid = true, skybox = true, shadows = true, ambient_occlusion = true, bloom = true;
+    bool effects = true; // Particle emitters play while editing. Only the preview: it never changes the scene.
 };
 
 enum class PlayState { Editing, Playing, Paused };
@@ -127,11 +130,22 @@ class EditorSession {
     std::vector<std::string> asset_problems_;
     // Material edits in progress, not saved yet (a drag in the Material Editor); these win over the file.
     std::map<assets::AssetId, assets::MaterialData> material_drafts_;
+    // The same for particle effects in the Effect Editor.
+    std::map<assets::AssetId, assets::EffectData> effect_drafts_;
+    // Plays the editor scene's emitters while editing (view_flags.effects). Play mode has its own, in Runtime.
+    effects::ParticleSystem edit_particles_{1};
     // One ordered history of named steps. A scene step's data lives in the command bus; a material edit carries its own.
     struct MaterialEdit { assets::AssetId id; assets::MaterialData before, after; };
+    struct EffectEdit { assets::AssetId id; assets::EffectData before, after; };
     struct FolderEdit { EditorFolders before, after; };
     // `scene`: the command bus holds a matching step. A transaction can change the scene and folders together.
-    struct HistoryStep { std::string name; std::optional<MaterialEdit> material; std::optional<FolderEdit> folders; bool scene = true; };
+    struct HistoryStep {
+        std::string name;
+        std::optional<MaterialEdit> material;
+        std::optional<FolderEdit> folders;
+        bool scene = true;
+        std::optional<EffectEdit> effect;
+    };
     std::vector<HistoryStep> undo_steps_, redo_steps_;
     std::uint64_t bus_recorded_ = 0;
     int transaction_depth_ = 0;
@@ -420,6 +434,25 @@ public:
     // Number of parts the entity's mesh has, each of which can take a material.
     std::size_t mesh_part_count(const MeshComponent &);
 
+    // ---- Particle effects: .effect files in the asset folder ----
+    // Creates "effects/<name>.effect" under a free name.
+    Result<assets::AssetId> create_effect(const std::string &name, const assets::EffectData & = {});
+    // The current value: a draft while one is being edited, otherwise the saved one.
+    std::optional<assets::EffectData> effect(assets::AssetId) const;
+    // A live change: every emitter using it shows it at once, without restarting. Nothing is saved, no undo step.
+    Result<void> preview_effect(assets::AssetId, const assets::EffectData &);
+    // Saves the effect to its file: one undo step. A draft is replaced, and emitters using it start again.
+    Result<void> save_effect(assets::AssetId, const assets::EffectData &);
+    void discard_effect_draft(assets::AssetId);
+    // Gives the entity a particle emitter playing this effect, or changes its effect. One undo step.
+    Result<commands::Receipt> assign_effect(EntityId, assets::AssetId);
+    // Starts every emitter of the shown scene again from its beginning, and drops one-shot effects.
+    void restart_effects();
+    // What the shown scene's particle system holds now.
+    effects::Stats effect_stats() const;
+    // Advances the edit-mode preview; update() calls it, and so can a host that is not playing.
+    void advance_effects(std::chrono::nanoseconds elapsed);
+
     // ---- Lighting ----
     // The environment in force for the shown scene: the first by entity ID, or the defaults.
     EnvironmentComponent environment() const;
@@ -435,6 +468,13 @@ public:
     Result<commands::Receipt> create_preset_lights(bool outdoor);
 private:
     void tick();
+    struct EffectSource { assets::AssetId id; std::uint32_t revision = 0; std::shared_ptr<const assets::EffectData> data; };
+    // The effect a reference names, with a draft winning over the file; `problem` says why there is none.
+    std::optional<EffectSource> effect_source(const AssetRef &, std::string &problem) const;
+    effects::ParticleSystem &shown_particles();
+    const effects::ParticleSystem &shown_particles() const;
+    // Emitters of the shown scene, for its particle system.
+    std::vector<effects::EmitterInput> emitter_inputs(const std::vector<EntityRecord> &entities, const std::function<void(const std::string &)> &problem) const;
 };
 // Keeps a transaction open for a scope. Nested guards join the outer one.
 class ScopedTransaction {

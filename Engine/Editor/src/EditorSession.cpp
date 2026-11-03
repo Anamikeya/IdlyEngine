@@ -138,6 +138,7 @@ struct EditorSession::Runtime {
     commands::CommandBus bus{scene, 0}; // Runtime edits are discarded on stop, so they keep no history.
     std::unique_ptr<physics::ScenePhysics> physics; // Destroyed before the bus and scene (C-3).
     std::unique_ptr<gameplay::Game> game; // Holds references to the three above.
+    effects::ParticleSystem particles{1}; // The same seed each run, so a run's particles repeat.
     bool paused = false;
     std::uint64_t ticks = 0;
     std::chrono::nanoseconds accumulated{0};
@@ -286,6 +287,10 @@ Result<commands::Receipt> EditorSession::undo() {
         if (auto saved = assets_->save_material(step.material->id, step.material->before); !saved) return saved.error();
         forget_materials();
     }
+    if (step.effect) {
+        if (auto saved = assets_->save_effect(step.effect->id, step.effect->before); !saved) return saved.error();
+        effect_drafts_.erase(step.effect->id);
+    }
     if (step.folders) { view_state_.folders = step.folders->before; store_view_state(); }
     redo_steps_.push_back(std::move(step));
     undo_steps_.pop_back();
@@ -306,6 +311,10 @@ Result<commands::Receipt> EditorSession::redo() {
     if (step.material) {
         if (auto saved = assets_->save_material(step.material->id, step.material->after); !saved) return saved.error();
         forget_materials();
+    }
+    if (step.effect) {
+        if (auto saved = assets_->save_effect(step.effect->id, step.effect->after); !saved) return saved.error();
+        effect_drafts_.erase(step.effect->id);
     }
     if (step.folders) { view_state_.folders = step.folders->after; store_view_state(); }
     undo_steps_.push_back(std::move(step));
@@ -816,6 +825,7 @@ Result<void> EditorSession::rename_asset(assets::AssetId id, const std::string &
             if (changed) edits.emplace_back(commands::SetMesh{e.id, std::move(mesh)});
         }
         if (auto environment = e.components.environment; environment && fix(environment->image)) edits.emplace_back(commands::SetEnvironment{e.id, std::move(environment)});
+        if (auto emitter = e.components.emitter; emitter && fix(emitter->effect)) edits.emplace_back(commands::SetParticleEmitter{e.id, std::move(emitter)});
     }
     ScopedTransaction transaction(*this, "Update References to " + meta->path);
     for (std::size_t at = 0; at < edits.size(); at += commands::CommandBus::max_transaction) {
@@ -831,6 +841,14 @@ Result<void> EditorSession::rename_asset(assets::AssetId id, const std::string &
         for (auto *map : {&data->base_color_map, &data->metallic_roughness_map, &data->normal_map, &data->occlusion_map, &data->emissive_map})
             if (map->id == id && map->path != meta->path) { map->path = meta->path; changed = true; }
         if (changed) if (auto saved = assets_->save_material(other.id, *data); !saved) return saved;
+    }
+    for (const auto &other : assets_->assets()) {
+        if (other.type != assets::AssetType::Effect) continue;
+        auto data = effect(other.id);
+        if (!data || data->texture.id != id || data->texture.path == meta->path) continue;
+        data->texture.path = meta->path;
+        if (auto saved = assets_->save_effect(other.id, *data); !saved) return saved;
+        effect_drafts_.erase(other.id);
     }
     forget_materials();
     return {};
@@ -995,6 +1013,26 @@ Result<renderer::Frame> EditorSession::frame(double aspect) {
         if (!resolved.environment.index) { environment_settings.source = EnvironmentSource::Procedural; problem(resolved.problem); }
     }
     if (++frames_since_trim_ >= 240) { frames_since_trim_ = 0; release_unused_assets(); }
+    // Particles: the shown scene's emitters, then what its particle system holds, ready to draw.
+    auto &particles = shown_particles();
+    if (runtime_ || view_flags.effects) particles.set_emitters(emitter_inputs(entities, problem));
+    else particles.set_emitters({});
+    std::vector<renderer::RenderParticles> particle_batches;
+    for (auto &batch : particles.batches()) {
+        renderer::RenderParticles drawn;
+        drawn.key = batch.key;
+        drawn.blend = batch.effect->blend == assets::ParticleBlend::Alpha ? renderer::ParticleBlendMode::Alpha : renderer::ParticleBlendMode::Additive;
+        drawn.strength = batch.effect->emissive_strength;
+        drawn.stretch = batch.effect->stretch;
+        if (const auto &image = batch.effect->texture; !image.empty()) {
+            const auto &resolved = resolve(AssetRef{image.id.value, image.path}, assets::AssetType::Texture);
+            drawn.texture = resolved.texture;
+            if (!resolved.texture.index) problem(resolved.problem);
+        }
+        drawn.particles.reserve(batch.particles.size());
+        for (const auto &p : batch.particles) drawn.particles.push_back({p.position, p.velocity, p.size, p.rotation, p.color});
+        particle_batches.push_back(std::move(drawn));
+    }
 
     // Each play session is a distinct scene identity, so the renderer never reuses editor objects for it.
     const renderer::FrameStamp stamp{scene_identity(), scene_revision(), ++frame_};
@@ -1005,7 +1043,7 @@ Result<renderer::Frame> EditorSession::frame(double aspect) {
         if (primary != entities.end()) {
             const auto &c = *primary->components.camera;
             const renderer::PerspectiveCamera lens{primary->id, glm::radians(c.vertical_fov_degrees), aspect, c.near_plane, c.far_plane};
-            auto through_camera = renderer::extract_frame(shown, stamp, lens, meshes, lights, environment_settings, !runtime_ && view_flags.grid, grid_spacing);
+            auto through_camera = renderer::extract_frame(shown, stamp, lens, meshes, lights, environment_settings, !runtime_ && view_flags.grid, grid_spacing, particle_batches);
             if (through_camera) { view_camera_ = primary->id; return through_camera; }
             view_camera_issue_ = "Camera '" + primary->name + "' cannot be used: " + through_camera.error().message;
         }
@@ -1020,8 +1058,58 @@ Result<renderer::Frame> EditorSession::frame(double aspect) {
         eye.distance += stand_back;
         lens.far_plane = eye.distance + 2 * stand_back;
     }
-    return renderer::extract_frame(shown, stamp, lens, eye.world(), meshes, lights, environment_settings, editor_view && view_flags.grid, grid_spacing);
+    return renderer::extract_frame(shown, stamp, lens, eye.world(), meshes, lights, environment_settings, editor_view && view_flags.grid, grid_spacing,
+                                   std::move(particle_batches));
 }
+effects::ParticleSystem &EditorSession::shown_particles() { return runtime_ ? runtime_->particles : edit_particles_; }
+const effects::ParticleSystem &EditorSession::shown_particles() const { return runtime_ ? runtime_->particles : edit_particles_; }
+std::optional<EditorSession::EffectSource> EditorSession::effect_source(const AssetRef &ref, std::string &problem) const {
+    const auto reason = [&](const std::string &why) {
+        problem = "Effect '" + ref.path + "' cannot be used: " + why;
+        return std::nullopt;
+    };
+    if (!assets_) return reason("there is no asset folder at " + asset_folder().generic_string());
+    auto meta = assets_->find(assets::AssetId{ref.id});
+    if (!meta) meta = assets_->find(std::string_view(ref.path));
+    if (!meta) return reason("it is not in the asset folder");
+    if (meta->type != assets::AssetType::Effect) return reason("it is not a particle effect");
+    auto loaded = assets_->load_effect(meta->id);
+    if (!loaded) return reason(loaded.error().message);
+    EffectSource source{meta->id, loaded.value().revision, loaded.value().data};
+    // A draft keeps the saved revision, so emitters take its values without starting again.
+    if (const auto draft = effect_drafts_.find(meta->id); draft != effect_drafts_.end())
+        source.data = std::make_shared<const assets::EffectData>(draft->second);
+    return source;
+}
+std::vector<effects::EmitterInput> EditorSession::emitter_inputs(const std::vector<EntityRecord> &entities,
+                                                                  const std::function<void(const std::string &)> &problem) const {
+    std::vector<effects::EmitterInput> inputs;
+    const auto &shown = scene();
+    for (const auto &e : entities) {
+        const auto &emitter = e.components.emitter;
+        if (!emitter || emitter->effect.empty() || (!runtime_ && hidden(e.id))) continue;
+        std::string why;
+        const auto source = effect_source(emitter->effect, why);
+        if (!source) { problem(why); continue; }
+        effects::EmitterInput in;
+        in.entity = e.id;
+        in.effect = source->data;
+        in.asset = source->id.value;
+        in.revision = source->revision;
+        if (const auto world = shown.world_transform(e.id)) in.world = world->matrix;
+        in.auto_play = emitter->auto_play;
+        in.loop = emitter->loop;
+        in.rate_scale = emitter->rate_scale;
+        inputs.push_back(std::move(in));
+    }
+    return inputs;
+}
+void EditorSession::advance_effects(std::chrono::nanoseconds elapsed) {
+    if (runtime_ || !view_flags.effects || elapsed.count() <= 0) return;
+    edit_particles_.update(std::chrono::duration<double>(elapsed).count());
+}
+void EditorSession::restart_effects() { shown_particles().restart(); }
+effects::Stats EditorSession::effect_stats() const { return shown_particles().stats(); }
 std::uint64_t EditorSession::scene_identity() const { return runtime_ ? 1 + play_sessions_ : 1; }
 std::uint64_t EditorSession::scene_revision() const { return runtime_ ? runtime_->bus.revision() : bus_.revision(); }
 PlayState EditorSession::play_state() const {
@@ -1069,6 +1157,7 @@ Result<void> EditorSession::pause() {
 Result<void> EditorSession::step() {
     if (!runtime_ || !runtime_->paused) return fail(ErrorCode::InvalidState, "Step requires paused Play mode");
     tick();
+    runtime_->particles.update(std::chrono::duration<double>(fixed_step).count());
     if (!physics_error_.empty()) return fail(ErrorCode::InvalidState, physics_error_);
     return {};
 }
@@ -1091,8 +1180,10 @@ Result<void> EditorSession::restart() {
 }
 gameplay::Game *EditorSession::game() const { return runtime_ ? runtime_->game.get() : nullptr; }
 void EditorSession::update(std::chrono::nanoseconds elapsed) {
+    advance_effects(elapsed);
     if (!runtime_ || runtime_->paused || elapsed.count() <= 0) return;
     auto &r = *runtime_;
+    r.particles.update(std::chrono::duration<double>(elapsed).count());
     r.accumulated += elapsed;
     int ticks = 0;
     while (r.accumulated >= fixed_step && ticks < max_ticks_per_update && !r.paused) { r.accumulated -= fixed_step; tick(); ++ticks; }
@@ -1112,7 +1203,18 @@ void EditorSession::tick() {
         r.paused = true;
     }
     const auto after_physics = std::chrono::steady_clock::now();
-    if (r.game) r.game->post_physics();
+    if (r.game) {
+        r.game->post_physics();
+        // One-shot effects the game asked for, from the emitter on their source entity. Visual only.
+        for (const auto &event : r.game->effect_events()) {
+            const auto source = r.scene.inspect(event.source);
+            if (!source || !source->components.emitter) continue;
+            std::string why;
+            if (const auto effect = effect_source(source->components.emitter->effect, why))
+                r.particles.fire(event.source, effect->data, {event.point.x, event.point.y, event.point.z},
+                                 {event.direction.x, event.direction.y, event.direction.z}, event.strength * source->components.emitter->rate_scale);
+        }
+    }
     const auto end = std::chrono::steady_clock::now();
     ++timing_.ticks;
     timing_.physics += after_physics - before_physics;
@@ -1254,6 +1356,14 @@ std::set<assets::AssetId> EditorSession::referenced_assets() {
         if (!meta) meta = assets_->find(std::string_view(ref.path));
         if (!meta) return;
         used.insert(meta->id);
+        if (meta->type == assets::AssetType::Effect) {
+            if (const auto data = effect(meta->id); data && !data->texture.empty()) {
+                auto image = assets_->find(data->texture.id);
+                if (!image) image = assets_->find(std::string_view(data->texture.path));
+                if (image) used.insert(image->id);
+            }
+            return;
+        }
         if (meta->type != assets::AssetType::Material) return;
         if (const auto data = material(meta->id))
             for (const auto *texture : {&data->base_color_map, &data->metallic_roughness_map, &data->normal_map, &data->occlusion_map, &data->emissive_map})
@@ -1270,11 +1380,13 @@ std::set<assets::AssetId> EditorSession::referenced_assets() {
                 for (const auto &slot : m->material_slots) add(slot.material);
             }
             if (const auto &v = e.components.environment) add(v->image);
+            if (const auto &p = e.components.emitter) add(p->effect);
         }
     };
     scan(scene_);
     if (runtime_) scan(runtime_->scene);
     for (const auto &[id, draft] : material_drafts_) { (void)draft; used.insert(id); }
+    for (const auto &[id, draft] : effect_drafts_) { (void)draft; used.insert(id); }
     return used;
 }
 std::size_t EditorSession::release_unused_assets() {
@@ -1346,6 +1458,64 @@ Result<void> EditorSession::save_material(assets::AssetId id, const assets::Mate
             undo_steps_.erase(std::ranges::find_if(undo_steps_, [](const HistoryStep &step) { return step.material.has_value(); }));
     }
     return {};
+}
+Result<assets::AssetId> EditorSession::create_effect(const std::string &name, const assets::EffectData &data) {
+    if (project_.empty()) return fail(ErrorCode::InvalidState, "No project is open");
+    if (!assets_) {
+        std::error_code ec;
+        std::filesystem::create_directories(asset_folder(), ec);
+        if (ec) return fail(ErrorCode::InvalidState, "Cannot create the asset folder: " + ec.message());
+        auto database = assets::AssetDatabase::open(asset_folder());
+        if (!database) return database.error();
+        assets_.emplace(std::move(database.value()));
+    }
+    auto id = assets_->create_effect("effects/" + name + ".effect", data);
+    if (id) resolved_.clear();
+    return id;
+}
+std::optional<assets::EffectData> EditorSession::effect(assets::AssetId id) const {
+    if (const auto draft = effect_drafts_.find(id); draft != effect_drafts_.end()) return draft->second;
+    if (!assets_) return std::nullopt;
+    auto loaded = assets_->load_effect(id);
+    if (!loaded) return std::nullopt;
+    return *loaded.value().data;
+}
+Result<void> EditorSession::preview_effect(assets::AssetId id, const assets::EffectData &data) {
+    if (auto valid = assets::validate_effect(data); !valid) return valid;
+    const auto meta = assets_ ? assets_->find(id) : std::nullopt;
+    if (!meta || meta->type != assets::AssetType::Effect) return fail(ErrorCode::NotFound, "Effect is not in the asset folder");
+    effect_drafts_[id] = data;
+    return {};
+}
+Result<void> EditorSession::save_effect(assets::AssetId id, const assets::EffectData &data) {
+    if (!assets_) return fail(ErrorCode::NotFound, "Effect is not in the asset folder");
+    auto saved_value = assets_->load_effect(id);
+    if (!saved_value) return saved_value.error();
+    const assets::EffectData before = *saved_value.value().data;
+    if (auto saved = assets_->save_effect(id, data); !saved) return saved;
+    effect_drafts_.erase(id);
+    if (before != data) {
+        const auto meta = assets_->find(id);
+        const auto stem = std::filesystem::path(std::u8string(reinterpret_cast<const char8_t *>(meta->path.data()), meta->path.size())).stem().u8string();
+        HistoryStep step{"Edit Effect " + std::string(reinterpret_cast<const char *>(stem.data()), stem.size()), std::nullopt, std::nullopt, false, EffectEdit{id, before, data}};
+        undo_steps_.push_back(std::move(step));
+        redo_steps_.clear();
+        bus_.discard_redo();
+        if (std::ranges::count_if(undo_steps_, [](const HistoryStep &s) { return s.effect.has_value(); }) > 128)
+            undo_steps_.erase(std::ranges::find_if(undo_steps_, [](const HistoryStep &s) { return s.effect.has_value(); }));
+    }
+    return {};
+}
+void EditorSession::discard_effect_draft(assets::AssetId id) { effect_drafts_.erase(id); }
+Result<commands::Receipt> EditorSession::assign_effect(EntityId id, assets::AssetId asset) {
+    const auto record = scene().inspect(id);
+    if (!record) return fail(ErrorCode::NotFound, "Entity no longer exists");
+    const auto meta = assets_ ? assets_->find(asset) : std::nullopt;
+    if (!meta) return fail(ErrorCode::NotFound, "Effect is not in the asset folder");
+    if (meta->type != assets::AssetType::Effect) return fail(ErrorCode::InvalidArgument, meta->path + " is not a particle effect");
+    auto emitter = record->components.emitter.value_or(ParticleEmitterComponent{});
+    emitter.effect = reference(*meta);
+    return execute(commands::SetParticleEmitter{id, emitter}, "Assign Effect");
 }
 void EditorSession::discard_material_draft(assets::AssetId id) {
     if (material_drafts_.erase(id)) forget_materials();
@@ -1439,10 +1609,12 @@ Result<void> EditorSession::open_project(const std::filesystem::path &root) {
     if (!std::filesystem::is_directory(root, ec)) return fail(ErrorCode::NotFound, "Project folder not found: " + root.generic_string());
     project_ = root;
     assets_.reset(); resolved_.clear();
-    // Material edits belong to the old project's files.
+    // Material and effect edits belong to the old project's files.
     material_drafts_.clear();
-    std::erase_if(undo_steps_, [](const HistoryStep &step) { return step.material.has_value(); });
-    std::erase_if(redo_steps_, [](const HistoryStep &step) { return step.material.has_value(); });
+    effect_drafts_.clear();
+    std::erase_if(undo_steps_, [](const HistoryStep &step) { return step.material.has_value() || step.effect.has_value(); });
+    std::erase_if(redo_steps_, [](const HistoryStep &step) { return step.material.has_value() || step.effect.has_value(); });
+    edit_particles_ = effects::ParticleSystem(1);
     if (!std::filesystem::is_directory(asset_folder(), ec)) return {};
     auto database = assets::AssetDatabase::open(asset_folder());
     if (!database) return database.error();
