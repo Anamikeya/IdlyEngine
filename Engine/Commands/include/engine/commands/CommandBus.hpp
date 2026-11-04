@@ -80,9 +80,18 @@ struct SetParticleEmitter {
     EntityId id;
     std::optional<ParticleEmitterComponent> emitter;
 };
+struct SetAnimator {
+    EntityId id;
+    std::optional<AnimatorComponent> animator;
+};
+struct SetAttachToBone {
+    EntityId id;
+    std::optional<AttachToBoneComponent> attach;
+};
 using Command = std::variant<CreateEntity, DeleteEntity, RenameEntity, SetTransform, SetParent,
                              ReplaceScene, SetMesh, SetCamera, SetLight, DuplicateEntity,
-                             SetRigidBody, SetColliders, SetEnvironment, SetBehaviors, SetParticleEmitter>;
+                             SetRigidBody, SetColliders, SetEnvironment, SetBehaviors, SetParticleEmitter,
+                             SetAnimator, SetAttachToBone>;
 struct CommandDescriptor {
     std::string_view name;
     Capability permission;

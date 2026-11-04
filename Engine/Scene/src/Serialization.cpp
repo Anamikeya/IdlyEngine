@@ -229,6 +229,7 @@ Result<void> write_scene(std::ostream &out, const SceneSnapshot &s) {
                           e.components.light.has_value() + e.components.body.has_value() +
                           e.components.colliders.size() + e.components.environment.has_value() +
                           e.components.behaviors.size() + e.components.emitter.has_value() +
+                          e.components.animator.has_value() + e.components.attach.has_value() +
                           (e.components.mesh ? e.components.mesh->material_slots.size() : 0);
         out << "COMPONENTS " << components << '\n';
         for (const auto &e : s.entities) {
@@ -293,6 +294,14 @@ Result<void> write_scene(std::ostream &out, const SceneSnapshot &s) {
                 write_ref(out, p->effect);
                 out << ' ' << (p->auto_play ? 1 : 0) << ' ' << (p->loop ? 1 : 0) << ' ' << p->rate_scale << '\n';
             }
+            if (const auto &a = e.components.animator) {
+                out << "ANIMATOR " << e.id << ' ';
+                write_ref(out, a->clips);
+                out << ' ' << std::quoted(a->clip) << ' ' << a->speed << ' ' << (a->loop ? 1 : 0) << ' ' << a->start_time << ' '
+                    << (a->preview ? 1 : 0) << '\n';
+            }
+            if (const auto &b = e.components.attach)
+                out << "ATTACH " << e.id << ' ' << std::quoted(b->bone) << '\n';
         }
         if (!out)
             return fail(ErrorCode::ParseError, "Scene output stream failed");
@@ -336,8 +345,8 @@ Result<SceneSnapshot> read_scene(std::istream &in) {
             // Version 2 defined no component kinds; version 3 allows one MESH, CAMERA and LIGHT per entity;
             // version 4 adds one BODY and up to max_colliders_per_entity COLLIDER records; version 6 adds one
             // ENVIRONMENT and up to max_material_slots MATSLOT and max_behaviors_per_entity BEHAVIOR records;
-            // version 7 adds one EMITTER.
-            const std::size_t per_entity = version >= 7   ? 6 + max_colliders_per_entity + max_material_slots + max_behaviors_per_entity
+            // version 7 adds one EMITTER, ANIMATOR and ATTACH.
+            const std::size_t per_entity = version >= 7   ? 8 + max_colliders_per_entity + max_material_slots + max_behaviors_per_entity
                                            : version >= 6 ? 5 + max_colliders_per_entity + max_material_slots + max_behaviors_per_entity
                                            : version >= 4 ? 4 + max_colliders_per_entity
                                            : version >= 3 ? 3
@@ -355,7 +364,7 @@ Result<SceneSnapshot> read_scene(std::istream &in) {
                 const std::string kind = word;
                 const bool physics = kind == "BODY" || kind == "COLLIDER";
                 const bool v6_only = kind == "MATSLOT" || kind == "ENVIRONMENT" || kind == "BEHAVIOR";
-                const bool v7_only = kind == "EMITTER";
+                const bool v7_only = kind == "EMITTER" || kind == "ANIMATOR" || kind == "ATTACH";
                 if ((kind != "MESH" && kind != "CAMERA" && kind != "LIGHT" && !physics && !v6_only && !v7_only) ||
                     (physics && version < 4) || (v6_only && version < 6) || (v7_only && version < 7))
                     return fail(ErrorCode::ParseError, "Unsupported component kind '" + kind + "'");
@@ -468,6 +477,21 @@ Result<SceneSnapshot> read_scene(std::istream &in) {
                     p.auto_play = autoplay == 1;
                     p.loop = loop == 1;
                     c.emitter = p;
+                } else if (kind == "ANIMATOR") {
+                    AnimatorComponent a;
+                    int loop = -1, preview = -1;
+                    duplicate = c.animator.has_value();
+                    parsed = reader.asset_ref(a.clips) && reader.name(a.clip, max_clip_name_bytes) && reader.number(a.speed) &&
+                             reader.number(loop) && reader.number(a.start_time) && reader.number(preview) && (loop == 0 || loop == 1) &&
+                             (preview == 0 || preview == 1);
+                    a.loop = loop == 1;
+                    a.preview = preview == 1;
+                    c.animator = a;
+                } else if (kind == "ATTACH") {
+                    AttachToBoneComponent b;
+                    duplicate = c.attach.has_value();
+                    parsed = reader.name(b.bone, max_clip_name_bytes);
+                    c.attach = b;
                 } else {
                     LightComponent l;
                     int shadows = 0;

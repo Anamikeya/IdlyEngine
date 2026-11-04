@@ -90,6 +90,9 @@ While a text field has the keyboard, only Ctrl+P and Ctrl+Shift+P fire.
 | Show Bloom |  | Viewport | `Viewport.ShowBloom` |
 | Play Effects |  | Viewport | `Viewport.ShowEffects` |
 | Restart Effects |  | Viewport | `Viewport.RestartEffects` |
+| Play Animations |  | Viewport | `Viewport.ShowAnimations` |
+| Restart Animations |  | Viewport | `Viewport.RestartAnimations` |
+| Show Bones |  | Viewport | `Viewport.ShowBones` |
 | Game View | `G` | Viewport | `Viewport.GameView` |
 | Maximize Viewport | `F11` | Viewport | `Viewport.Maximize` |
 | Perspective | `Alt+G` | Viewport | `Viewport.Perspective` |
@@ -168,6 +171,7 @@ While a text field has the keyboard, only Ctrl+P and Ctrl+Shift+P fire.
 | Lighting |  | Global | `Window.Lighting` |
 | Material Editor |  | Global | `Window.MaterialEditor` |
 | Effect Editor |  | Global | `Window.EffectEditor` |
+| Animation |  | Global | `Window.Animation` |
 | Asset Browser |  | Global | `Window.AssetBrowser` |
 | Console |  | Global | `Window.Console` |
 | Message Log |  | Global | `Window.MessageLog` |

@@ -1,4 +1,5 @@
 #pragma once
+#include <engine/animation/animation.h>
 #include <engine/assets/asset_database.h>
 #include <engine/commands/CommandBus.hpp>
 #include <engine/editor/CameraController.hpp>
@@ -10,6 +11,7 @@
 #include <engine/renderer/ResourceRegistry.hpp>
 #include <array>
 #include <chrono>
+#include <deque>
 #include <filesystem>
 #include <functional>
 #include <future>
@@ -62,6 +64,8 @@ Result<EditorViewState> read_view_state(std::string_view);
 struct ViewFlags {
     bool grid = true, skybox = true, shadows = true, ambient_occlusion = true, bloom = true;
     bool effects = true; // Particle emitters play while editing. Only the preview: it never changes the scene.
+    bool animations = true; // Animators whose preview is on play while editing; the same promise.
+    bool bones = false;     // Skeletons are drawn over the view.
 };
 
 enum class PlayState { Editing, Playing, Paused };
@@ -135,9 +139,20 @@ class EditorSession {
     std::map<assets::AssetId, assets::EffectData> effect_drafts_;
     // Plays the editor scene's emitters while editing (view_flags.effects). Play mode has its own, in Runtime.
     effects::ParticleSystem edit_particles_{1};
+    // Plays the editor scene's animators while editing (view_flags.animations). Play mode has its own, in Runtime.
+    animation::AnimationSystem edit_animation_;
+    // Skeletons and clips built from models, by the model data they came from. A model reloaded from disk is new data, so
+    // it gets a new rig. An entry whose model data has been freed is stale: it is rebuilt if asked for, and dropped when
+    // unused assets are released.
+    struct RigEntry { std::weak_ptr<const assets::MeshData> model; std::shared_ptr<const animation::Rig> rig; std::string problem; };
+    struct ClipEntry { std::weak_ptr<const assets::MeshData> model, source; std::shared_ptr<const animation::ClipSet> clips; std::string problem; };
+    mutable std::map<const assets::MeshData *, RigEntry> rigs_;
+    mutable std::map<std::pair<const assets::MeshData *, const assets::MeshData *>, ClipEntry> clip_sets_;
+    std::deque<animation::AnimationEvent> recent_events_;
     // One ordered history of named steps. A scene step's data lives in the command bus; a material edit carries its own.
     struct MaterialEdit { assets::AssetId id; assets::MaterialData before, after; };
     struct EffectEdit { assets::AssetId id; assets::EffectData before, after; };
+    struct EventsEdit { assets::AssetId id; std::vector<assets::ClipEvent> before, after; };
     struct FolderEdit { EditorFolders before, after; };
     // `scene`: the command bus holds a matching step. A transaction can change the scene and folders together.
     struct HistoryStep {
@@ -146,6 +161,7 @@ class EditorSession {
         std::optional<FolderEdit> folders;
         bool scene = true;
         std::optional<EffectEdit> effect;
+        std::optional<EventsEdit> events;
     };
     std::vector<HistoryStep> undo_steps_, redo_steps_;
     std::uint64_t bus_recorded_ = 0;
@@ -183,8 +199,9 @@ class EditorSession {
     std::set<assets::AssetId> referenced_assets();
     void reconcile();
     Result<void> editing_only(const char *action) const;
-    // Local TRS that places an entity at `world` under `parent` (0 = root); rejects shear.
-    Result<Transform> local_from_world(EntityId parent, const WorldTransform &world) const;
+    // Local TRS that places an entity drawn at `world` under `parent` (0 = root), on the parent's joint `bone` when it
+    // is attached to one; rejects shear.
+    Result<Transform> local_from_world(EntityId parent, const WorldTransform &world, const std::string *bone = nullptr) const;
 public:
     static constexpr std::chrono::nanoseconds fixed_step{16'666'667}; // 60 Hz runtime ticks
     static constexpr int max_ticks_per_update = 5;
@@ -462,6 +479,39 @@ public:
     // Advances the edit-mode preview; update() calls it, and so can a host that is not playing.
     void advance_effects(std::chrono::nanoseconds elapsed);
 
+    // ---- Animation: poses are visual only, never in the scene, its file or its history (Milestone 5, D1, D2) ----
+    // The shown scene's animation system: the edit-mode preview, or the play session's. Its run-time controls (play,
+    // play_layered, set_time, set_paused, set_ik) change nothing in the scene.
+    animation::AnimationSystem &animation();
+    const animation::AnimationSystem &animation() const;
+    // The clips an entity's animator plays, bound to its model's skeleton: from its clip source, or its own model.
+    // Null when there are none, with the reason in `problem`.
+    std::shared_ptr<const animation::ClipSet> clip_set(EntityId, std::string *problem = nullptr) const;
+    // The skeleton of the entity's model; null when it has none.
+    std::shared_ptr<const animation::Rig> rig(EntityId) const;
+    // The model asset whose clips an entity's animator plays; the null id when there is none.
+    assets::AssetId clip_source(EntityId) const;
+    // Advances the edit-mode preview; update() calls it.
+    void advance_animations(std::chrono::nanoseconds elapsed);
+    // Starts every animator of the shown scene again from its authored clip.
+    void restart_animations();
+    // A joint of the entity's model as drawn now (its pose, or its rest pose), in world space.
+    std::optional<WorldTransform> joint_world(EntityId, std::string_view joint) const;
+    // Where the entity is drawn: its scene transform, moved by the joint it or an ancestor is attached to (D2). Gizmos,
+    // outlines and picking use it; set_world() and drags take positions in the same space.
+    std::optional<WorldTransform> drawn_world(EntityId) const;
+    // Clip events the shown scene crossed, oldest first; at most 64 are kept.
+    const std::deque<animation::AnimationEvent> &animation_events() const { return recent_events_; }
+    struct BoneLine { EntityId entity = 0; Vec3 from, to; }; // From a joint's parent to the joint, in world space.
+    // The skeletons of the shown scene's skinned and animated models as drawn now; `only` keeps one entity's.
+    std::vector<BoneLine> bone_lines(EntityId only = 0) const;
+    // The events of a model's clips, kept in its .meta (D5).
+    std::vector<assets::ClipEvent> clip_events(assets::AssetId model) const;
+    // Replaces them: one undo step. The model is not imported again.
+    Result<void> set_clip_events(assets::AssetId model, std::vector<assets::ClipEvent> events);
+    // Gives the entity an animator playing `clip` of its own model, or changes its clip. One undo step.
+    Result<commands::Receipt> assign_clip(EntityId, const std::string &clip);
+
     // ---- Lighting ----
     // The environment in force for the shown scene: the first by entity ID, or the defaults.
     EnvironmentComponent environment() const;
@@ -484,6 +534,17 @@ private:
     const effects::ParticleSystem &shown_particles() const;
     // Emitters of the shown scene, for its particle system.
     std::vector<effects::EmitterInput> emitter_inputs(const std::vector<EntityRecord> &entities, const std::function<void(const std::string &)> &problem) const;
+    // Animators of the shown scene, for its animation system.
+    std::vector<animation::AnimatorInput> animator_inputs(const std::vector<EntityRecord> &entities, const std::function<void(const std::string &)> &problem) const;
+    std::shared_ptr<const animation::Rig> rig_for(const std::shared_ptr<const assets::MeshData> &, std::string &problem) const;
+    std::shared_ptr<const animation::ClipSet> clips_for(const EntityRecord &, std::string &problem) const;
+    std::optional<assets::AssetMetadata> asset_meta(const AssetRef &) const;
+    // The model-space transform of a joint of the entity's model as drawn now; empty when it has no such joint.
+    std::optional<animation::JointMatrix> joint_model(EntityId, std::string_view joint) const;
+    // What an attachment on the way up from `id` does to its scene transform: drawn = correction * scene. Identity when
+    // nothing is attached. `records` finds entities, so a frame can use its snapshot.
+    std::array<double, 16> attachment_correction(EntityId id, const std::function<std::optional<EntityRecord>(EntityId)> &records) const;
+    void keep_events(std::vector<animation::AnimationEvent> events);
 };
 // Keeps a transaction open for a scope. Nested guards join the outer one.
 class ScopedTransaction {

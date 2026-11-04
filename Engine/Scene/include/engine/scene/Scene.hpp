@@ -150,6 +150,25 @@ struct ParticleEmitterComponent {
     double rate_scale = 1; // Multiplies the effect's rate and bursts; within [0, 1000].
     bool operator==(const ParticleEmitterComponent &) const = default;
 };
+// Plays a clip of a skinned or animated model on the entity's own model. The pose is visual and lives in the animation
+// runtime, never in the scene (Milestone 5, D1); gameplay changes clips at run time without editing this.
+struct AnimatorComponent {
+    AssetRef clips;        // The model whose clips play. Empty: the entity's own model. Another model's clips play on
+                           // the joints whose names match.
+    std::string clip;      // Played from the start. Empty: the model rests until gameplay plays something.
+    double speed = 1;      // Multiplies time; within [-10, 10]. Negative plays backwards.
+    bool loop = true;
+    double start_time = 0; // Seconds into the clip where playing starts; within [0, 3600].
+    bool preview = true;   // Plays in the editor while editing. Off: it holds still (at its start when first shown).
+    bool operator==(const AnimatorComponent &) const = default;
+};
+inline constexpr std::size_t max_clip_name_bytes = 256;
+// Draws the entity, and what is under it, on a joint of its parent's skeleton: its transform is relative to that joint.
+// Resolved when a frame is drawn, never written to the scene (D2). Physics and gameplay see the plain parent transform.
+struct AttachToBoneComponent {
+    std::string bone; // A joint name of the parent's model: 1 to 256 bytes. Unknown names leave it on the parent.
+    bool operator==(const AttachToBoneComponent &) const = default;
+};
 struct Components {
     std::optional<MeshComponent> mesh;
     std::optional<CameraComponent> camera;
@@ -159,6 +178,8 @@ struct Components {
     std::optional<EnvironmentComponent> environment;
     std::vector<BehaviorComponent> behaviors; // Each type at most once.
     std::optional<ParticleEmitterComponent> emitter;
+    std::optional<AnimatorComponent> animator;
+    std::optional<AttachToBoneComponent> attach;
     bool operator==(const Components &) const = default;
 };
 struct EntityRecord {

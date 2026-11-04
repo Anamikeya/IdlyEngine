@@ -30,12 +30,13 @@ if(TARGET engine::gameplay)
 	target_compile_definitions(gameplay_tests PRIVATE "GAMEENGINE_SAMPLES_DIR=\"${CMAKE_SOURCE_DIR}/Samples\"")
 endif()
 
-# ozz-animation as the engine builds it; Engine/Animation's own cases join this executable in slice 3.
-if(TARGET gameengine::ozz)
+# ozz-animation as the engine builds it, and Engine/Animation on it.
+if(TARGET engine::animation)
 	gameengine_add_test_executable(animation_tests
 		LABELS animation unit
-		SOURCES Animation/ozz_smoke_tests.cpp
-		LIBRARIES gameengine::ozz)
+		SOURCES Animation/ozz_smoke_tests.cpp Animation/animation_tests.cpp
+		LIBRARIES gameengine::ozz engine::animation)
+	target_compile_definitions(animation_tests PRIVATE "GAMEENGINE_TEST_RESOURCES_DIR=\"${GAMEENGINE_RESOURCES_DIR}\"")
 endif()
 
 if(TARGET engine::effects)
@@ -83,6 +84,10 @@ if(TARGET engine_editor_session)
 	gameengine_add_test_executable(editor_effects_tests
 		LABELS editor effects unit
 		SOURCES Editor/editor_effects_tests.cpp
+		LIBRARIES engine_editor_session)
+	gameengine_add_test_executable(editor_animation_tests
+		LABELS editor animation unit
+		SOURCES Editor/editor_animation_tests.cpp
 		LIBRARIES engine_editor_session)
 	target_compile_definitions(editor_panels_tests PRIVATE "GAMEENGINE_TEST_ASSETS_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/Assets\"")
 endif()

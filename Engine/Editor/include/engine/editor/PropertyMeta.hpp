@@ -20,8 +20,9 @@ enum class PropertyType : std::uint8_t {
     Enum,     // An index into `choices`.
     Asset,    // An AssetRef of `asset_type`.
     Bits,     // A 64-bit mask.
+    Text,     // A name, picked from `suggestions` or typed.
 };
-using PropertyValue = std::variant<bool, double, Vec3, Quaternion, int, AssetRef, std::uint64_t>;
+using PropertyValue = std::variant<bool, double, Vec3, Quaternion, int, AssetRef, std::uint64_t, std::string>;
 template<class T> struct Property {
     std::string_view id;           // The field, stable: favorites and copied values refer to it.
     std::string_view display_name;
@@ -35,6 +36,10 @@ template<class T> struct Property {
     std::string_view format = "%.3f";
     std::vector<std::string_view> choices; // For Enum.
     std::string_view asset_type;   // For Asset: "mesh", "texture", "material", "environment" or "effect".
+    // For Text: where the inspector finds names to offer for the entity: "clip" (its animator's clips) or "bone" (the
+    // joints of its parent's model).
+    std::string_view suggestions;
+    std::size_t max_length = 256;  // For Text, in bytes.
     bool read_only = false;
     bool hidden = false;           // Kept out of the panel, still copied and saved.
     // Whether it applies now, like Unreal's EditCondition: a predicate because many depend on an enum (a spot light's
@@ -88,4 +93,6 @@ const PropertyTable<RigidBodyComponent> &body_properties();
 const PropertyTable<ColliderComponent> &collider_properties();
 const PropertyTable<EnvironmentComponent> &environment_properties();
 const PropertyTable<ParticleEmitterComponent> &emitter_properties();
+const PropertyTable<AnimatorComponent> &animator_properties();
+const PropertyTable<AttachToBoneComponent> &attach_properties();
 } // namespace engine::editor

@@ -62,6 +62,17 @@ struct ImportLimits {
 	std::size_t max_animation_keys = std::size_t{1} << 22; // All clips of a model together, after resampling.
 };
 
+// A named moment of a clip, such as a footstep. glTF has no events, so they live in the model's .meta (Milestone 5, D5).
+struct ClipEvent {
+	std::string clip; // The clip's name: 1 to 256 bytes, no control characters.
+	float time = 0;   // Seconds from the clip's start; finite, within [0, max_clip_event_time].
+	std::string name; // 1 to 32 of [a-z0-9_].
+
+	friend bool operator==(const ClipEvent&, const ClipEvent&) = default;
+};
+inline constexpr std::size_t max_clip_events = 1024;
+inline constexpr float max_clip_event_time = 3600;
+
 struct AssetMetadata {
 	AssetId id;
 	// Normalized virtual path relative to the database root, '/'-separated.
@@ -71,6 +82,8 @@ struct AssetMetadata {
 	bool has_meta = false;
 	ImportSettings settings;
 	std::uint64_t source_bytes = 0;
+	// From the .meta: events of a model's clips, sorted by clip, time and name. Changing them re-imports nothing.
+	std::vector<ClipEvent> events;
 };
 
 // Interleaved vertex. Right-handed, metres; UV origin top-left (v' = 1 - v_obj) to match texture rows.

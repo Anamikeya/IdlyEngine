@@ -311,6 +311,18 @@ struct EditorUI {
     void material_editor();
     void effect_editor();
     static assets::EffectData starter_effect();
+    // The Animation panel (Milestone 5): the selected animator's clips, a timeline to scrub, crossfades and layered
+    // clips to try, and the clip events kept in its model's .meta.
+    void animation_panel();
+    std::optional<std::pair<std::size_t, float>> event_drag; // An event's time being dragged: its index and value.
+    std::array<char, 33> event_name{'s', 't', 'e', 'p'};
+    float animation_blend = 0.2f;
+    // Names the Details panel offers for a text property: "clip" (the entity's clips) or "bone" (its parent's joints).
+    std::vector<std::string> name_suggestions(std::string_view kind, EntityId id) const;
+    std::array<char, 257> name_typed{};
+    // Lines between joints of the shown skeletons (View > Show Bones).
+    void bone_overlay(ImVec2 origin, ImVec2 size);
+    std::string animation_fields() const;
     // Puts physics problems in the Console once, when they appear.
     void report_physics();
     // Puts asset problems in the Console once, when they appear.
@@ -398,12 +410,13 @@ struct EditorUI {
     bool possessed() const { return session.game() && !session.ejected(); }
     // ---- Panels and layouts ----
     bool show_toolbar = true, show_hierarchy = true, show_inspector = true, show_lighting = true, show_material = true, show_assets = true, show_console = true;
-    bool show_effect = true;
+    // The Animation panel floats, closed until asked for: the right-hand dock's tabs would no longer fit.
+    bool show_effect = true, show_animation = false, focus_animation = false;
     bool layout_reset_requested = false, layout_prompt = false;
     std::array<char, 128> layout_name{};
     std::string pending_layout; // ImGui settings to load before the next frame.
     std::string saved_panels;   // Which panels were open when settings were last saved.
-    std::array<bool *, 9> panel_flags();
+    std::array<bool *, 10> panel_flags();
     void layout_dialog();
     std::vector<std::string> saved_layouts() const;
     void apply_pending_layout();

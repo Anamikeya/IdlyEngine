@@ -72,6 +72,9 @@ struct Host {
         style.Colors[ImGuiCol_WindowBg] = {0.075f,0.085f,0.105f,1};
         style.Colors[ImGuiCol_Header] = {0.16f,0.27f,0.39f,1};
         style.Colors[ImGuiCol_Button] = {0.13f,0.23f,0.34f,1};
+        // Docked tabs shrink further before the bar scrolls, so the right-hand dock's four tabs all stay in sight: with
+        // ImGui's 80, the Inspector's tab was scrolled out of view.
+        style.TabMinWidthShrink = 40;
         base_style = style;
         // The renderer uploads the font atlas once, so the font is built for the scale the editor opens at;
         // follow_monitor() scales it on another monitor.
@@ -110,7 +113,7 @@ struct StateLog {
         out << "state=" << state << " tick=" << session.runtime_ticks() << " entities=" << session.scene().size() << " revision=" << session.commands().revision() << " dirty=" << (session.dirty() ? 1 : 0)
             << " selected=" << session.selected().size() << " history=" << session.history_position() << '/' << session.history_names().size() << ui_fields
             << " camera=" << session.camera.target.x << ',' << session.camera.target.y << ',' << session.camera.target.z;
-        if (const auto w = session.scene().world_transform(session.selection())) out << " primary=" << w->matrix[12] << ',' << w->matrix[13] << ',' << w->matrix[14];
+        if (const auto w = session.drawn_world(session.selection())) out << " primary=" << w->matrix[12] << ',' << w->matrix[13] << ',' << w->matrix[14];
         if (auto *game = session.game()) {
             const auto hud = game->hud();
             out << " phase=" << gameplay::to_string(hud.phase) << " score=" << hud.score << " targets=" << hud.targets_remaining << " time=" << hud.time_remaining

@@ -150,6 +150,7 @@ struct EditorSession::Runtime {
     std::unique_ptr<physics::ScenePhysics> physics; // Destroyed before the bus and scene (C-3).
     std::unique_ptr<gameplay::Game> game; // Holds references to the three above.
     effects::ParticleSystem particles{1}; // The same seed each run, so a run's particles repeat.
+    animation::AnimationSystem animation; // Ticks with the game, so what gameplay plays is in step with it.
     bool paused = false;
     std::uint64_t ticks = 0;
     std::chrono::nanoseconds accumulated{0};
@@ -302,6 +303,8 @@ Result<commands::Receipt> EditorSession::undo() {
         if (auto saved = assets_->save_effect(step.effect->id, step.effect->before); !saved) return saved.error();
         effect_drafts_.erase(step.effect->id);
     }
+    if (step.events)
+        if (auto saved = assets_->set_clip_events(step.events->id, step.events->before); !saved) return saved.error();
     if (step.folders) { view_state_.folders = step.folders->before; store_view_state(); }
     redo_steps_.push_back(std::move(step));
     undo_steps_.pop_back();
@@ -327,6 +330,8 @@ Result<commands::Receipt> EditorSession::redo() {
         if (auto saved = assets_->save_effect(step.effect->id, step.effect->after); !saved) return saved.error();
         effect_drafts_.erase(step.effect->id);
     }
+    if (step.events)
+        if (auto saved = assets_->set_clip_events(step.events->id, step.events->after); !saved) return saved.error();
     if (step.folders) { view_state_.folders = step.folders->after; store_view_state(); }
     undo_steps_.push_back(std::move(step));
     redo_steps_.pop_back();
@@ -390,9 +395,15 @@ Result<void> EditorSession::load(const std::filesystem::path &path) {
     load_view_state();
     return {};
 }
-Result<Transform> EditorSession::local_from_world(EntityId parent, const WorldTransform &world) const {
+Result<Transform> EditorSession::local_from_world(EntityId parent, const WorldTransform &world, const std::string *bone) const {
     auto local = glm::make_mat4(world.matrix.data());
-    if (parent) local = glm::inverse(glm::make_mat4(scene().world_transform(parent)->matrix.data())) * local;
+    if (parent) {
+        // The frame the entity's transform is relative to, as drawn: its parent's, then the joint it is attached to.
+        auto frame = glm::make_mat4(drawn_world(parent)->matrix.data());
+        if (bone)
+            if (const auto joint = joint_model(parent, *bone)) frame *= glm::dmat4(glm::make_mat4(joint->data()));
+        local = glm::inverse(frame) * local;
+    }
     glm::dvec3 scale, position, skew;
     glm::dvec4 perspective;
     glm::dquat rotation;
@@ -407,7 +418,7 @@ Result<Transform> EditorSession::local_from_world(EntityId parent, const WorldTr
 Result<void> EditorSession::set_world(EntityId id, const WorldTransform &world) {
     const auto record = scene().inspect(id);
     if (!record) return fail(ErrorCode::NotFound, "Entity no longer exists");
-    auto t = local_from_world(record->parent, world);
+    auto t = local_from_world(record->parent, world, record->components.attach ? &record->components.attach->bone : nullptr);
     if (!t) return t.error();
     auto result = execute(commands::SetTransform{id, t.value()});
     if (!result) return result.error();
@@ -419,7 +430,7 @@ Result<commands::Receipt> EditorSession::reparent(EntityId id, EntityId parent) 
     if (parent && !scene().inspect(parent)) return fail(ErrorCode::NotFound, "New parent no longer exists");
     for (EntityId ancestor = parent; ancestor; ancestor = scene().inspect(ancestor)->parent)
         if (ancestor == id) return fail(ErrorCode::Cycle, "Cannot parent an entity under itself or one of its descendants");
-    auto local = local_from_world(parent, *scene().world_transform(id));
+    auto local = local_from_world(parent, *drawn_world(id), record->components.attach ? &record->components.attach->bone : nullptr);
     if (!local) return fail(ErrorCode::InvalidArgument, "Cannot keep the world transform under that parent: " + local.error().message);
     const commands::Command batch[] = {commands::SetParent{id, parent}, commands::SetTransform{id, local.value()}};
     return execute(std::span<const commands::Command>(batch), parent ? "Reparent " + record->name : "Move " + record->name + " to Root");
@@ -474,7 +485,7 @@ Result<void> EditorSession::begin_drag(std::string_view verb, bool duplicate) {
     if (duplicate) {
         if (auto copied = duplicate_selection(); !copied) { cancel_transaction(); (void)end_transaction(); return copied; }
     }
-    for (const auto id : selection_roots()) drag_start_.emplace_back(id, *scene().world_transform(id));
+    for (const auto id : selection_roots()) drag_start_.emplace_back(id, *drawn_world(id));
     return {};
 }
 Result<void> EditorSession::update_drag(const WorldTransform &delta) {
@@ -485,7 +496,8 @@ Result<void> EditorSession::update_drag(const WorldTransform &delta) {
     for (const auto &[id, start] : drag_start_) {
         const auto record = scene().inspect(id);
         if (!record) continue;
-        auto local = local_from_world(record->parent, copy(change * glm::make_mat4(start.matrix.data())));
+        auto local = local_from_world(record->parent, copy(change * glm::make_mat4(start.matrix.data())),
+                                      record->components.attach ? &record->components.attach->bone : nullptr);
         if (!local) return local.error();
         moves.emplace_back(commands::SetTransform{id, local.value()});
     }
@@ -535,7 +547,7 @@ std::optional<OrbitCamera> EditorSession::focus_goal() const {
     glm::dvec3 lo(std::numeric_limits<double>::max()), hi(std::numeric_limits<double>::lowest());
     bool boxed = false;
     for (const auto id : selection_.items()) {
-        const auto w = scene().world_transform(id);
+        const auto w = drawn_world(id);
         if (!w) continue;
         const auto m = glm::make_mat4(w->matrix.data());
         if (const auto bounds = local_bounds(id)) {
@@ -595,7 +607,7 @@ Result<void> EditorSession::snap_selection_to_floor(const renderer::FrameSnapsho
     ScopedTransaction transaction(*this, many("Snap", roots.size(), scene().inspect(roots.front())->name) + " to Floor");
     bool moved = false;
     for (const auto id : roots) {
-        const auto w = scene().world_transform(id);
+        const auto w = drawn_world(id);
         const auto m = glm::make_mat4(w->matrix.data());
         glm::dvec3 lo(m[3]), hi(m[3]);
         if (const auto bounds = local_bounds(id)) std::tie(lo, hi) = world_box(m, bounds->first, bounds->second);
@@ -607,7 +619,8 @@ Result<void> EditorSession::snap_selection_to_floor(const renderer::FrameSnapsho
         if (std::abs(surface - lo.y) < 1e-9) continue;
         auto placed = glm::make_mat4(w->matrix.data());
         placed[3].y += surface - lo.y;
-        auto local = local_from_world(scene().inspect(id)->parent, copy(placed));
+        const auto record = scene().inspect(id);
+        auto local = local_from_world(record->parent, copy(placed), record->components.attach ? &record->components.attach->bone : nullptr);
         if (!local) { transaction.cancel(); return local.error(); }
         if (auto done = execute(commands::SetTransform{id, local.value()}); !done) { transaction.cancel(); return done.error(); }
         moved = true;
@@ -773,7 +786,7 @@ Result<std::string> EditorSession::copy_selection() const {
         if (std::ranges::find(roots, e.id) != roots.end()) {
             // Without its parent, a root takes its place in the world as its own transform.
             entity.parent = 0;
-            if (const auto local = local_from_world(0, *scene().world_transform(e.id))) entity.transform = local.value();
+            if (const auto local = local_from_world(0, *drawn_world(e.id))) entity.transform = local.value();
         } else if (!all.contains(e.parent)) entity.parent = 0;
         copied.entities.push_back(std::move(entity));
         copied.next_id = std::max(copied.next_id, e.id + 1);
@@ -848,6 +861,7 @@ Result<void> EditorSession::rename_asset(assets::AssetId id, const std::string &
         }
         if (auto environment = e.components.environment; environment && fix(environment->image)) edits.emplace_back(commands::SetEnvironment{e.id, std::move(environment)});
         if (auto emitter = e.components.emitter; emitter && fix(emitter->effect)) edits.emplace_back(commands::SetParticleEmitter{e.id, std::move(emitter)});
+        if (auto animator = e.components.animator; animator && fix(animator->clips)) edits.emplace_back(commands::SetAnimator{e.id, std::move(animator)});
     }
     ScopedTransaction transaction(*this, "Update References to " + meta->path);
     for (std::size_t at = 0; at < edits.size(); at += commands::CommandBus::max_transaction) {
@@ -957,7 +971,13 @@ std::optional<std::pair<Vec3, Vec3>> EditorSession::local_bounds(EntityId id) co
     if (!record || !record->components.mesh) return std::nullopt;
     const auto &mesh = *record->components.mesh;
     if (const auto data = model(mesh.mesh_asset)) {
-        const auto low = vector(data->bounds.min), high = vector(data->bounds.max);
+        auto box = data->bounds;
+        // A posed model outlines where its pose puts it.
+        renderer::Pose posed = pose(id);
+        if (!posed) posed = animation().pose(id);
+        if (posed && !data->skin.empty() && posed->size() == data->skin.joints.size())
+            box = assets::skinned_bounds(data->skin, assets::skinning_palette(data->skin, *posed));
+        const auto low = vector(box.min), high = vector(box.max);
         return std::pair<Vec3, Vec3>{{low.x, low.y, low.z}, {high.x, high.y, high.z}};
     }
     if (mesh.mesh == BuiltinMesh::Plane) return std::pair<Vec3, Vec3>{{-0.5, 0, -0.5}, {0.5, 0, 0.5}};
@@ -975,6 +995,24 @@ Result<renderer::Frame> EditorSession::frame(double aspect) {
     asset_problems_.clear();
     const auto problem = [this](const std::string &text) {
         if (std::find(asset_problems_.begin(), asset_problems_.end(), text) == asset_problems_.end()) asset_problems_.push_back(text);
+    };
+    // Animators first, so the meshes below draw this frame's poses.
+    auto &animated = animation();
+    animated.set_animators(animator_inputs(entities, problem));
+    // Where things attached to a joint are drawn. Most scenes have none, and then nothing is worked out.
+    std::map<EntityId, const EntityRecord *> by_id;
+    bool attached = false;
+    for (const auto &e : entities) { by_id.emplace(e.id, &e); attached = attached || e.components.attach.has_value(); }
+    const auto placed_on_joint = [&](EntityId id) -> std::optional<WorldTransform> {
+        if (!attached) return std::nullopt;
+        const auto correction = attachment_correction(id, [&](EntityId at) -> std::optional<EntityRecord> {
+            const auto found = by_id.find(at);
+            return found == by_id.end() ? std::nullopt : std::optional<EntityRecord>(*found->second);
+        });
+        if (correction == animation::identity) return std::nullopt;
+        const auto world = shown.world_transform(id);
+        if (!world) return std::nullopt;
+        return copy(glm::make_mat4(correction.data()) * glm::make_mat4(world->matrix.data()));
     };
     for (const auto &e : entities) {
         if (const auto &m = e.components.mesh) {
@@ -1006,11 +1044,15 @@ Result<renderer::Frame> EditorSession::frame(double aspect) {
                 if (resolved.material.index) parts.push_back({slot.slot, resolved.material});
                 if (!resolved.problem.empty()) problem(resolved.problem);
             }
-            meshes.push_back({e.id, handle, material, runtime_ || !hidden(e.id), surface, std::move(parts), pose(e.id)});
+            // A pose the host set wins over the animator's.
+            renderer::Pose posed = pose(e.id);
+            if (!posed) posed = animated.pose(e.id);
+            meshes.push_back({e.id, handle, material, runtime_ || !hidden(e.id), surface, std::move(parts), std::move(posed), placed_on_joint(e.id)});
         }
         if (const auto &l = e.components.light; l && (runtime_ || !hidden(e.id))) {
             const auto kind = l->type == LightType::Point ? renderer::LightKind::Point : l->type == LightType::Spot ? renderer::LightKind::Spot : renderer::LightKind::Directional;
-            lights.push_back({e.id, kind, linear(l->color), l->intensity, l->range, glm::radians(l->inner_cone_degrees), glm::radians(l->outer_cone_degrees), l->cast_shadows});
+            lights.push_back({e.id, kind, linear(l->color), l->intensity, l->range, glm::radians(l->inner_cone_degrees), glm::radians(l->outer_cone_degrees), l->cast_shadows,
+                              placed_on_joint(e.id)});
         }
     }
     const EnvironmentComponent authored = environment();
@@ -1120,7 +1162,8 @@ std::vector<effects::EmitterInput> EditorSession::emitter_inputs(const std::vect
         in.effect = source->data;
         in.asset = source->id.value;
         in.revision = source->revision;
-        if (const auto world = shown.world_transform(e.id)) in.world = world->matrix;
+        (void)shown;
+        if (const auto world = drawn_world(e.id)) in.world = world->matrix;
         in.auto_play = emitter->auto_play;
         in.loop = emitter->loop;
         in.rate_scale = emitter->rate_scale;
@@ -1205,6 +1248,7 @@ Result<void> EditorSession::restart() {
 gameplay::Game *EditorSession::game() const { return runtime_ ? runtime_->game.get() : nullptr; }
 void EditorSession::update(std::chrono::nanoseconds elapsed) {
     advance_effects(elapsed);
+    advance_animations(elapsed);
     if (!runtime_ || runtime_->paused || elapsed.count() <= 0) return;
     auto &r = *runtime_;
     r.particles.update(std::chrono::duration<double>(elapsed).count());
@@ -1227,6 +1271,9 @@ void EditorSession::tick() {
         r.paused = true;
     }
     const auto after_physics = std::chrono::steady_clock::now();
+    // Poses advance with the tick, so a run's animation is the same however the frames fall.
+    r.animation.update(std::chrono::duration<double>(fixed_step).count());
+    keep_events(r.animation.take_events());
     if (r.game) {
         r.game->post_physics();
         // One-shot effects the game asked for, from the emitter on their source entity. Visual only.
@@ -1405,6 +1452,7 @@ std::set<assets::AssetId> EditorSession::referenced_assets() {
             }
             if (const auto &v = e.components.environment) add(v->image);
             if (const auto &p = e.components.emitter) add(p->effect);
+            if (const auto &a = e.components.animator) add(a->clips);
         }
     };
     scan(scene_);
@@ -1426,6 +1474,9 @@ std::size_t EditorSession::release_unused_assets() {
         it = keep ? std::next(it) : resolved_.erase(it);
     }
     const auto freed = assets_->unload_unused();
+    // Skeletons and clips of models whose data is now gone.
+    std::erase_if(clip_sets_, [](const auto &entry) { return entry.second.model.expired() || entry.second.source.expired(); });
+    std::erase_if(rigs_, [](const auto &entry) { return entry.second.model.expired(); });
     assets_released_ += freed;
     return freed;
 }
@@ -1637,9 +1688,11 @@ Result<void> EditorSession::open_project(const std::filesystem::path &root) {
     // Material and effect edits belong to the old project's files.
     material_drafts_.clear();
     effect_drafts_.clear();
-    std::erase_if(undo_steps_, [](const HistoryStep &step) { return step.material.has_value() || step.effect.has_value(); });
-    std::erase_if(redo_steps_, [](const HistoryStep &step) { return step.material.has_value() || step.effect.has_value(); });
+    std::erase_if(undo_steps_, [](const HistoryStep &step) { return step.material.has_value() || step.effect.has_value() || step.events.has_value(); });
+    std::erase_if(redo_steps_, [](const HistoryStep &step) { return step.material.has_value() || step.effect.has_value() || step.events.has_value(); });
     edit_particles_ = effects::ParticleSystem(1);
+    edit_animation_ = animation::AnimationSystem();
+    rigs_.clear(); clip_sets_.clear(); recent_events_.clear();
     if (!std::filesystem::is_directory(asset_folder(), ec)) return {};
     auto database = assets::AssetDatabase::open(asset_folder());
     if (!database) return database.error();
@@ -1727,7 +1780,10 @@ Result<commands::Receipt> EditorSession::place_asset_at(assets::AssetId asset, c
     const auto stem = std::filesystem::path(std::u8string(reinterpret_cast<const char8_t *>(meta->path.data()), meta->path.size())).stem().u8string();
     auto name = trimmed_name(std::string(reinterpret_cast<const char *>(stem.data()), stem.size()));
     const auto label = "Place " + name;
-    auto result = execute(commands::CreateEntity{std::move(name), t, 0, 0, Components{mesh, {}, {}}}, label);
+    Components components{mesh, {}, {}};
+    // A model with animations plays its first one, as it would be expected to.
+    if (!data->skin.empty() && !data->clips.empty()) components.animator = AnimatorComponent{{}, data->clips.front().name};
+    auto result = execute(commands::CreateEntity{std::move(name), t, 0, 0, std::move(components)}, label);
     if (result) selection_.set(result.value().created.front());
     return result;
 }
@@ -1751,5 +1807,228 @@ std::optional<ColliderComponent> EditorSession::model_collider(const AssetRef &r
     collider.center = {center.x, center.y, center.z};
     collider.half_extents = {half.x, half.y, half.z};
     return collider;
+}
+// ---- Animation ----
+animation::AnimationSystem &EditorSession::animation() { return runtime_ ? runtime_->animation : edit_animation_; }
+const animation::AnimationSystem &EditorSession::animation() const { return runtime_ ? runtime_->animation : edit_animation_; }
+std::optional<assets::AssetMetadata> EditorSession::asset_meta(const AssetRef &ref) const {
+    if (!assets_ || ref.empty()) return std::nullopt;
+    auto meta = assets_->find(assets::AssetId{ref.id});
+    if (!meta) meta = assets_->find(std::string_view(ref.path));
+    return meta;
+}
+std::shared_ptr<const animation::Rig> EditorSession::rig_for(const std::shared_ptr<const assets::MeshData> &data, std::string &problem) const {
+    problem.clear();
+    if (!data || data->skin.empty()) { problem = "has no skeleton"; return nullptr; }
+    auto found = rigs_.find(data.get());
+    // Freed data's address can come back for other data.
+    if (found != rigs_.end() && found->second.model.lock() != data) { rigs_.erase(found); found = rigs_.end(); }
+    if (found == rigs_.end()) {
+        RigEntry entry{data, nullptr, {}};
+        if (auto built = animation::Rig::build(data->skin)) entry.rig = built.value();
+        else entry.problem = built.error().message;
+        found = rigs_.emplace(data.get(), std::move(entry)).first;
+    }
+    problem = found->second.problem;
+    return found->second.rig;
+}
+std::shared_ptr<const animation::ClipSet> EditorSession::clips_for(const EntityRecord &e, std::string &problem) const {
+    problem.clear();
+    const auto &a = e.components.animator;
+    const auto &m = e.components.mesh;
+    if (!a) return nullptr;
+    const auto say = [&](const std::string &why) -> std::shared_ptr<const animation::ClipSet> {
+        problem = "Animator on '" + e.name + "' cannot play: " + why;
+        return nullptr;
+    };
+    if (!m || m->mesh_asset.empty()) return say("its entity draws no model");
+    const auto data = model(m->mesh_asset);
+    if (!data) return nullptr; // The mesh reports its own problem.
+    std::string why;
+    const auto skeleton = rig_for(data, why);
+    if (!skeleton) return say("model '" + m->mesh_asset.path + "' " + why);
+    auto source = data;
+    if (!a->clips.empty()) {
+        source = model(a->clips);
+        if (!source) return say("its clips come from '" + a->clips.path + "', which cannot be loaded");
+    }
+    const auto key = std::make_pair(data.get(), source.get());
+    auto found = clip_sets_.find(key);
+    if (found != clip_sets_.end() && (found->second.model.lock() != data || found->second.source.lock() != source)) { clip_sets_.erase(found); found = clip_sets_.end(); }
+    if (found == clip_sets_.end()) {
+        ClipEntry entry{data, source, nullptr, {}};
+        if (auto built = animation::ClipSet::build(skeleton, source->skin, source->clips)) entry.clips = built.value();
+        else entry.problem = built.error().message;
+        found = clip_sets_.emplace(key, std::move(entry)).first;
+    }
+    if (!found->second.clips) return say(found->second.problem);
+    // An unknown clip rests, and gameplay can still play the others.
+    if (!a->clip.empty() && !found->second.clips->find(a->clip)) (void)say("there is no clip '" + a->clip + "'");
+    return found->second.clips;
+}
+std::vector<animation::AnimatorInput> EditorSession::animator_inputs(const std::vector<EntityRecord> &entities,
+                                                                     const std::function<void(const std::string &)> &problem) const {
+    std::vector<animation::AnimatorInput> inputs;
+    for (const auto &e : entities) {
+        const auto &a = e.components.animator;
+        if (!a) continue;
+        std::string why;
+        auto clips = clips_for(e, why);
+        if (!why.empty()) problem(why);
+        if (!clips) continue;
+        animation::AnimatorInput in;
+        in.entity = e.id;
+        in.clips = std::move(clips);
+        in.clip = a->clip;
+        in.speed = a->speed;
+        in.loop = a->loop;
+        in.start_time = a->start_time;
+        // Edit mode plays only the preview the author asked for; Play plays everything.
+        in.playing = runtime_ || (view_flags.animations && a->preview);
+        if (const auto world = drawn_world(e.id)) in.world = world->matrix;
+        if (const auto source = asset_meta(a->clips.empty() ? e.components.mesh->mesh_asset : a->clips)) in.events = source->events;
+        inputs.push_back(std::move(in));
+    }
+    return inputs;
+}
+std::shared_ptr<const animation::ClipSet> EditorSession::clip_set(EntityId id, std::string *problem) const {
+    const auto record = scene().inspect(id);
+    std::string why = "it has no animator";
+    std::shared_ptr<const animation::ClipSet> clips;
+    if (record && record->components.animator) clips = clips_for(*record, why);
+    if (problem) *problem = why;
+    return clips;
+}
+std::shared_ptr<const animation::Rig> EditorSession::rig(EntityId id) const {
+    const auto record = scene().inspect(id);
+    if (!record || !record->components.mesh) return nullptr;
+    std::string why;
+    return rig_for(model(record->components.mesh->mesh_asset), why);
+}
+assets::AssetId EditorSession::clip_source(EntityId id) const {
+    const auto record = scene().inspect(id);
+    if (!record || !record->components.animator) return {};
+    const auto &a = *record->components.animator;
+    std::optional<assets::AssetMetadata> meta;
+    if (!a.clips.empty()) meta = asset_meta(a.clips);
+    else if (record->components.mesh) meta = asset_meta(record->components.mesh->mesh_asset);
+    return meta && meta->type == assets::AssetType::Mesh ? meta->id : assets::AssetId{};
+}
+void EditorSession::keep_events(std::vector<animation::AnimationEvent> events) {
+    for (auto &event : events) recent_events_.push_back(std::move(event));
+    while (recent_events_.size() > 64) recent_events_.pop_front();
+}
+void EditorSession::advance_animations(std::chrono::nanoseconds elapsed) {
+    if (runtime_ || elapsed.count() <= 0) return;
+    edit_animation_.update(std::chrono::duration<double>(elapsed).count());
+    keep_events(edit_animation_.take_events());
+}
+void EditorSession::restart_animations() {
+    animation().restart();
+    recent_events_.clear();
+}
+std::optional<animation::JointMatrix> EditorSession::joint_model(EntityId id, std::string_view joint) const {
+    const auto record = scene().inspect(id);
+    if (!record || !record->components.mesh) return std::nullopt;
+    const auto data = model(record->components.mesh->mesh_asset);
+    if (!data || data->skin.empty()) return std::nullopt;
+    const auto &joints = data->skin.joints;
+    const auto at = std::find_if(joints.begin(), joints.end(), [&](const assets::Joint &j) { return j.name == joint; });
+    if (at == joints.end()) return std::nullopt;
+    const auto index = static_cast<std::size_t>(at - joints.begin());
+    renderer::Pose posed = pose(id);
+    if (!posed) posed = animation().pose(id);
+    if (posed && posed->size() == joints.size()) return (*posed)[index];
+    std::string why;
+    if (const auto skeleton = rig_for(data, why)) return (*skeleton->rest_pose())[index];
+    return std::nullopt;
+}
+std::array<double, 16> EditorSession::attachment_correction(EntityId id, const std::function<std::optional<EntityRecord>(EntityId)> &records) const {
+    // Each attachment moves its subtree by W(parent) * joint * W(parent)^-1; outer ones apply first (D2).
+    std::vector<std::pair<EntityId, std::string>> attachments;
+    std::set<EntityId> seen;
+    for (auto record = records(id); record && seen.insert(record->id).second; record = record->parent ? records(record->parent) : std::nullopt)
+        if (record->components.attach && record->parent) attachments.emplace_back(record->parent, record->components.attach->bone);
+    glm::dmat4 correction(1);
+    for (auto it = attachments.rbegin(); it != attachments.rend(); ++it) {
+        const auto joint = joint_model(it->first, it->second);
+        const auto parent = scene().world_transform(it->first);
+        if (!joint || !parent) continue; // An unknown joint leaves it on its parent.
+        const auto w = glm::make_mat4(parent->matrix.data());
+        correction = correction * w * glm::dmat4(glm::make_mat4(joint->data())) * glm::inverse(w);
+    }
+    std::array<double, 16> out{};
+    std::copy_n(glm::value_ptr(correction), 16, out.begin());
+    return out;
+}
+std::optional<WorldTransform> EditorSession::drawn_world(EntityId id) const {
+    const auto world = scene().world_transform(id);
+    if (!world) return std::nullopt;
+    const auto correction = attachment_correction(id, [this](EntityId at) { return scene().inspect(at); });
+    if (correction == animation::identity) return world;
+    return copy(glm::make_mat4(correction.data()) * glm::make_mat4(world->matrix.data()));
+}
+std::optional<WorldTransform> EditorSession::joint_world(EntityId id, std::string_view joint) const {
+    const auto model_space = joint_model(id, joint);
+    const auto world = drawn_world(id);
+    if (!model_space || !world) return std::nullopt;
+    return copy(glm::make_mat4(world->matrix.data()) * glm::dmat4(glm::make_mat4(model_space->data())));
+}
+std::vector<EditorSession::BoneLine> EditorSession::bone_lines(EntityId only) const {
+    std::vector<BoneLine> lines;
+    for (const auto &e : scene().snapshot().entities) {
+        if ((only && e.id != only) || !e.components.mesh || (!runtime_ && hidden(e.id))) continue;
+        const auto data = model(e.components.mesh->mesh_asset);
+        if (!data || data->skin.empty()) continue;
+        renderer::Pose joints = pose(e.id);
+        if (!joints) joints = animation().pose(e.id);
+        if (!joints || joints->size() != data->skin.joints.size()) {
+            std::string why;
+            const auto skeleton = rig_for(data, why);
+            if (!skeleton) continue;
+            joints = skeleton->rest_pose();
+        }
+        const auto world = drawn_world(e.id);
+        if (!world) continue;
+        const auto m = glm::make_mat4(world->matrix.data());
+        const auto at = [&](std::size_t j) {
+            const auto &p = (*joints)[j];
+            const auto v = m * glm::dvec4(p[12], p[13], p[14], 1);
+            return Vec3{v.x, v.y, v.z};
+        };
+        for (std::size_t j = 0; j < data->skin.joints.size(); ++j)
+            if (const int parent = data->skin.joints[j].parent; parent >= 0) lines.push_back({e.id, at(static_cast<std::size_t>(parent)), at(j)});
+    }
+    return lines;
+}
+std::vector<assets::ClipEvent> EditorSession::clip_events(assets::AssetId id) const {
+    const auto meta = assets_ ? assets_->find(id) : std::nullopt;
+    return meta ? meta->events : std::vector<assets::ClipEvent>{};
+}
+Result<void> EditorSession::set_clip_events(assets::AssetId id, std::vector<assets::ClipEvent> events) {
+    if (auto allowed = editing_only("Editing clip events"); !allowed) return allowed;
+    const auto meta = assets_ ? assets_->find(id) : std::nullopt;
+    if (!meta) return fail(ErrorCode::NotFound, "Model is not in the asset folder");
+    if (meta->type != assets::AssetType::Mesh) return fail(ErrorCode::InvalidArgument, meta->path + " is not a model");
+    auto normalized = assets::normalize_clip_events(std::move(events));
+    if (!normalized) return normalized.error();
+    if (normalized.value() == meta->events) return {};
+    if (auto saved = assets_->set_clip_events(id, normalized.value()); !saved) return saved;
+    const auto stem = std::filesystem::path(std::u8string(reinterpret_cast<const char8_t *>(meta->path.data()), meta->path.size())).stem().u8string();
+    HistoryStep step{"Edit Clip Events of " + std::string(reinterpret_cast<const char *>(stem.data()), stem.size()), std::nullopt, std::nullopt, false,
+                     std::nullopt, EventsEdit{id, meta->events, normalized.value()}};
+    undo_steps_.push_back(std::move(step));
+    redo_steps_.clear();
+    bus_.discard_redo();
+    if (std::ranges::count_if(undo_steps_, [](const HistoryStep &s) { return s.events.has_value(); }) > 128)
+        undo_steps_.erase(std::ranges::find_if(undo_steps_, [](const HistoryStep &s) { return s.events.has_value(); }));
+    return {};
+}
+Result<commands::Receipt> EditorSession::assign_clip(EntityId id, const std::string &clip) {
+    const auto record = scene().inspect(id);
+    if (!record) return fail(ErrorCode::NotFound, "Entity no longer exists");
+    auto animator = record->components.animator.value_or(AnimatorComponent{});
+    animator.clip = clip;
+    return execute(commands::SetAnimator{id, animator}, clip.empty() ? "Clear Clip" : "Play " + clip);
 }
 } // namespace engine::editor

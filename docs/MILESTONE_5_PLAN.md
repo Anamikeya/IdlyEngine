@@ -1,7 +1,7 @@
 # Milestone 5 plan: characters and effects
 
 Branch `milestone-5`, worktree `D:\AI\GameEngine-Integration`, created from `main` at `14c6642`.
-**Status: approved 2026-11-03. Slices 0, 1 and 2 done; slice 3 (animation runtime) next.** Do not merge into `main` without the user's approval.
+**Status: approved 2026-11-03. Slices 0 to 3 done; slice 4 (ragdolls and debris) next.** Do not merge into `main` without the user's approval.
 
 Decisions (2026-11-03): the plan is approved as written. ozz-animation 0.17.0 goes into `resources` at its pinned commit.
 The enemy is Quaternius' Universal Animation Library (CC0), downloaded in glTF. Edit-mode preview is on by default.
@@ -259,3 +259,72 @@ Cut order if time runs short: foot IK, then debris bodies (particles only), then
   models whose rest box was away from the cursor; it now uses the pose's box, as picking does.
 - **Not done here:** clips are imported but nothing plays them yet; that is slice 3's Animator. Real input was not needed:
   the only UI change is the tooltip text.
+
+### Slice 3: animation runtime (done 2026-11-04)
+
+- **Scene format 7, extended (D12):** an `ANIMATOR` record (clip source model, clip, speed, loop, start time, edit preview) and
+  an `ATTACH` record (a joint of the parent's model), with `component.animator.set` and `component.attach.set`. Format 7 was
+  not released, so it grew rather than becoming 8; version 6 files with either record are refused.
+- **Clip events in the `.meta` (D5):** `event = <seconds> <name> "<clip>"` lines, checked and sorted.
+  `AssetDatabase::set_clip_events` rewrites the sidecar without re-importing the model or bumping its revision, and a move
+  keeps them.
+- **`Engine/Animation`** on ozz, which stays behind its header:
+  - `Rig` builds an ozz skeleton from the model's joints and maps ozz's depth-first order to the model's.
+  - `ClipSet` binds a model's clips to a rig, or another model's clips by joint name. A joint without keys holds its rest
+    value: ozz would make it identity. Rotation keys more than 0.2 rad apart get slerped keys between them, because ozz's
+    nlerp lagged glTF's slerp by 0.9 degrees a quarter of the way through a quarter turn.
+  - `AnimationSystem` runs animators by entity:
+    - Clips at a speed (negative plays backwards), looping or held at the end.
+    - Crossfades, and one layered clip played once as its difference from its first frame (the flinch).
+    - Events crossed per update, across loops and backwards.
+    - Scrubbing and pausing, and two-bone IK chains with world targets.
+    - `pose`, `joint_model` and `joint_world` queries (D2), and bit-for-bit repeatable runs.
+- **Session:**
+  - **Edit mode:** an edit-mode system plays animators whose preview is on (View > Play Animations).
+  - **Play:** a per-run system advances with the 60 Hz fixed tick, so gameplay in slice 5 stays in step. Stop throws it away.
+  - **Poses:** frames use the animator's pose unless the host set one. Placing a model that has clips adds an Animator on its
+    first clip.
+  - **Attachments:** attached entities and their subtrees are drawn on the joint through a world override in `MeshBinding`
+    and `LightBinding`. Emitters follow it too. Gizmos, outlines, focus, floor snapping, copying, `set_world` and drags
+    work in that drawn space. Picking follows from the frame.
+  - **Clip events:** editing them is one undo step that rewrites the `.meta`.
+  - **Bones:** bone lines for the overlay.
+- **Editor:**
+  - **Details:** Animator and Attach To Bone sections, through a new text property type that offers the model's clips or
+    the parent's joints and accepts a typed name. Both are in Add Component.
+  - **Animation panel:**
+    - Play/Pause, Restart, and a timeline to scrub, with event marks.
+    - Per clip: Play (crossfade), Layer, and Default (one undo step).
+    - Events: add at the playhead, drag a time, Go, Delete.
+    - The events that fired, and Show bones.
+  - **View menu:** Play Animations, Restart Animations and Show Bones. The Console has `r.animations` and `view.bones`.
+- **Tests:** 480 of 480 CTest entries in Release and in the CI configuration.
+  - New: `animation_tests` +14, `editor_animation_tests` 7, `asset_tests` +2, and a format 7 animation scenario in
+    `engine.core.acceptance`.
+  - `--render-test`: 66 of 66, with 7 animation checks:
+    - The animator poses the bar from its clip.
+    - A cube attached to the tip is drawn on it and follows it.
+    - The scene revision does not move.
+    - Fox walks through its animator.
+  - `--smoke` passes.
+  - Real input: `Tests/RealInput/milestone5_animation.ps1`, 22 of 22. Evidence is in `docs/evidence/m5-animation/`.
+- **Deviations from the plan:**
+  - Clip events are found by the engine's own crossing code, not ozz's track triggering job: it is exact for the events of
+    a `.meta`, both ways and across loops.
+  - Foot IK is the runtime's two-bone IK (`set_ik`, tested). Nothing probes the ground for it yet; that comes with the
+    enemies in slice 5.
+  - The Animation panel floats and starts closed. In the right-hand dock, a fifth tab pushed the Inspector's tab out of
+    sight.
+- **Found by testing:**
+  - Checks bound a reference to a member of a temporary (`status()->clip`, `history_names().back()`) through
+    `ENGINE_CHECK_EQ` and read garbage; they copy first now, as in slice 1.
+  - The first real-input runs found tabs out of reach. Docked with the others, the Animation panel's tab was scrolled out
+    of the right-hand dock. With only the four older tabs, the Inspector's still was: it had been since slice 1 added the
+    Effect Editor tab, and the older scripts that click it would have failed. Tabs now shrink to 40 px before the bar
+    scrolls (ImGui's default is 80), and the run checks that every tab of that dock is in sight. A click on the hidden tab
+    had closed the whole dock.
+  - Placing Fox now adds an animator, so the slice 2 render check that poses Fox by hand removes it first.
+  - Found in review: both caches of rigs and clips held a model, so neither saw itself as its last holder and they were
+    never freed. They hold it weakly now, and are pruned after the asset database lets go. A test checks it.
+  - The Bone list of a 25-joint model scrolled its name field out of view. The field is now at the top, has the
+    keyboard and narrows the list.

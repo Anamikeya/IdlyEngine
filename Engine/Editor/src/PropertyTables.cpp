@@ -34,6 +34,11 @@ template<class T, class E> Property<T> choice(std::string_view id, std::string_v
     member_enum(p, at, first, std::move(choices));
     return p;
 }
+template<class T> Property<T> text(std::string_view id, std::string_view name, std::string_view category, std::string_view tooltip, std::string T::*at, std::string_view suggestions) {
+    auto p = field<T>(id, name, category, tooltip, PropertyType::Text, at);
+    p.suggestions = suggestions;
+    return p;
+}
 template<class T> Property<T> asset(std::string_view id, std::string_view name, std::string_view category, std::string_view tooltip, AssetRef T::*at, std::string_view type) {
     auto p = field<T>(id, name, category, tooltip, PropertyType::Asset, at);
     p.asset_type = type;
@@ -169,6 +174,23 @@ PropertyTable<ParticleEmitterComponent> make_emitter() {
         field<T>("rate_scale", "Rate scale", "Emitter", "Multiplies the effect's rate and bursts.", PropertyType::Number, &T::rate_scale, {0, 1000, 0.01}),
     }};
 }
+PropertyTable<AnimatorComponent> make_animator() {
+    using T = AnimatorComponent;
+    return {"Animator", {
+        text<T>("clip", "Clip", "Animation", "Plays from the start time. Empty: the model rests until gameplay plays something.", &T::clip, "clip"),
+        field<T>("speed", "Speed", "Animation", "Multiplies time. Negative plays backwards.", PropertyType::Number, &T::speed, {-10, 10, 0.01}),
+        field<T>("loop", "Loop", "Animation", "Starts again at the end. Off: holds the last frame.", PropertyType::Bool, &T::loop),
+        field<T>("start_time", "Start time (s)", "Animation", "Where in the clip playing starts.", PropertyType::Number, &T::start_time, {0, 3600, 0.01}),
+        field<T>("preview", "Preview while editing", "Animation", "Plays in the editor while editing. Off: it holds still, and the Animation panel can still scrub it.", PropertyType::Bool, &T::preview),
+        asset<T>("clips", "Clips from", "Animation", "Another model whose clips play on the joints with matching names. Empty: this entity's own model.", &T::clips, "mesh"),
+    }};
+}
+PropertyTable<AttachToBoneComponent> make_attach() {
+    using T = AttachToBoneComponent;
+    return {"Attach To Bone", {
+        text<T>("bone", "Bone", "Attachment", "A joint of the parent's model. The transform is then relative to it, and the entity is drawn where the joint is.", &T::bone, "bone"),
+    }};
+}
 }
 std::string property_to_text(const PropertyValue &value) {
     std::ostringstream out;
@@ -181,6 +203,7 @@ std::string property_to_text(const PropertyValue &value) {
         else if constexpr (std::is_same_v<V, Quaternion>) out << "rotation " << v.x << ' ' << v.y << ' ' << v.z << ' ' << v.w;
         else if constexpr (std::is_same_v<V, int>) out << "choice " << v;
         else if constexpr (std::is_same_v<V, AssetRef>) out << "asset " << v.id << ' ' << v.path;
+        else if constexpr (std::is_same_v<V, std::string>) out << "text " << v;
         else out << "bits " << v;
     }, value);
     return out.str();
@@ -199,6 +222,13 @@ std::optional<PropertyValue> property_from_text(std::string_view text) {
         if (in >> v.id) { std::getline(in >> std::ws, v.path); return PropertyValue(v); }
         return std::nullopt;
     } else if (kind == "bits") { std::uint64_t v = 0; if (in >> v) return PropertyValue(v); }
+    else if (kind == "text") {
+        // The rest of the line, as it is: names may have spaces, even at the start.
+        const auto start = text.find("text") + 4;
+        std::string v(start < text.size() ? text.substr(start + 1) : std::string_view{});
+        if (v.find('\n') != std::string::npos) return std::nullopt;
+        return PropertyValue(std::move(v));
+    }
     return std::nullopt;
 }
 const PropertyTable<Transform> &transform_properties() { static const auto table = make_transform(); return table; }
@@ -209,4 +239,6 @@ const PropertyTable<RigidBodyComponent> &body_properties() { static const auto t
 const PropertyTable<ColliderComponent> &collider_properties() { static const auto table = make_collider(); return table; }
 const PropertyTable<EnvironmentComponent> &environment_properties() { static const auto table = make_environment(); return table; }
 const PropertyTable<ParticleEmitterComponent> &emitter_properties() { static const auto table = make_emitter(); return table; }
+const PropertyTable<AnimatorComponent> &animator_properties() { static const auto table = make_animator(); return table; }
+const PropertyTable<AttachToBoneComponent> &attach_properties() { static const auto table = make_attach(); return table; }
 } // namespace engine::editor

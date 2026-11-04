@@ -553,6 +553,57 @@ Result<TextureData> import_ppm(std::span<const std::uint8_t> bytes, const Import
 	return texture;
 }
 
+namespace {
+
+std::vector<std::string> line_tokens(std::string_view line, bool& valid);
+
+bool event_name(std::string_view name) noexcept
+{
+	return !name.empty() && name.size() <= 32 &&
+		std::all_of(name.begin(), name.end(), [](char c) { return (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_'; });
+}
+
+bool clip_name(std::string_view name) noexcept
+{
+	return !name.empty() && name.size() <= 256 &&
+		std::none_of(name.begin(), name.end(), [](char c) { return static_cast<unsigned char>(c) < 32 || c == 127; });
+}
+
+std::string shortest(float value)
+{
+	std::array<char, 32> buffer{};
+	const auto [end, ec] = std::to_chars(buffer.data(), buffer.data() + buffer.size(), value);
+	(void)ec;
+	return std::string(buffer.data(), end);
+}
+
+} // namespace
+
+Result<std::vector<ClipEvent>> normalize_clip_events(std::vector<ClipEvent> events)
+{
+	if (events.size() > max_clip_events) {
+		return fail(ErrorCode::InvalidArgument, "a model holds at most " + std::to_string(max_clip_events) + " clip events");
+	}
+	for (const ClipEvent& event : events) {
+		if (!clip_name(event.clip)) {
+			return fail(ErrorCode::InvalidArgument, "a clip event needs a clip name of 1 to 256 bytes without control characters");
+		}
+		if (!event_name(event.name)) {
+			return fail(ErrorCode::InvalidArgument, "event name '" + event.name + "' must be 1 to 32 of a-z, 0-9 and _");
+		}
+		if (!std::isfinite(event.time) || event.time < 0 || event.time > max_clip_event_time) {
+			return fail(ErrorCode::InvalidArgument, "event '" + event.name + "' needs a time within 0 to 3600 seconds");
+		}
+	}
+	const auto key = [](const ClipEvent& e) { return std::tie(e.clip, e.time, e.name); };
+	std::sort(events.begin(), events.end(), [&](const ClipEvent& a, const ClipEvent& b) { return key(a) < key(b); });
+	if (const auto same = std::adjacent_find(events.begin(), events.end()); same != events.end()) {
+		return fail(ErrorCode::InvalidArgument, "event '" + same->name + "' of clip '" + same->clip + "' is listed twice at " +
+			shortest(same->time) + " s");
+	}
+	return events;
+}
+
 Result<MetaFile> parse_meta(std::string_view text)
 {
 	if (text.size() > 64 * 1024) {
@@ -575,6 +626,19 @@ Result<MetaFile> parse_meta(std::string_view text)
 		}
 		const auto t = tokens(line);
 		if (t.empty() || t[0].front() == '#') {
+			continue;
+		}
+		if (t[0] == "event") {
+			// event = <seconds> <name> "<clip>"
+			bool closed = true;
+			const auto e = line_tokens(line, closed);
+			ClipEvent event;
+			if (!closed || e.size() != 5 || e[1] != "=" || !parse_float(e[2], event.time)) {
+				return parse_error(line_number, "expected 'event = <seconds> <name> \"<clip>\"'");
+			}
+			event.name = e[3];
+			event.clip = e[4];
+			meta.events.push_back(std::move(event));
 			continue;
 		}
 		if (t.size() != 3 || t[1] != "=") {
@@ -615,6 +679,11 @@ Result<MetaFile> parse_meta(std::string_view text)
 	if (!has_version) {
 		return fail(ErrorCode::ParseError, "meta file has no version");
 	}
+	auto events = normalize_clip_events(std::move(meta.events));
+	if (!events) {
+		return fail(ErrorCode::ParseError, events.error().message);
+	}
+	meta.events = std::move(events.value());
 	return meta;
 }
 
@@ -633,6 +702,16 @@ std::string write_meta(const MetaFile& meta)
 	}
 	if (meta.settings.texture_srgb != defaults.texture_srgb) {
 		out += std::string("texture.srgb = ") + (meta.settings.texture_srgb ? "true" : "false") + "\n";
+	}
+	for (const ClipEvent& event : meta.events) {
+		out += "event = " + shortest(event.time) + " " + event.name + " \"";
+		for (const char c : event.clip) {
+			if (c == '"' || c == '\\') {
+				out += '\\';
+			}
+			out += c;
+		}
+		out += "\"\n";
 	}
 	return out;
 }

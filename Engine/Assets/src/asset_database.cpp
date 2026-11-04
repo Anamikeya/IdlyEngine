@@ -394,6 +394,7 @@ Result<std::size_t> AssetDatabase::scan()
 			}
 			meta.has_meta = true;
 			meta.settings = parsed.value().settings;
+			meta.events = parsed.value().events;
 			if (parsed.value().id) {
 				meta.id = *parsed.value().id;
 			}
@@ -544,7 +545,7 @@ Result<void> AssetDatabase::move(AssetId id, std::string_view new_path)
 		return fail(ErrorCode::InvalidState, "cannot create the folder for " + normalized.value());
 	}
 	// The id goes with the file: a new .meta first, even for an asset whose id came from its old path.
-	if (auto written = impl_->write_atomic(target_meta, write_meta(MetaFile{id, meta.settings})); !written) {
+	if (auto written = impl_->write_atomic(target_meta, write_meta(MetaFile{id, meta.settings, meta.events})); !written) {
 		return written.error();
 	}
 	fs::rename(source, target, ec);
@@ -615,6 +616,31 @@ Result<void> AssetDatabase::save_effect(AssetId id, const EffectData& effect)
 	it->second.effect = std::make_shared<const EffectData>(effect);
 	it->second.state = AssetState::Loaded;
 	++it->second.revision;
+	return {};
+}
+
+Result<void> AssetDatabase::set_clip_events(AssetId id, std::vector<ClipEvent> events)
+{
+	const auto it = impl_->by_id.find(id);
+	if (it == impl_->by_id.end()) {
+		return fail(ErrorCode::NotFound, "unknown asset id " + to_string(id));
+	}
+	auto& meta = it->second.meta;
+	if (meta.type != AssetType::Mesh) {
+		return fail(ErrorCode::InvalidArgument, meta.path + " is not a model");
+	}
+	auto normalized = normalize_clip_events(std::move(events));
+	if (!normalized) {
+		return normalized.error();
+	}
+	fs::path meta_path = impl_->source_of(meta);
+	meta_path += ".meta";
+	// The id is written too, so an asset whose id came from its path keeps it.
+	if (auto written = impl_->write_atomic(meta_path, write_meta(MetaFile{id, meta.settings, normalized.value()})); !written) {
+		return written.error();
+	}
+	meta.has_meta = true;
+	meta.events = std::move(normalized.value());
 	return {};
 }
 

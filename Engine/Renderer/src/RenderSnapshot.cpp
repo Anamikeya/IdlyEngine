@@ -132,9 +132,11 @@ Result<Frame> extract_frame(const Scene &scene, FrameStamp stamp, const Perspect
                                  return std::all_of(m.begin(), m.end(), [](float v) { return std::isfinite(v); });
                              })))
             return fail(ErrorCode::InvalidArgument, "Joint pose is too large or not finite");
-        const auto transform = scene.world_transform(binding.entity);
+        auto transform = scene.world_transform(binding.entity);
         if (!transform)
             return fail(ErrorCode::NotFound, "Mesh entity does not exist");
+        if (binding.world)
+            transform = binding.world;
         if (!finite(*transform))
             return fail(ErrorCode::InvalidArgument, "Non-finite mesh world transform");
         if (binding.visible)
@@ -150,9 +152,11 @@ Result<Frame> extract_frame(const Scene &scene, FrameStamp stamp, const Perspect
             (binding.kind == LightKind::Spot && (!nonnegative(binding.inner_cone_radians) || binding.outer_cone_radians < binding.inner_cone_radians ||
                                                  !std::isfinite(binding.outer_cone_radians) || binding.outer_cone_radians > std::numbers::pi / 2 + 1e-9)))
             return fail(ErrorCode::InvalidArgument, "Duplicate light entity or invalid light parameters");
-        const auto transform = scene.world_transform(binding.entity);
+        auto transform = scene.world_transform(binding.entity);
         if (!transform)
             return fail(ErrorCode::NotFound, "Light entity does not exist");
+        if (binding.world)
+            transform = binding.world;
         if (!finite(*transform))
             return fail(ErrorCode::InvalidArgument, "Non-finite light world transform");
         const auto &m = transform->matrix;

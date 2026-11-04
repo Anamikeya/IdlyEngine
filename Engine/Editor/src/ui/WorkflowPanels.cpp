@@ -205,6 +205,8 @@ void EditorUI::bind_console() {
     flag("r.bloom", "Draw bloom in the viewport.", session.view_flags.bloom);
     flag("r.skybox", "Draw the skybox in the viewport.", session.view_flags.skybox);
     flag("r.effects", "Play particle emitters while editing.", session.view_flags.effects);
+    flag("r.animations", "Play animators whose preview is on while editing.", session.view_flags.animations);
+    flag("view.bones", "Draw the skeletons of skinned and animated models.", session.view_flags.bones);
     flag("view.grid", "Draw the grid.", show_grid);
     flag("view.collision", "Draw collider outlines.", show_colliders);
     flag("view.markers", "Draw the markers for lights and cameras.", show_markers);

@@ -83,7 +83,12 @@ Result<void> validate_effect(const EffectData& effect);
 struct MetaFile {
 	std::optional<AssetId> id;
 	ImportSettings settings;
+	std::vector<ClipEvent> events; // One line each: event = <time> <name> "<clip>".
 };
+
+// Checks names, times and the count, and sorts by clip, time and name. Two events of one clip at one time with one
+// name are refused.
+Result<std::vector<ClipEvent>> normalize_clip_events(std::vector<ClipEvent> events);
 
 Result<MetaFile> parse_meta(std::string_view text);
 [[nodiscard]] std::string write_meta(const MetaFile& meta);

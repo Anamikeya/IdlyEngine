@@ -34,6 +34,8 @@ Closing the main window asks about unsaved changes. Closing the black console wi
 | **Inspector** | Change the values of what's selected. It shares its place with the next two, so click its tab if another is in front |
 | **Lighting** | Set the sky, exposure and shadows for the scene |
 | **Material Editor** | Change the material selected in the Asset Browser |
+| **Effect Editor** | Change the particle effect selected in the Asset Browser |
+| **Animation** | Preview, scrub and mark the selected animator's clips. Closed until **Window > Animation** opens it, and it floats |
 | **Asset Browser** | Import, find and use models, images, materials and HDR images |
 | **Message Log** | Read what the editor has told you, filtered by severity |
 | **Console** | Type commands and change settings |
@@ -153,9 +155,8 @@ background, and a long one shows a progress bar with Cancel. Files are copied in
 
 Supported files are `.glb`, `.obj`, `.png`, `.jpg`, `.tga`, `.ppm` and `.hdr`, up to 64 MB. Re-export `.gltf` models as self-contained
 `.glb` files. A skinned or animated model brings its skeleton and animations with it; hold the mouse over it in the Asset Browser to
-see how many joints it has and the names of its animations. For now it stands in its rest pose: playing animations comes with the
-Animator component later in Milestone 5. A model that needs more than 256 bones to draw is refused, and a vertex moved by more than
-4 joints keeps the strongest 4.
+see how many joints it has and the names of its animations, and see **Animate models** below. A model that needs more than 256 bones
+to draw is refused, and a vertex moved by more than 4 joints keeps the strongest 4.
 
 If you add files to `Assets` yourself, press **Rescan**.
 
@@ -200,6 +201,34 @@ viewport's view menu.
 In the Inspector, a Particle Emitter can be told not to play by itself, in which case gameplay fires it, not to loop, and
 to scale its rate. The shooter's **Impact Effect Template** works this way: give it an emitter and every hit fires that
 effect along the surface it struck.
+
+## Animate models
+
+Placing a model that has animations gives it an **Animator** component playing its first animation, and it plays while you
+edit. Poses are only for show while editing: they never change the scene, its undo history or its file. What the scene
+keeps is what the Animator says: the clip, speed (negative plays backwards), whether it loops, where it starts, and whether it
+plays while editing (**Preview while editing**). **Clips from** plays another model's animations on the joints with the same
+names. Add an Animator to any skinned model with **Add Component > Animator**.
+
+**Window > Animation** (or **Open Animation panel** under the Animator in the Inspector) opens the Animation panel for the
+selected animator. It floats; drag its title onto a dock to keep it there.
+
+| In the Animation panel | What it does |
+|---|---|
+| **Play** / **Pause**, **Restart** | Holds or resumes the preview, or starts the Animator's clip again from its start time |
+| The timeline | Drag it to scrub; the animation holds where you leave it. Triangles mark the clip's events |
+| A clip's **Play** | Crossfades to it over **Crossfade (s)**. Only the preview changes |
+| A clip's **Layer** | Plays it once on top of the current clip, as its difference from its first frame: a flinch over a walk |
+| A clip's **Default** | Makes it the clip the Animator starts with. This changes the scene, as one undo step |
+| **Events** | Named moments of a clip, such as `footstep`. **Add at** marks one at the timeline's time; drag a time to move it. They are saved in the model's `.meta` file, each change one undo step, and gameplay hears them every time playback crosses them |
+
+**View > Play Animations** stops every preview while editing (scrubbing still works); **View > Restart Animations** starts them
+all again; **View > Show Bones** draws the skeletons. Play and Simulate run every animator from its clip's start, in step with the
+game's ticks, and Stop throws that away.
+
+**To hold something in a hand**, put it under the character in the Scene Hierarchy, then **Add Component > Attach To Bone** and pick
+the joint in **Bone** (or type its name). Its transform is then relative to that joint, and it is drawn there as the character
+moves; the gizmo and outlines follow it. Physics and gameplay still see it at its plain place under the character.
 
 ## Light the scene
 

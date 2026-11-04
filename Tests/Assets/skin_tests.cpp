@@ -1,5 +1,6 @@
 // Milestone 5 slice 2: skins, skeletons and clips from GLB files built in memory, and the skeleton math they use.
 
+#include "engine/assets/asset_database.h"
 #include "engine/assets/importers.h"
 #include "engine/assets/skeleton.h"
 #include "engine/test/test.h"
@@ -437,4 +438,80 @@ ENGINE_TEST(glb_real_skinned_model_brings_its_skeleton_and_clips)
 	for (std::size_t k = 0; k < 3; ++k) {
 		ENGINE_CHECK(box.min[k] <= mesh.bounds.min[k] + 1e-3f && box.max[k] >= mesh.bounds.max[k] - 1e-3f);
 	}
+}
+
+ENGINE_TEST(meta_files_keep_clip_events_sorted_and_checked)
+{
+	const auto parsed = parse_meta("version = 1\n"
+		"event = 0.5 right \"Walk \\\"fast\\\"\"\n"
+		"event = 0.25 left \"Walk \\\"fast\\\"\"\n"
+		"# a comment\n"
+		"event = 0 start \"Idle\"\n");
+	ENGINE_REQUIRE(static_cast<bool>(parsed));
+	const auto& events = parsed.value().events;
+	ENGINE_REQUIRE(events.size() == 3);
+	// By clip, then time.
+	ENGINE_CHECK_EQ(events[0].clip, std::string("Idle"));
+	ENGINE_CHECK_EQ(events[1].clip, std::string("Walk \"fast\""));
+	ENGINE_CHECK_EQ(events[1].name, std::string("left"));
+	ENGINE_CHECK_NEAR(events[2].time, 0.5, 1e-9);
+	const std::string written = write_meta(parsed.value());
+	ENGINE_CHECK(written.find("event = 0.25 left \"Walk \\\"fast\\\"\"\n") != std::string::npos);
+	const auto again = parse_meta(written);
+	ENGINE_REQUIRE(static_cast<bool>(again));
+	ENGINE_CHECK(again.value().events == events);
+	for (const char* bad : {"version = 1\nevent = -1 left \"Walk\"\n", "version = 1\nevent = 0.5 Left \"Walk\"\n",
+			 "version = 1\nevent = 0.5 left \"Walk\n", "version = 1\nevent = 0.5 left\n", "version = 1\nevent = x left \"Walk\"\n",
+			 "version = 1\nevent = 0.5 left \"\"\n", "version = 1\nevent = 0.5 left \"Walk\"\nevent = 0.5 left \"Walk\"\n",
+			 "version = 1\nevent = 4000 left \"Walk\"\n"}) {
+		ENGINE_CHECK(!parse_meta(bad));
+	}
+	ENGINE_CHECK(!normalize_clip_events({{"Walk", 0.1f, std::string(33, 'a')}}));
+	ENGINE_CHECK(!normalize_clip_events(std::vector<ClipEvent>(max_clip_events + 1, ClipEvent{"Walk", 0, "a"})));
+}
+
+ENGINE_TEST(the_database_saves_clip_events_without_reimporting_the_model)
+{
+	const fs::path root = fs::current_path() / "asset_tests_tmp" / "clip_events";
+	fs::remove_all(root);
+	fs::create_directories(root / "chars");
+	{
+		const auto bytes = bar_glb();
+		std::ofstream out(root / "chars/bar.glb", std::ios::binary);
+		out.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+		std::ofstream material(root / "plain.material", std::ios::binary);
+		material << "ENGINE_MATERIAL 1\n";
+	}
+	auto opened = AssetDatabase::open(root);
+	ENGINE_REQUIRE(static_cast<bool>(opened));
+	auto& db = opened.value();
+	ENGINE_REQUIRE(static_cast<bool>(db.scan()));
+	const auto meta = db.find("chars/bar.glb");
+	ENGINE_REQUIRE(meta.has_value());
+	const AssetId id = meta->id;
+	ENGINE_REQUIRE(static_cast<bool>(db.load_mesh(id)));
+	const auto revision = db.revision(id);
+	const std::vector<ClipEvent> events{{"Bend", 0.5f, "step"}, {"Bend", 0.25f, "lift"}};
+	ENGINE_REQUIRE(static_cast<bool>(db.set_clip_events(id, events)));
+	// Sorted, in the catalogue at once, and the model was not imported again.
+	ENGINE_REQUIRE(db.find(id)->events.size() == 2);
+	ENGINE_CHECK_EQ(std::string(db.find(id)->events[0].name), std::string("lift"));
+	ENGINE_CHECK_EQ(db.revision(id), revision);
+	ENGINE_CHECK(db.state(id) == AssetState::Loaded);
+	// The id came from the path; it is written into the new .meta, so references keep working.
+	ENGINE_CHECK(fs::exists(root / "chars/bar.glb.meta"));
+	ENGINE_REQUIRE(static_cast<bool>(db.scan()));
+	ENGINE_CHECK(db.find(id).has_value());
+	ENGINE_CHECK_EQ(db.find(id)->events.size(), std::size_t{2});
+	ENGINE_CHECK_EQ(db.revision(id), revision);
+	// Moving the model takes its events along.
+	ENGINE_REQUIRE(static_cast<bool>(db.move(id, "chars/moved.glb")));
+	ENGINE_CHECK_EQ(db.find(id)->events.size(), std::size_t{2});
+	// Only models have clip events, and bad events change nothing.
+	ENGINE_CHECK(!db.set_clip_events(db.find("plain.material")->id, events));
+	ENGINE_CHECK(!db.set_clip_events(id, {{"Bend", -1, "step"}}));
+	ENGINE_CHECK_EQ(db.find(id)->events.size(), std::size_t{2});
+	ENGINE_REQUIRE(static_cast<bool>(db.set_clip_events(id, {})));
+	ENGINE_CHECK(db.find(id)->events.empty());
+	fs::remove_all(root);
 }

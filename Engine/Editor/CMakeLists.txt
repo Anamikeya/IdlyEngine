@@ -61,7 +61,10 @@ if(NOT TARGET engine::assets)
     message(FATAL_ERROR "Engine/Editor requires engine::assets")
 endif()
 # engine/renderer/ResourceRegistry.hpp is header-only, so the renderer library itself stays free of the asset module.
-target_link_libraries(engine_editor_session PUBLIC engine::renderer engine::physics_scene engine::assets engine::gameplay engine::effects)
+if(NOT TARGET engine::animation)
+    message(FATAL_ERROR "Engine/Editor requires engine::animation; configure with GAMEENGINE_WITH_ANIMATION=ON")
+endif()
+target_link_libraries(engine_editor_session PUBLIC engine::renderer engine::physics_scene engine::assets engine::gameplay engine::effects engine::animation)
 target_compile_options(engine_editor_session PRIVATE /W4 /WX /permissive- /utf-8)
 add_executable(engine_editor_tests tests/EditorTests.cpp)
 target_link_libraries(engine_editor_tests PRIVATE engine_editor_session)
@@ -105,7 +108,7 @@ target_compile_options(engine_desktop_renderer PRIVATE /W4 /permissive- /utf-8)
 add_dependencies(engine_desktop_renderer editor_materials)
 add_executable(engine_editor src/Main.cpp src/GameHud.cpp src/RenderTest.cpp
     src/ui/EditorUI.cpp src/ui/HierarchyPanel.cpp src/ui/InspectorPanel.cpp src/ui/LightingPanel.cpp
-    src/ui/MaterialPanel.cpp src/ui/EffectPanel.cpp src/ui/ViewportPanel.cpp src/ui/AssetPanel.cpp src/ui/CommandUI.cpp src/ui/FileDialog.cpp src/ui/WorkflowPanels.cpp src/ui/FeedbackPanels.cpp)
+    src/ui/MaterialPanel.cpp src/ui/EffectPanel.cpp src/ui/AnimationPanel.cpp src/ui/ViewportPanel.cpp src/ui/AssetPanel.cpp src/ui/CommandUI.cpp src/ui/FileDialog.cpp src/ui/WorkflowPanels.cpp src/ui/FeedbackPanels.cpp)
 target_link_libraries(engine_editor PRIVATE engine_editor_session engine_desktop_renderer editor_imgui comdlg32)
 target_include_directories(engine_editor SYSTEM PRIVATE "${GAMEENGINE_RESOURCES_DIR}/glm")
 # Like the materials, the sample is found by an absolute path, so the editor runs from its build tree.

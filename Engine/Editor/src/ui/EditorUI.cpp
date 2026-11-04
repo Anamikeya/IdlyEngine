@@ -230,7 +230,7 @@ void EditorUI::draw() {
     finish_imports();
     main_menu();
     // Before the viewport: it extracts the frame, whose handles must be those of the latest import or reload.
-    docking(); toolbar(); hierarchy(); lighting(); material_editor(); effect_editor(); inspector(); assets(); viewport();
+    docking(); toolbar(); hierarchy(); lighting(); material_editor(); effect_editor(); animation_panel(); inspector(); assets(); viewport();
     console_panel();
     message_log_panel();
     picker_window();

@@ -19,10 +19,10 @@ COMPONENTS <component_count>
 - `next_id`: the next stable entity ID the scene will allocate. IDs are never recycled.
 - `ENTITY`: stable ID, parent ID (0 = root), quoted name (`\"` and `\\` escapes, at most 256 bytes, no control
   characters), local translation, rotation quaternion (x, y, z, w) and scale.
-- `COMPONENTS`: at most one `MESH`, `CAMERA`, `LIGHT`, `BODY`, `ENVIRONMENT` and `EMITTER` per entity, and up to 64 `COLLIDER`,
-  64 `MATSLOT` and 16 `BEHAVIOR` records per entity. The writer sorts them by entity, then `MESH` with its `MATSLOT`s,
-  `CAMERA`, `LIGHT`, `BODY`, `COLLIDER`, `ENVIRONMENT`, `BEHAVIOR`, `EMITTER`; the reader accepts any order, keeping colliders
-  and behaviors in file order and slots sorted.
+- `COMPONENTS`: at most one `MESH`, `CAMERA`, `LIGHT`, `BODY`, `ENVIRONMENT`, `EMITTER`, `ANIMATOR` and `ATTACH` per entity,
+  and up to 64 `COLLIDER`, 64 `MATSLOT` and 16 `BEHAVIOR` records per entity. The writer sorts them by entity, then `MESH`
+  with its `MATSLOT`s, `CAMERA`, `LIGHT`, `BODY`, `COLLIDER`, `ENVIRONMENT`, `BEHAVIOR`, `EMITTER`, `ANIMATOR`, `ATTACH`; the
+  reader accepts any order, keeping colliders and behaviors in file order and slots sorted.
 
 ### Component records
 
@@ -39,6 +39,8 @@ Colors are sRGB in [0, 1], as picked in the editor. Renderers convert them to li
 | `ENVIRONMENT <entity> <source> <image> <sky r g b> <horizon r g b> <ground r g b> <intensity> <rotation> <skybox> <ev100> <tone> <shadows> <distance> <occlusion> <bloom>` | `source`: `none`, `procedural` or `image`; `image`: asset reference, required for `image`; colors in [0, 1]; intensity ≥ 0; rotation in degrees; EV100 in [−20, 30]; `tone`: `aces`, `filmic`, `agx`, `pbr_neutral` or `linear`; `shadows`: `off`, `low`, `medium` or `high`; distance > 0 m; flags `0` or `1` | How the scene is lit and exposed. The first by entity ID applies. Without one, a procedural sky at EV100 15 is used. An image that cannot be used is reported, and the procedural sky lights the scene instead |
 | `BEHAVIOR <entity> <type> <count> [<key> <value>]...` | type and keys: 1–32 of `[a-z0-9_]`, each at most once; at most 32 finite values | Named numbers a runtime system reads when Play starts. The scene gives them no meaning. See `Engine/Gameplay/include/engine/gameplay/game.h` for the ones the gameplay module understands |
 | `EMITTER <entity> <effect> <auto_play> <loop> <rate_scale>` | `effect`: asset reference to a `.effect` file, or `-`; flags `0` or `1`; rate scale in [0, 1000] | Plays a particle effect at the entity. `auto_play` starts it by itself in Play and in the editor's preview; otherwise only gameplay fires it. `loop` starts it again when the effect's duration ends. The rate scale multiplies its rate and bursts. Particles are visual only and never change the scene |
+| `ANIMATOR <entity> <clips> "<clip>" <speed> <loop> <start> <preview>` | `clips`: asset reference to a model, or `-`; clip name quoted like an entity name, at most 256 bytes, empty allowed; speed in [−10, 10]; start in [0, 3600] seconds; flags `0` or `1` | Plays a clip of the entity's model (its `MESH` model) from `start`. `clips` names another model whose clips play on the joints with the same names; `-` uses the entity's own model. An empty or unknown clip leaves the model in its rest pose. `preview` plays it in the editor while editing. Poses live in the animation runtime and are never written to a scene |
+| `ATTACH <entity> "<bone>"` | joint name quoted, 1 to 256 bytes | Draws the entity, and what is under it, on that joint of its parent's model: its transform is then relative to the joint. A joint the parent's model does not have leaves it on the parent. Physics and gameplay see the plain parent transform |
 
 An asset reference is `-` (none), or the 16 hex digit asset ID followed by the quoted path inside the project's
 `Assets` folder (at most 1024 bytes, no control characters): `MESH 1 cube 1 1 1 0.65 0 6a1f0c3e9b2d4a01 "models/helmet.glb" - - 1 1`.
@@ -137,7 +139,7 @@ reference or `-` for a soft round dot. `max_particles` is 1 to 20000.
 
 ## Earlier versions
 
-- **Version 6** (Milestone 4): no `EMITTER` record.
+- **Version 6** (Milestone 4): no `EMITTER`, `ANIMATOR` or `ATTACH` record.
 - **Version 5** (Milestone 3 slice S5): `MESH` has no material or UV scale, `LIGHT` no cones or shadows, `BODY` no rotation
   lock, `COLLIDER` no filter; `MATSLOT`, `ENVIRONMENT`, `BEHAVIOR` and the `spot` type are rejected.
 - **Version 4** (Milestone 3 slice S4): `MESH` has no asset reference fields.

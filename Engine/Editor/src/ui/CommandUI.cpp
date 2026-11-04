@@ -1,4 +1,5 @@
 #include "EditorUI.hpp"
+#include <cstdio>
 #include <cstring>
 #include "FileDialog.hpp"
 #include <engine/editor/EditorPrefs.hpp>
@@ -272,6 +273,9 @@ void EditorUI::bind_commands() {
     toggle("Viewport.ShowBloom", session.view_flags.bloom);
     toggle("Viewport.ShowEffects", session.view_flags.effects);
     bind("Viewport.RestartEffects", [this] { session.restart_effects(); });
+    toggle("Viewport.ShowAnimations", session.view_flags.animations);
+    bind("Viewport.RestartAnimations", [this] { session.restart_animations(); });
+    toggle("Viewport.ShowBones", session.view_flags.bones);
     bind("Viewport.GameView", [this] { game_view = !game_view; }, {}, [this] { return game_view; });
     bind("Viewport.Maximize", [this] { viewport_maximized = !viewport_maximized; }, {}, [this] { return viewport_maximized; });
     constexpr const char *views[] = {"Viewport.Perspective", "Viewport.Front", "Viewport.Top", "Viewport.Side"};
@@ -345,12 +349,14 @@ void EditorUI::bind_commands() {
     panel("Window.Lighting", show_lighting);
     panel("Window.MaterialEditor", show_material);
     panel("Window.EffectEditor", show_effect);
+    bind("Window.Animation", [this] { show_animation = !show_animation; focus_animation = show_animation; }, {}, [this] { return show_animation; });
     panel("Window.AssetBrowser", show_assets);
     panel("Window.Console", show_console);
     panel("Window.MessageLog", show_message_log);
     bind("Window.SaveLayout", [this] { layout_prompt = true; }, [this] { return !config_folder.empty(); });
     bind("Window.ResetLayout", [this] {
         show_toolbar = show_hierarchy = show_inspector = show_lighting = show_material = show_assets = show_console = show_message_log = show_effect = true;
+        show_animation = false;
         layout_reset_requested = true;
     });
 }
@@ -440,7 +446,8 @@ void EditorUI::main_menu() {
         ImGui::Separator();
         for (const auto *id : {"Viewport.Lit", "Viewport.Wireframe", "Viewport.Unlit"}) command_item(id);
         ImGui::Separator();
-        for (const auto *id : {"Viewport.ShowGrid", "Viewport.ToggleColliders", "Viewport.ShowMarkers", "Viewport.ShowSkybox", "Viewport.ShowShadows", "Viewport.ShowAmbientOcclusion", "Viewport.ShowBloom", "Viewport.ShowEffects"}) command_item(id);
+        for (const auto *id : {"Viewport.ShowGrid", "Viewport.ToggleColliders", "Viewport.ShowMarkers", "Viewport.ShowSkybox", "Viewport.ShowShadows", "Viewport.ShowAmbientOcclusion", "Viewport.ShowBloom", "Viewport.ShowEffects", "Viewport.ShowAnimations", "Viewport.ShowBones"}) command_item(id);
+        for (const auto *id : {"Viewport.RestartEffects", "Viewport.RestartAnimations"}) command_item(id);
         if (ImGui::BeginMenu("Bookmarks")) {
             for (int slot = 0; slot < 10; ++slot) command_item(("Bookmark.Go" + std::to_string(slot)).c_str());
             ImGui::Separator();
@@ -676,7 +683,9 @@ void EditorUI::load_settings() {
     session.view_flags.ambient_occlusion = settings.flag("view.ambient_occlusion", session.view_flags.ambient_occlusion);
     session.view_flags.bloom = settings.flag("view.bloom", session.view_flags.bloom);
     session.view_flags.effects = settings.flag("view.effects", session.view_flags.effects);
-    constexpr const char *panel_keys[] = {"toolbar", "hierarchy", "inspector", "lighting", "material", "assets", "console", "message_log", "effect"};
+    session.view_flags.animations = settings.flag("view.animations", session.view_flags.animations);
+    session.view_flags.bones = settings.flag("view.bones", session.view_flags.bones);
+    constexpr const char *panel_keys[] = {"toolbar", "hierarchy", "inspector", "lighting", "material", "assets", "console", "message_log", "effect", "animation"};
     const auto flags = panel_flags();
     for (std::size_t i = 0; i < flags.size(); ++i) *flags[i] = settings.flag(std::string("panel.") + panel_keys[i], *flags[i]);
     saved_panels.clear();
@@ -715,7 +724,9 @@ void EditorUI::save_settings() {
     settings.set("view.ambient_occlusion", session.view_flags.ambient_occlusion);
     settings.set("view.bloom", session.view_flags.bloom);
     settings.set("view.effects", session.view_flags.effects);
-    constexpr const char *panel_keys[] = {"toolbar", "hierarchy", "inspector", "lighting", "material", "assets", "console", "message_log", "effect"};
+    settings.set("view.animations", session.view_flags.animations);
+    settings.set("view.bones", session.view_flags.bones);
+    constexpr const char *panel_keys[] = {"toolbar", "hierarchy", "inspector", "lighting", "material", "assets", "console", "message_log", "effect", "animation"};
     const auto flags = panel_flags();
     saved_panels.clear();
     for (std::size_t i = 0; i < flags.size(); ++i) {
@@ -751,7 +762,25 @@ std::string EditorUI::log_fields() const {
            " primary_scale=" + primary_scale + " primary_rot=" + primary_rot +
            " gizmo_typed=" + (gizmo_entry.active() ? gizmo_entry.text() : std::string("-")) + " tooltip=" + tooltip_for_log(shown_tooltip) +
            " thumbnails=" + std::to_string(std::ranges::count_if(thumbnails, [this](const auto &entry) { return renderer.thumbnail(entry.first.value).texture != 0; })) +
-           " selected_asset=" + assets::to_string(selected_asset) + effect_fields();
+           " selected_asset=" + assets::to_string(selected_asset) + effect_fields() + animation_fields();
+}
+// Animation for real-input runs: the selected animator's clip and time, the shown animators, and the model's events.
+std::string EditorUI::animation_fields() const {
+    const auto id = session.selection();
+    const auto status = session.animation().status(id);
+    const auto stats = session.animation().stats();
+    const auto events = session.clip_events(session.clip_source(id));
+    std::string clip = status && !status->clip.empty() ? status->clip : "-";
+    std::ranges::replace(clip, ' ', '_');
+    char time[32] = "-";
+    if (status) std::snprintf(time, sizeof time, "%.3f", status->time);
+    const auto gpu = renderer.stats();
+    return " animators=" + std::to_string(stats.animators) + " anim_clip=" + clip + " anim_time=" + time +
+           " anim_paused=" + std::to_string(status && status->paused ? 1 : 0) + " anim_fading=" + std::to_string(status && !status->fading_from.empty() ? 1 : 0) +
+           " anim_layered=" + std::to_string(status && !status->layered.empty() ? 1 : 0) + " clip_events=" + std::to_string(events.size()) +
+           " anim_events_seen=" + std::to_string(session.animation_events().size()) + " animations_on=" + std::to_string(session.view_flags.animations ? 1 : 0) +
+           " bones_on=" + std::to_string(session.view_flags.bones ? 1 : 0) + " animation_panel=" + std::to_string(show_animation ? 1 : 0) +
+           " gpu_posed=" + std::to_string(gpu.posed);
 }
 // Particles for real-input runs: what the shown scene's system holds, what the GPU drew, and the chosen effect's values.
 std::string EditorUI::effect_fields() const {
@@ -842,7 +871,7 @@ void EditorUI::cheat_sheet_overlay() {
     }
     ImGui::End();
 }
-std::array<bool *, 9> EditorUI::panel_flags() { return {&show_toolbar, &show_hierarchy, &show_inspector, &show_lighting, &show_material, &show_assets, &show_console, &show_message_log, &show_effect}; }
+std::array<bool *, 10> EditorUI::panel_flags() { return {&show_toolbar, &show_hierarchy, &show_inspector, &show_lighting, &show_material, &show_assets, &show_console, &show_message_log, &show_effect, &show_animation}; }
 void EditorUI::layout_dialog() {
     if (std::exchange(layout_prompt, false)) ImGui::OpenPopup("Save layout");
     if (!ImGui::BeginPopupModal("Save layout", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) return;

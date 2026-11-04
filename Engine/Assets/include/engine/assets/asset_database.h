@@ -102,6 +102,9 @@ public:
 	// The same for particle effects (.effect).
 	Result<AssetId> create_effect(std::string_view path, const EffectData& effect);
 	Result<void> save_effect(AssetId id, const EffectData& effect);
+	// Replaces a model's clip events in its .meta (see normalize_clip_events). The model is not re-imported and its
+	// revision stays; find() returns the new events at once.
+	Result<void> set_clip_events(AssetId id, std::vector<ClipEvent> events);
 
 	// Copies an outside file into the root under a free name, writes a .meta with a new random id, rescans and
 	// loads it once. Nothing stays behind on failure. A file already under the root is just loaded.

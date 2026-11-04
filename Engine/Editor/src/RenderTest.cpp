@@ -469,7 +469,8 @@ void particles(Harness &h) {
 }
 // A red bar 1 m wide from y = -1 to y = 1 facing +Z, in three rows of vertices. Skinned: joint "root" at the bottom row and
 // "tip" at the middle one, bound as they rest; the bottom row follows root, the top row tip, the middle both equally.
-std::vector<std::uint8_t> bar_model(bool skinned) {
+// Animated: a clip "Slide" moves the tip 1.5 m to the right over a second.
+std::vector<std::uint8_t> bar_model(bool skinned, bool animated = false) {
     std::vector<std::uint8_t> bin;
     std::vector<std::string> views, accessors;
     const auto add = [&](const void *data, std::size_t bytes, const std::string &accessor) {
@@ -497,6 +498,13 @@ std::vector<std::uint8_t> bar_model(bool skinned) {
         nodes = "{\"name\":\"bar\",\"mesh\":0,\"skin\":0},{\"name\":\"root\",\"translation\":[0,-1,0],\"children\":[2]},{\"name\":\"tip\",\"translation\":[0,1,0]}";
         roots = "[0,1]";
         skins = ",\"skins\":[{\"joints\":[1,2],\"inverseBindMatrices\":" + ibm + "}]";
+        if (animated) {
+            const std::vector<float> times{0, 1}, slide{0, 1, 0, 1.5f, 1, 0};
+            const std::string input = add(times.data(), times.size() * 4, "\"componentType\":5126,\"count\":2,\"type\":\"SCALAR\",\"min\":[0],\"max\":[1]");
+            const std::string output = add(slide.data(), slide.size() * 4, "\"componentType\":5126,\"count\":2,\"type\":\"VEC3\"");
+            skins += ",\"animations\":[{\"name\":\"Slide\",\"channels\":[{\"sampler\":0,\"target\":{\"node\":2,\"path\":\"translation\"}}],"
+                     "\"samplers\":[{\"input\":" + input + ",\"output\":" + output + "}]}]";
+        }
     }
     std::string json = "{\"asset\":{\"version\":\"2.0\"},\"scene\":0,\"scenes\":[{\"nodes\":" + roots + "}],\"nodes\":[" + nodes +
                        "],\"meshes\":[{\"primitives\":[{\"attributes\":{" + attributes + "},\"indices\":" + index + ",\"material\":0}]}]," +
@@ -610,6 +618,8 @@ void skinned_model(Harness &h, const fs::path &model_file) {
     const auto placed = h.session.place_asset(imported.value().id);
     if (!placed) { h.check(false, "skinned model is placed", "place failed"); return; }
     const auto entity = placed.value().created.front();
+    // Placing an animated model gives it an animator; this check poses it by hand, from its rest pose.
+    if (!h.session.execute(commands::SetAnimator{entity, std::nullopt})) { h.check(false, "skinned model's animator can be removed", "failed"); return; }
     h.session.focus(); h.session.select(0);
     h.session.camera.yaw = 0.9; h.session.camera.pitch = 0.15;
     const auto data = h.session.model(h.session.scene().inspect(entity)->components.mesh->mesh_asset);
@@ -643,6 +653,81 @@ void skinned_model(Harness &h, const fs::path &model_file) {
     // The fox is orange against a gray-blue background.
     h.check(rest[0] > rest[2] + 30, "a real skinned model draws in its rest pose", text(rest));
     h.check(h.renderer.stats().posed == 1 && changed > 1000, "posed by a frame of its clip, its pixels move", std::to_string(changed) + " pixels changed");
+}
+// Milestone 5 slice 3: an animator poses a model from its clip, and an entity attached to a joint is drawn on it.
+void animation(Harness &h) {
+    h.reset(); h.sun({0, 0, 0});
+    h.settle();
+    const fs::path file = h.output / "source" / "bar_animated.glb";
+    fs::create_directories(file.parent_path());
+    const auto bytes = bar_model(true, true);
+    std::ofstream(file, std::ios::binary).write(reinterpret_cast<const char *>(bytes.data()), std::streamsize(bytes.size()));
+    const auto imported = h.session.import_asset(file);
+    if (!imported) { h.check(false, "an animated model imports", imported.error().message); return; }
+    const auto placed = h.session.place_asset_at(imported.value().id, {0, -1, 0});
+    if (!placed) { h.check(false, "an animated model is placed", placed.error().message); return; }
+    const auto bar = placed.value().created.front();
+    const auto animator = h.session.scene().inspect(bar)->components.animator;
+    h.check(animator && animator->clip == "Slide", "placing an animated model gives it an animator on its first clip", animator ? animator->clip : "none");
+    // A green cube held 1.3 m above the tip joint.
+    Transform held; held.position = {0, 1.3, 0}; held.scale = {0.25, 0.25, 0.25};
+    MeshComponent green; green.color = {0.1, 1, 0.1};
+    Components cube{green, {}, {}};
+    cube.attach = AttachToBoneComponent{"tip"};
+    const auto made = h.session.execute(commands::CreateEntity{"Held", held, bar, 0, cube});
+    if (!made) { h.check(false, "an attached cube is created", made.error().message); return; }
+    const auto revision = h.session.scene_revision();
+    const auto red = [](const Color &c) { return c[0] > 60 && c[0] > 3 * c[1]; };
+    const auto greenish = [](const Color &c) { return c[1] > 60 && c[1] > 2 * c[0]; };
+    const auto background = [](const Color &c) { return c[0] < c[2] && c[1] < c[2] + 20; };
+    const auto start_top = on_screen(h, {1.3, 0.8, 0}), start_cube = on_screen(h, {0, 1.3, 0}), later_cube = on_screen(h, {0.75, 1.3, 0});
+    const auto at = [&](double seconds) {
+        if (auto set = h.session.animation().set_time(bar, seconds); !set) throw std::runtime_error("Set time failed: " + set.error().message);
+        (void)h.session.animation().set_paused(bar, true);
+    };
+    at(0);
+    const auto top0 = h.pixel(start_top[0], start_top[1]), cube0 = h.pixel(start_cube[0], start_cube[1]), away0 = h.pixel(later_cube[0], later_cube[1]);
+    h.capture("anim_start");
+    at(0.75);
+    const auto top1 = h.pixel(start_top[0], start_top[1]);
+    at(0.5);
+    const auto cube1 = h.pixel(start_cube[0], start_cube[1]), away1 = h.pixel(later_cube[0], later_cube[1]);
+    h.capture("anim_half");
+    h.check(background(top0) && red(top1), "an animator poses the model from its clip", "right of the top: " + text(top0) + " at 0 s, " + text(top1) + " at 0.75 s");
+    h.check(greenish(cube0) && background(away0), "an attached cube is drawn on its joint", "on the tip " + text(cube0) + ", beside it " + text(away0));
+    h.check(background(cube1) && greenish(away1), "the attached cube follows the joint as it moves", "old place " + text(cube1) + ", new place " + text(away1));
+    h.check(h.session.scene_revision() == revision, "animating and attaching change nothing in the scene", std::to_string(h.session.scene_revision()) + " vs " + std::to_string(revision));
+    h.check(h.renderer.stats().posed == 1, "the animated model is drawn posed", std::to_string(h.renderer.stats().posed));
+}
+// A real animated model playing a clip through its animator, for inspection.
+void animated_model(Harness &h, const fs::path &model_file) {
+    std::error_code error;
+    if (!fs::is_regular_file(model_file, error)) { std::cout << "SKIP  animated model capture: " << model_file.string() << " not found\n"; return; }
+    h.reset();
+    h.sun({-35, 30}, 90000);
+    const auto imported = h.session.import_asset(model_file);
+    if (!imported) { h.check(false, "animated model imports", imported.error().message); return; }
+    const auto placed = h.session.place_asset(imported.value().id);
+    if (!placed) { h.check(false, "animated model is placed", "place failed"); return; }
+    const auto entity = placed.value().created.front();
+    h.session.focus(); h.session.select(0);
+    h.session.camera.yaw = 0.9; h.session.camera.pitch = 0.15;
+    if (!h.session.assign_clip(entity, "Walk")) { h.check(false, "the animated model plays Walk", "no Walk clip"); return; }
+    h.settle();
+    (void)h.session.animation().set_paused(entity, true);
+    (void)h.session.animation().set_time(entity, 0);
+    h.settle();
+    const auto first = h.renderer.readback(unsigned(h.width), unsigned(h.height));
+    h.capture(model_file.stem().string() + "_walk_start");
+    (void)h.session.animation().set_time(entity, 0.35);
+    h.capture(model_file.stem().string() + "_walk_middle");
+    h.settle();
+    const auto second = h.renderer.readback(unsigned(h.width), unsigned(h.height));
+    std::size_t changed = 0;
+    for (std::size_t i = 0; i + 3 < first.size() && i + 3 < second.size(); i += 4)
+        if (std::abs(first[i] - second[i]) + std::abs(first[i + 1] - second[i + 1]) + std::abs(first[i + 2] - second[i + 2]) > 60) ++changed;
+    const auto status = h.session.animation().status(entity);
+    h.check(status && status->clip == "Walk" && changed > 500, "a real model walks through its animator", std::to_string(changed) + " pixels changed between 0 and 0.35 s");
 }
 void model_with_all_maps(Harness &h, const fs::path &model_file) {
     std::error_code error;
@@ -705,6 +790,8 @@ int run_render_test(GLFWwindow *window, const fs::path &materials, const fs::pat
         particles(h);
         skinning(h);
         skinned_model(h, fs::path(ENGINE_RESOURCES_DIR) / "filament/third_party/models/Fox/Fox.glb");
+        animation(h);
+        animated_model(h, fs::path(ENGINE_RESOURCES_DIR) / "filament/third_party/models/Fox/Fox.glb");
         const fs::path sample = fs::path(ENGINE_SAMPLES_DIR) / "PhysicsShooter";
         model_with_all_maps(h, sample / "Assets/models/WaterBottle.glb");
         lighting_scene(h, sample);

@@ -67,6 +67,8 @@ struct MeshBinding {
     Surface surface;
     std::vector<PartMaterial> parts;
     Pose pose; // For a skinned mesh; a pose whose size is not the skeleton's draws the rest pose.
+    // Where to draw instead of the entity's scene transform: something attached to a bone (D2). Must be finite.
+    std::optional<WorldTransform> world;
 };
 struct PerspectiveCamera {
     EntityId entity = 0;
@@ -84,6 +86,7 @@ struct LightBinding {
     double range = 10;    // Point and spot influence radius in meters; ignored for directional.
     double inner_cone_radians = 0.4363, outer_cone_radians = 0.6109; // Spot half angles.
     bool cast_shadows = false;
+    std::optional<WorldTransform> world; // As for MeshBinding.
 };
 struct RenderObject {
     EntityId entity;

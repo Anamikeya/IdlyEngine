@@ -42,7 +42,7 @@ void creation_and_flecs() {
         ++count;
     });
     check(count == 1, "Entity not stored in Flecs");
-    check(registry().size() == 15, "Registry incomplete");
+    check(registry().size() == 17, "Registry incomplete");
     check(describe(Command{DeleteEntity{id}}).name == "entity.delete", "Typed registry mismatch");
 }
 void permissions_and_revision() {
@@ -856,12 +856,69 @@ void format_v7() {
           "An emitter without an effect is allowed");
 }
 
+// Version 7 also has one ANIMATOR and one ATTACH per entity (Milestone 5 slice 3).
+void format_v7_animation() {
+    Scene scene;
+    CommandBus b(scene);
+    Components character;
+    character.animator = AnimatorComponent{{0x00000000000000cd, "chars/walk \"cycle\".glb"}, "Walk \"fast\"", -1.5, false, 0.25, false};
+    auto made = b.execute(owner, 0, CreateEntity{"Hero", {}, 0, 0, character});
+    ok(made);
+    const auto hero = made.value().created.front();
+    Components sword;
+    sword.attach = AttachToBoneComponent{"hand.R"};
+    auto held = b.execute(owner, b.revision(), CreateEntity{"Sword", {}, hero, 0, sword});
+    ok(held);
+    const auto blade = held.value().created.front();
+    check(scene.inspect(hero)->components == character && scene.inspect(blade)->components == sword, "Animator and attachment are stored");
+    std::ostringstream out;
+    ok(write_scene(out, scene.snapshot()));
+    const std::string text = out.str();
+    check(text.find("ANIMATOR 1 00000000000000cd \"chars/walk \\\"cycle\\\".glb\" \"Walk \\\"fast\\\"\" -1.5 0 0.25 0\n") != std::string::npos, text.c_str());
+    check(text.find("ATTACH 2 \"hand.R\"\n") != std::string::npos, text.c_str());
+    std::istringstream in(text);
+    auto parsed = read_scene(in);
+    ok(parsed);
+    check(parsed.value() == scene.snapshot(), "Animator and attachment round trip");
+    // The defaults: the model's own clips, no clip yet, speed 1, looping, from the start, previewed.
+    auto plain_animator = AnimatorComponent{};
+    ok(b.execute(owner, b.revision(), SetAnimator{hero, plain_animator}));
+    check(scene.inspect(hero)->components.animator == plain_animator, "The animator command changes it");
+    ok(b.execute(owner, b.revision(), SetAttachToBone{blade, std::nullopt}));
+    check(!scene.inspect(blade)->components.attach, "An empty attach command removes it");
+    ok(b.undo(owner, b.revision()));
+    check(scene.inspect(blade)->components.attach == sword.attach, "Undo restores it");
+    std::ostringstream again;
+    ok(write_scene(again, scene.snapshot()));
+    check(again.str().find("ANIMATOR 1 - \"\" 1 1 0 1\n") != std::string::npos, again.str().c_str());
+    // Invalid values are refused by the command and by the reader.
+    auto fast = plain_animator;
+    fast.speed = 11;
+    error(b.execute(owner, b.revision(), SetAnimator{hero, fast}), ErrorCode::InvalidArgument);
+    error(b.execute(owner, b.revision(), SetAttachToBone{blade, AttachToBoneComponent{""}}), ErrorCode::InvalidArgument);
+    const std::string head = " 2 1 ENTITY 1 0 \"A\" 0 0 0 0 0 0 1 1 1 1 COMPONENTS ";
+    for (const std::string bad : {"ENGINE_SCENE 6" + head + "1 ANIMATOR 1 - \"\" 1 1 0 1",
+                                  "ENGINE_SCENE 6" + head + "1 ATTACH 1 \"hand\"",
+                                  "ENGINE_SCENE 7" + head + "2 ANIMATOR 1 - \"\" 1 1 0 1 ANIMATOR 1 - \"\" 1 1 0 1",
+                                  "ENGINE_SCENE 7" + head + "2 ATTACH 1 \"a\" ATTACH 1 \"b\"",
+                                  "ENGINE_SCENE 7" + head + "1 ANIMATOR 1 - \"\" 1 2 0 1",
+                                  "ENGINE_SCENE 7" + head + "1 ANIMATOR 1 - \"\" 1 1 -1 1",
+                                  "ENGINE_SCENE 7" + head + "1 ANIMATOR 1 - \"\" -10.5 1 0 1",
+                                  "ENGINE_SCENE 7" + head + "1 ANIMATOR 1 - Walk 1 1 0 1",
+                                  "ENGINE_SCENE 7" + head + "1 ATTACH 1 \"\"",
+                                  "ENGINE_SCENE 7" + head + "1 ATTACH 1"}) {
+        std::istringstream rejected(bad);
+        check(!read_scene(rejected), bad.c_str());
+    }
+}
+
 } // namespace
 int main() {
     const std::pair<const char *, std::function<void()>> tests[] = {
         {"creation_and_flecs", creation_and_flecs},
         {"format_v6", format_v6},
         {"format_v7", format_v7},
+        {"format_v7_animation", format_v7_animation},
         {"permissions_and_revision", permissions_and_revision},
         {"atomic_batch", atomic_batch},
         {"hierarchy_and_cycles", hierarchy_and_cycles},

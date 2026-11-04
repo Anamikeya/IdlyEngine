@@ -82,6 +82,7 @@ void EditorUI::viewport() {
     ImGuizmo::SetOrthographic(frame->camera.lens.orthographic_half_height > 0);
     gizmo(origin, size);
     if (show_colliders && !game && !game_view) collider_outlines(origin, size);
+    if (session.view_flags.bones && !game && !game_view) bone_overlay(origin, size);
     if (!game && !game_view) selection_outlines(origin, size);
     report_physics();
     report_assets();
@@ -227,8 +228,9 @@ void EditorUI::viewport_overlay(ImVec2 origin, ImVec2 size) {
     if (ImGui::BeginPopup("##view-mode")) {
         for (const auto *id : {"Viewport.Lit", "Viewport.Wireframe", "Viewport.Unlit"}) command_item(id);
         ImGui::SeparatorText("Show");
-        for (const auto *id : {"Viewport.ShowGrid", "Viewport.ToggleColliders", "Viewport.ShowMarkers", "Viewport.ShowSkybox", "Viewport.ShowShadows", "Viewport.ShowAmbientOcclusion", "Viewport.ShowBloom", "Viewport.ShowEffects"}) command_item(id);
+        for (const auto *id : {"Viewport.ShowGrid", "Viewport.ToggleColliders", "Viewport.ShowMarkers", "Viewport.ShowSkybox", "Viewport.ShowShadows", "Viewport.ShowAmbientOcclusion", "Viewport.ShowBloom", "Viewport.ShowEffects", "Viewport.ShowAnimations", "Viewport.ShowBones"}) command_item(id);
         command_item("Viewport.RestartEffects");
+        command_item("Viewport.RestartAnimations");
         ImGui::EndPopup();
     }
     // ---- Top right: snapping and camera speed, each a toggle and a value ----
@@ -279,7 +281,8 @@ void EditorUI::viewport_overlay(ImVec2 origin, ImVec2 size) {
 }
 void EditorUI::gizmo(ImVec2 origin, ImVec2 size) {
     const auto &io = ImGui::GetIO();
-    const auto world = session.scene().world_transform(session.selection());
+    // Where the selection is drawn: on its joint, when it is attached to one.
+    const auto world = session.drawn_world(session.selection());
     if (!world || possessed() || game_view) {
         if (gizmo_active && session.dragging()) (void)session.end_drag();
         if (gizmo_active) ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
@@ -424,7 +427,7 @@ void EditorUI::selection_outlines(ImVec2 origin, ImVec2 size) {
     auto *draw = ImGui::GetWindowDrawList();
     for (const auto id : session.selected().items()) {
         const auto bounds = session.local_bounds(id);
-        const auto world = session.scene().world_transform(id);
+        const auto world = session.drawn_world(id);
         if (!bounds || !world) continue;
         const auto m = glm::make_mat4(world->matrix.data());
         const auto &[low, high] = *bounds;
@@ -478,6 +481,17 @@ std::optional<ImVec2> EditorUI::project(glm::dvec3 p, ImVec2 origin, ImVec2 size
     if (clip.w <= 1e-6) return std::nullopt;
     return ImVec2(origin.x + float((clip.x / clip.w + 1) / 2) * size.x, origin.y + float((1 - clip.y / clip.w) / 2) * size.y);
 }
+void EditorUI::bone_overlay(ImVec2 origin, ImVec2 size) {
+    auto *draw = ImGui::GetWindowDrawList();
+    for (const auto &line : session.bone_lines()) {
+        const auto a = project({line.from.x, line.from.y, line.from.z}, origin, size), b = project({line.to.x, line.to.y, line.to.z}, origin, size);
+        if (!a || !b) continue;
+        const bool selected = session.selected().contains(line.entity);
+        const ImU32 color = selected ? IM_COL32(120, 230, 255, 255) : IM_COL32(150, 190, 210, 170);
+        draw->AddLine(*a, *b, color, px(selected ? 2.0f : 1.5f));
+        draw->AddCircleFilled(*b, px(selected ? 3.0f : 2.0f), color);
+    }
+}
 void EditorUI::collider_outlines(ImVec2 origin, ImVec2 size) {
     auto *draw = ImGui::GetWindowDrawList();
     for (const auto &line : session.physics_bridge().debug_geometry().lines) {
@@ -496,7 +510,7 @@ EntityId EditorUI::markers(ImVec2 origin, ImVec2 size) {
         if (!e.components.light && !e.components.camera) continue;
         if (!playing() && session.hidden(e.id)) continue;
         if (e.id == session.view_camera()) continue; // The camera being looked through sits at the eye.
-        const auto m = glm::make_mat4(session.scene().world_transform(e.id)->matrix.data());
+        const auto m = glm::make_mat4(session.drawn_world(e.id)->matrix.data());
         const glm::dvec3 at(m[3]);
         const auto screen = project(at);
         if (!screen) continue;
