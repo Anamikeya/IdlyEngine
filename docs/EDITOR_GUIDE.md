@@ -169,6 +169,35 @@ If you add files to `Assets` yourself, press **Rescan**.
 **Materials:** type a name beside **New material** and press it. Double-click a material to open it in the Material Editor, or press
 `Ctrl+E` to open the selected object's material. Material changes save themselves when you release a control, and they can be undone.
 
+## Add particle effects
+
+A particle effect is a `.effect` file in the asset folder: how particles are born, move, change and look. An entity
+plays one through a **Particle Emitter** component. Particles are only for show: they never push anything, score or
+change the scene, and a run plays the same with them or without them.
+
+1. Type a name in the Asset Browser's name field and press **New effect**. The effect is selected and its Effect Editor
+   opens with a double-click.
+2. Press **Place in scene** in the Effect Editor, or drag the effect onto the viewport. An emitter appears and starts
+   playing at once. **Create... > Particle Emitter** does the same with the effect selected in the Asset Browser.
+3. Change values in the Effect Editor. Dragging shows the change on every emitter using the effect, and releasing saves
+   it to the file as one undo step.
+
+| Part of the Effect Editor | What it sets |
+|---|---|
+| Emission | How long one cycle lasts, particles per second, a burst at the start of each cycle, and how many may live at once |
+| Motion | Lifetime and speed (min and max), the spread cone around the emitter's up axis, a start sphere, acceleration (gravity by default), drag, spin, and stretch, which draws streaks along the velocity for sparks |
+| Floor | Particles can bounce on a flat floor at a height, keeping some of their speed |
+| Look | **Additive** adds light (sparks, flashes); **Alpha** covers what is behind (smoke, dust). Strength above 1 blooms. An image replaces the soft round dot |
+| Size and color over life | Up to eight keys each: a time from 0 (birth) to 1 (death), then a width or a color with alpha |
+
+**Restart** starts every emitter again. **View > Play Effects** turns the preview off while editing; Play and Simulate
+always run their own particles from the beginning, and Stop throws them away. **View > Restart Effects** is also in the
+viewport's view menu.
+
+In the Inspector, a Particle Emitter can be told not to play by itself, in which case gameplay fires it, not to loop, and
+to scale its rate. The shooter's **Impact Effect Template** works this way: give it an emitter and every hit fires that
+effect along the surface it struck.
+
 ## Light the scene
 
 In the **Lighting** panel, start with **Outdoor** or **Indoor**, then adjust the sky or HDR image, exposure, tone mapping and shadows.
@@ -239,7 +268,7 @@ right-clicking removes a key. Mouse gestures can't be changed yet.
 | What | Where |
 |---|---|
 | A scene | The `.scene` file named in the toolbar's **Scene file** field |
-| Assets and materials | `Assets\` in the project folder |
+| Assets, materials and effects | `Assets\` in the project folder |
 | Hidden objects and bookmarks | `<scene file>.editor`, beside the scene |
 | Keys, layout and editor settings | `keymap.ini`, `layout.ini` and `editor.ini` in `%APPDATA%\GameEngine\` |
 

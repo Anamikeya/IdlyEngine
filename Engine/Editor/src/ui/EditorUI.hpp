@@ -174,6 +174,7 @@ struct EditorUI {
     void save_settings();
     // The UI's state, for the --game-log line.
     std::string log_fields() const;
+    std::string effect_fields() const;
     // Registers every command and binds its behavior; throws if the table and the bindings disagree.
     void bind_commands();
     void load_keymap();
@@ -309,6 +310,7 @@ struct EditorUI {
     bool texture_slot(const char *label, assets::MaterialTexture &slot);
     void material_editor();
     void effect_editor();
+    static assets::EffectData starter_effect();
     // Puts physics problems in the Console once, when they appear.
     void report_physics();
     // Puts asset problems in the Console once, when they appear.

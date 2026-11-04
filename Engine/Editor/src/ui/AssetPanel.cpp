@@ -271,7 +271,8 @@ void EditorUI::asset_browser_contents() {
     }
     ImGui::SameLine();
     if (tip_button("Rescan", "Look through the asset folder again for changed files")) report(session.rescan_assets(), "Asset folder rescanned");
-    ImGui::SetNextItemWidth(px(110)); ImGui::InputText("##material-name", new_material_name.data(), new_material_name.size());
+    ImGui::SetNextItemWidth(px(110)); ImGui::InputTextWithHint("##material-name", "Name", new_material_name.data(), new_material_name.size());
+    mark("Asset.NewName");
     flow(button_width("New material"));
     if (tip_button("New material", "Make a material with the name to the left")) {
         const auto created = session.create_material(new_material_name.data());
@@ -280,7 +281,7 @@ void EditorUI::asset_browser_contents() {
     mark("Asset.NewMaterial");
     flow(button_width("New effect"));
     if (tip_button("New effect", "Make a particle effect with the name to the left")) {
-        const auto created = session.create_effect(new_material_name.data());
+        const auto created = session.create_effect(new_material_name.data(), starter_effect());
         if (report(created, "Effect created")) { selected_asset = created.value(); asset_scroll_to = selected_asset; }
     }
     mark("Asset.NewEffect");

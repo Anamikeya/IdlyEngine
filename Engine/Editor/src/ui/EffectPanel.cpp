@@ -5,6 +5,19 @@
 // The Effect Editor (Milestone 5): edits the particle effect chosen in the Asset Browser. Dragging a value shows it live
 // on every emitter using the effect; releasing it saves the file as one undo step, as the Material Editor does.
 namespace engine::editor {
+// What New effect starts from: a warm spray that reads against a bright sky and a dark room alike, to be shaped from there.
+assets::EffectData EditorUI::starter_effect() {
+    assets::EffectData e;
+    e.rate = 40;
+    e.lifetime = {0.8, 1.4};
+    e.speed = {2.5, 4};
+    e.cone_degrees = 15;
+    e.acceleration = {0, -4.9, 0};
+    e.size = {{0, 0.14}, {1, 0.04}};
+    e.color = {{0, {1, 0.8, 0.4, 1}}, {1, {1, 0.35, 0.05, 0}}};
+    e.emissive_strength = 3;
+    return e;
+}
 void EditorUI::effect_editor() {
     if (!show_effect) return;
     const bool open = begin_panel("Effect Editor", "Effect Editor", context::details, &show_effect);
@@ -26,9 +39,11 @@ void EditorUI::effect_editor() {
     if (tip_button("Restart", "Start every emitter again from its beginning")) session.restart_effects();
     mark("Effect.Restart");
     ImGui::SameLine();
-    if (tip_button("Place in scene", "Add an emitter playing this effect where the view is looking")) {
-        const auto placed = session.place_asset_at(chosen->id, {session.camera.target.x, session.camera.target.y, session.camera.target.z});
-        report(placed, "Emitter added to the scene");
+    if (tip_button("Place in scene", "Add an emitter playing this effect on the surface in the middle of the view")) {
+        // On what the view's center looks at, as a drop would place it, so the emitter is not buried inside an object.
+        Vec3 at = session.camera.target;
+        if (frame) if (const auto hit = session.ray_hit(*frame, 0, 0)) at = *hit;
+        report(session.place_asset_at(chosen->id, at), "Emitter added to the scene");
     }
     mark("Effect.Place");
     if (!session.view_flags.effects && !playing()) ImGui::TextColored({0.95f, 0.75f, 0.3f, 1}, "Effects are off in the viewport. Turn on View > Play Effects.");

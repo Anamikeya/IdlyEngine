@@ -25,6 +25,7 @@ powershell -ExecutionPolicy Bypass -File Tests/RealInput/editor_ux_phase2.ps1 -E
 powershell -ExecutionPolicy Bypass -File Tests/RealInput/editor_ux_phase3.ps1 -Editor <engine_editor.exe> -Output <folder>
 powershell -ExecutionPolicy Bypass -File Tests/RealInput/editor_ux_phase4.ps1 -Editor <engine_editor.exe> -Output <folder>
 powershell -ExecutionPolicy Bypass -File Tests/RealInput/editor_ux_phase5.ps1 -Editor <engine_editor.exe> -Output <folder>
+powershell -ExecutionPolicy Bypass -File Tests/RealInput/milestone5_effects.ps1 -Editor <engine_editor.exe> -Output <folder>
 ```
 
 They use a settings folder of their own (`--config-dir`) and find controls by name (`--ui-map`).
@@ -55,14 +56,14 @@ LIBRARIES ...)` (`cmake/GameEngineTesting.cmake`). After each build the executab
 runs in a fresh process, which isolates process-global state such as Box3D's world table.
 Case names must be unique within an executable.
 
-## Current suites (414 CTest entries)
+## Current suites (446 CTest entries)
 
 | Executable | Labels | Cases | Covers |
 |---|---|---|---|
 | `physics_tests` | physics, unit | 41 | World lifecycle and limits, config validation, move semantics, Box3D memory release, fixed step and catch-up, free-fall accuracy, bitwise determinism, body/collider lifecycle, stale/foreign handles, input validation, mass, rest/sleep, impulses, kinematic targets, filters, moved/contact/hit/sensor events. Milestone 4: raycast hit and miss, ray filters, ignored body and sensors, collision filters, impulse direction and mass response, off-center spin, wake on impulse, static and kinematic refusal, rotation lock |
 | `physics_scene_tests` | physics, integration | 32 | Real Box3D world against the real `Scene`/`CommandBus`, authored through scene components: entity-to-body mapping, pose publish via a history-free bus, editor revision/undo isolation, feedback-loop guard, edit-mode follow, kinematic targets, parented transforms, unsupported hierarchies, scale rules, delete/undo restore, entities losing their components, resource release, contact and sensor events, collider rebuild, pause/reset, debug geometry, play/stop restore, >256-body publish split, owner-thread enforcement. Milestone 4: raycast entity mapping and filters, impulses, removed entities, hit events, reset |
-| `gameplay_tests` | gameplay, integration | 33 | Input actions, walking, sprint, looking, floors and walls, jump, falling out, fire rate, ammunition, reload, hits, damage, score, impulses and mass, static walls, dynamic and moving targets, impact damage, bonus zones, pickups, win, loss, the clock and pause, determinism. The real sample scene: loads, settles, can be won, lost and restarted, the domino chain, the bonus zone, breaking glass |
-| `asset_tests` | assets, unit | 47 | Paths and stable ids, OBJ, TGA, PPM, `.meta`, database catalogue, cache/reload/revision/unload, missing and failed files, scan issues. GLB: geometry, transforms, mirroring, materials, embedded images, warnings, invalid and unsupported files, real models from the dependency tree. PNG and JPEG decoding and rejection. `import_file` naming, ids, and leaving nothing behind on failure. Milestone 4: all five maps and their color spaces, alpha and sides, broken secondary maps, tangents, material text and files, `.hdr`, background import |
+| `gameplay_tests` | gameplay, integration | 34 | Input actions, walking, sprint, looking, floors and walls, jump, falling out, fire rate, ammunition, reload, hits, damage, score, impulses and mass, static walls, dynamic and moving targets, impact damage, bonus zones, pickups, win, loss, the clock and pause, determinism. The real sample scene: loads, settles, can be won, lost and restarted, the domino chain, the bonus zone, breaking glass. Milestone 5: an impact template with an emitter asks for particles instead of a mark |
+| `asset_tests` | assets, unit | 52 | Paths and stable ids, OBJ, TGA, PPM, `.meta`, database catalogue, cache/reload/revision/unload, missing and failed files, scan issues. GLB: geometry, transforms, mirroring, materials, embedded images, warnings, invalid and unsupported files, real models from the dependency tree. PNG and JPEG decoding and rejection. `import_file` naming, ids, and leaving nothing behind on failure. Milestone 4: all five maps and their color spaces, alpha and sides, broken secondary maps, tangents, material text and files, `.hdr`, background import. Milestone 5: `.effect` text round trip, the documented example, rejection of bad files, create, save and reload, preparing and importing |
 | `systems_smoke_tests` | integration, smoke | 1 | OBJ asset sizes a collider, physics drives a scene entity, `extract_frame` sees the published pose |
 | `editor_dependency_smoke` | editor, smoke | 2 | `gameengine::imgui` renders frames through ImGui's null backend (no window, no GPU); `gameengine::glfw` links and reports its version without `glfwInit` |
 | `editor_ux_tests` | editor, unit | 61 | The editor's foundation without a window: chords, command registry, context routing, input blocks, conflicts, keymap files, the default command table and its generated document, bus and session transactions, history order and jumps, gizmo drags, selection, property tables |
@@ -70,10 +71,12 @@ Case names must be unique within an executable.
 | `editor_panels_tests` | editor, unit | 31 | What the panels stand on, without a window: folders and their undo, lock and hide, copy and paste, grouping, moving assets and fixing references, property and component text, thumbnail decoding, panel shortcuts |
 | `editor_workflow_tests` | editor, unit | 30 | Reaching things by typing and running without leaving the editor, without a window: fuzzy scoring and ranking, the real commands found by typing, console variables, actions, suggestions and history, simulate and eject, which keys work while the game holds the keyboard or a text field has it, asset type names |
 | `editor_feedback_tests` | editor, unit | 33 | What the editor says and how it answers, without a window: the message log and its filters, links, toasts, tasks, cancelled imports, the cheat sheet, tooltips, typing during a gizmo drag and the exact change it makes |
+| `editor_effects_tests` | editor, effects, unit | 11 | Particle effects in the editor, without a window: making and placing an effect, the edit-mode preview and its switch, hidden emitters, live drafts that keep living particles, saving as one undo step, assigning, renaming, a missing effect, Play mode's own particles, restart, an effect's image and its lifetime, the Details table, and how frames clean particle batches |
 | `animation_tests` | animation, unit | 5 | ozz-animation as the engine builds it: a skeleton and clip built in code, sampled at start, middle and end, blended by weight, saved and reloaded through ozz's archive, and an invalid clip refused. Poses compare at ozz's key precision, about 0.5 mm per metre |
+| `effects_tests` | effects, unit | 15 | The particle system: rate and bursts per cycle, stopping without a loop, motion and death, gravity and drag, the cone and speed range, a rotated emitter, local space, floor bounces, size and color curves in linear light, the particle cap, one-shots and their limit, waiting emitters, following the emitter list and restarting on an edited effect, seeded determinism, bad input |
 | `networking_tests` | networking, unit | 41 | Serialization, loopback transport, connection manager |
 | `online_services_tests` | online, unit | 7 | NullOnlineService |
-| `engine_core_tests` | none | 1 entry, 24 scenarios | `engine.core.acceptance`: scene, commands, undo, components, serialization of all format versions, malformed input |
+| `engine_core_tests` | none | 1 entry, 25 scenarios | `engine.core.acceptance`: scene, commands, undo, components, serialization of all format versions, malformed input |
 | `engine_renderer_tests` | none | 1 entry, 9 scenarios | `engine.renderer.snapshot`: frame extraction, cameras, lights, handle validation, owner thread |
 | `engine_editor_tests` | none | 1 entry, 17 groups | `engine.editor.acceptance`: session behavior without a window, including the 13-step acceptance workflow, Play mode, physics, assets, materials, lighting, background import, resource release and the shooter in Play mode |
 
@@ -83,7 +86,9 @@ replacing editor lights, Play and Stop isolation, resize, and the orientation of
 `engine_editor --render-test <folder>` opens a real window and compares pixels: base color, sphere winding, map color
 space, alpha mask and blend, single and double sides, normal map direction, metallic-roughness, occlusion, emissive, a
 missing map, shadows at each quality and off, IBL, intensity, exposure, skybox, sky orientation, spot and point lights, GPU
-resource lifecycle, a PBR model and the sample's lighting test scene. Captures go to the folder for inspection.
+resource lifecycle, particles (additive light, strength, the soft dot's edge, alpha covering and blending over a lit wall, the
+preview switch and freeing a batch's GPU buffers), a PBR model and the sample's lighting test scene. Captures go to the folder
+for inspection.
 
 Fixtures: `Tests/Assets/editor/` (valid editor test content), `Tests/Assets/invalid/` (negative cases) and
 `Tests/Assets/images/` (a JPEG), read in place through `GAMEENGINE_TEST_ASSETS_DIR`. Binary textures are regenerated

@@ -1,7 +1,7 @@
 # Milestone 5 plan: characters and effects
 
 Branch `milestone-5`, worktree `D:\AI\GameEngine-Integration`, created from `main` at `14c6642`.
-**Status: approved 2026-11-03. Slice 0 done; slice 1 (particles) next.** Do not merge into `main` without the user's approval.
+**Status: approved 2026-11-03. Slices 0 and 1 done; slice 2 (skinned import and drawing) next.** Do not merge into `main` without the user's approval.
 
 Decisions (2026-11-03): the plan is approved as written. ozz-animation 0.17.0 goes into `resources` at its pinned commit.
 The enemy is Quaternius' Universal Animation Library (CC0), downloaded in glTF. Edit-mode preview is on by default.
@@ -189,4 +189,35 @@ Cut order if time runs short: foot IK, then debris bodies (particles only), then
 - 414 of 414 CTest entries pass in Release and in the CI configuration (warnings as errors, strict lock), both in
   the existing editor-UX build folders. Fresh-folder builds of both presets are left to slice 6, as they rebuild
   Filament.
+
+### Slice 1: particles (done 2026-11-03)
+
+- **Scene format 7:** an `EMITTER` record for `ParticleEmitterComponent` (effect, auto play, loop, rate scale) and its
+  `component.emitter.set` command. Versions 1 to 6 still load; a version 6 file with an `EMITTER` is refused.
+- **`.effect` assets:** text like materials, documented in `docs/architecture/006-scene-format.md` with an example a test
+  compares against the writer. Created, saved, reloaded, validated and imported by the asset database.
+- **`Engine/Effects`:** CPU simulation with a seeded splitmix64 stream per emitter: bursts and rate per cycle, cone and
+  sphere spawning, gravity, drag, spin, floor bounces, size and color curves (interpolated in linear light), world or
+  local space, a particle cap, one-shots (at most 256) and triggered emitters. It never touches the scene, physics or
+  gameplay.
+- **Renderer:** `particle.mat` (unlit, compiled additive and transparent). Each batch is one renderable over a vertex
+  buffer of quads rebuilt each frame, camera-facing or stretched along the velocity, alpha batches sorted back to front,
+  capacity doubling. A generated soft dot is the default image. Frames clean batches (sorted, deduplicated, non-finite
+  particles dropped, 200,000 at most).
+- **Session and gameplay:** an edit-mode particle system (View > Play Effects, on by default) and one per Play session,
+  which pauses with the run and is discarded on Stop. Gameplay's `impact_effect` template fires its emitter's effect
+  along the hit normal through `effect_events()`, adding nothing to the scene. Effect drafts update living particles
+  without restarting them; saving restarts them and is one undo step.
+- **Editor:** the Effect Editor panel, the Particle Emitter in Details and Add Component, New effect, the Effect chip,
+  placing and assigning effects, Create > Particle Emitter, View > Play Effects and Restart Effects, `r.effects` in the
+  Console.
+- **Tests:** 446 of 446 CTest entries (new: `effects_tests` 15, `editor_effects_tests` 11, `asset_tests` +5,
+  `gameplay_tests` +1, a format 7 scenario). `--render-test` 48 of 48 with 9 particle checks, and `--smoke` pass.
+- **Deviation from the plan:** particles are not drawn with Filament instancing, which gives each copy only a transform;
+  quads built on the CPU carry each particle's color and fade (D10 already said so).
+- **Found by testing:** a check sampling the middle row of the view read the editor grid, which lies edge-on there; checks
+  now sample below it. A test bound a reference to a member of a temporary record through `ENGINE_CHECK_EQ`; tests now
+  copy the value first.
+- **Not done here:** the shooter's own effects (sparks, dust, glass) are slice 5. Real input runs used the CI-style build
+  (`build-ux-windows-msvc-ci`), because an editor started on 2026-11-02 still holds the Release build's executable.
 

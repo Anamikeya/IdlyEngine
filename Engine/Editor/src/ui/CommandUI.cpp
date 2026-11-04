@@ -751,7 +751,18 @@ std::string EditorUI::log_fields() const {
            " primary_scale=" + primary_scale + " primary_rot=" + primary_rot +
            " gizmo_typed=" + (gizmo_entry.active() ? gizmo_entry.text() : std::string("-")) + " tooltip=" + tooltip_for_log(shown_tooltip) +
            " thumbnails=" + std::to_string(std::ranges::count_if(thumbnails, [this](const auto &entry) { return renderer.thumbnail(entry.first.value).texture != 0; })) +
-           " selected_asset=" + assets::to_string(selected_asset);
+           " selected_asset=" + assets::to_string(selected_asset) + effect_fields();
+}
+// Particles for real-input runs: what the shown scene's system holds, what the GPU drew, and the chosen effect's values.
+std::string EditorUI::effect_fields() const {
+    const auto stats = session.effect_stats();
+    const auto effect = session.effect(selected_asset);
+    const auto gpu = renderer.stats();
+    return " particles=" + std::to_string(stats.particles) + " particle_emitters=" + std::to_string(stats.emitters) +
+           " one_shots=" + std::to_string(stats.one_shots) + " gpu_particles=" + std::to_string(gpu.particles) +
+           " effects_on=" + std::to_string(session.view_flags.effects ? 1 : 0) + " effect_panel=" + std::to_string(show_effect ? 1 : 0) +
+           " effect_rate=" + (effect ? std::to_string(effect->rate) : std::string("-")) +
+           " effect_burst=" + (effect ? std::to_string(effect->burst) : std::string("-"));
 }
 std::vector<std::string> EditorUI::saved_layouts() const {
     std::vector<std::string> names;
