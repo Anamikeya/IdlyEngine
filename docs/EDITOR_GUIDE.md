@@ -230,6 +230,24 @@ game's ticks, and Stop throws that away.
 the joint in **Bone** (or type its name). Its transform is then relative to that joint, and it is drawn there as the character
 moves; the gizmo and outlines follow it. Physics and gameplay still see it at its plain place under the character.
 
+## Ragdolls and debris
+
+**Add Component > Ragdoll** on a skinned model makes it fall as jointed bodies: on death (when gameplay kills it), on demand,
+or never (**Falls**). The bodies are made from its skeleton when it falls, start from the pose it is in, and move on as that
+pose was moving. Long bones get a capsule sized from the skin around them; hands and feet ride on the bones above them.
+**Swing** and **Twist** say how far each joint may turn from its rest, **Joint friction** how much it resists. Under the
+section, Details says how many bodies the ragdoll has and how heavy it is (hover for each one).
+
+**Show ragdolls**, or **View > Show Ragdolls**, draws the capsules on the model as it stands. **Add bone settings** adds settings
+for one bone: its **Body** (as generated, a body of its own, or none, so it only follows its parent), **Radius**, **Density**,
+**Swing** and **Twist**. Each change is one undo step. Only these settings are saved; bodies exist only while the scene runs.
+
+In Play or Simulate, **Ragdoll now** in Details (or **Play > Ragdoll Selected**) makes the selection fall, and **Stand up** hands
+it back to its animator. Its own collider sits out while it lies, and a shot pushes the part it hits. Stop takes the bodies away.
+
+**Play > Drop Debris** drops eight pieces that look like the selected entity from above it. Debris bounces and piles up, and goes
+two seconds after it settles, or after ten seconds; there are at most 64 pieces at once, and Stop takes them away.
+
 ## Light the scene
 
 In the **Lighting** panel, start with **Outdoor** or **Indoor**, then adjust the sky or HDR image, exposure, tone mapping and shadows.

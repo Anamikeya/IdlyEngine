@@ -1,7 +1,9 @@
 add_library(engine_physics STATIC
 	include/engine/physics/types.h
 	include/engine/physics/physics_world.h
+	include/engine/physics/ragdoll.h
 	src/physics_world.cpp
+	src/ragdoll.cpp
 )
 add_library(engine::physics ALIAS engine_physics)
 

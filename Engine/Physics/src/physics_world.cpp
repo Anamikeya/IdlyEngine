@@ -105,6 +105,34 @@ b3ShapeId decode(ColliderHandle handle) noexcept
 		static_cast<std::uint16_t>(handle.value >> 48)};
 }
 
+JointHandle encode(b3JointId id) noexcept
+{
+	return JointHandle{B3_IS_NULL(id) ? 0 : encode(id.index1, id.world0, id.generation)};
+}
+
+b3JointId decode(JointHandle handle) noexcept
+{
+	return b3JointId{static_cast<std::int32_t>(handle.value & 0xffff'ffffu), static_cast<std::uint16_t>(handle.value >> 32),
+		static_cast<std::uint16_t>(handle.value >> 48)};
+}
+
+// Box3D's own bounds for twist and hinge limits.
+constexpr float max_twist = 0.99f * 3.14159265f;
+constexpr float max_cone = 3.14159265f;
+
+bool valid_frame(const Pose& frame) noexcept
+{
+	Quat q;
+	return is_finite(frame.position) && normalized(frame.rotation, q);
+}
+
+b3Transform to_b3_local(const Pose& frame) noexcept
+{
+	Quat q;
+	normalized(frame.rotation, q);
+	return b3Transform{to_b3(frame.position), to_b3(q)};
+}
+
 b3BodyType to_b3(BodyType type) noexcept
 {
 	switch (type) {
@@ -159,6 +187,8 @@ const char* to_string(PhysicsError error) noexcept
 		return "invalid collider";
 	case PhysicsError::InvalidArgument:
 		return "invalid argument";
+	case PhysicsError::InvalidJoint:
+		return "invalid joint";
 	}
 	return "unknown physics error";
 }
@@ -196,6 +226,11 @@ struct PhysicsWorld::Impl {
 	bool owns(b3ShapeId id) const noexcept
 	{
 		return id.index1 != 0 && id.world0 + 1 == world.index1 && b3Shape_IsValid(id);
+	}
+
+	bool owns(b3JointId id) const noexcept
+	{
+		return id.index1 != 0 && id.world0 + 1 == world.index1 && b3Joint_IsValid(id);
 	}
 
 	std::uint64_t key_of(b3BodyId id) const noexcept
@@ -436,6 +471,145 @@ bool PhysicsWorld::is_valid(BodyHandle body) const noexcept
 	return valid() && impl_->owns(decode(body));
 }
 
+PhysicsError PhysicsWorld::set_body_enabled(BodyHandle body, bool enabled)
+{
+	const b3BodyId id = decode(body);
+	if (!valid() || !impl_->owns(id)) {
+		return PhysicsError::InvalidBody;
+	}
+	if (b3Body_IsEnabled(id) != enabled) {
+		if (enabled) {
+			b3Body_Enable(id);
+		} else {
+			b3Body_Disable(id);
+		}
+	}
+	return PhysicsError::None;
+}
+
+PhysicsResult<bool> PhysicsWorld::is_enabled(BodyHandle body) const
+{
+	const b3BodyId id = decode(body);
+	if (!valid() || !impl_->owns(id)) {
+		return PhysicsError::InvalidBody;
+	}
+	return b3Body_IsEnabled(id);
+}
+
+PhysicsResult<JointHandle> PhysicsWorld::create_joint(const JointDesc& desc)
+{
+	if (!valid()) {
+		return PhysicsError::InvalidWorld;
+	}
+	const b3BodyId a = decode(desc.body_a);
+	const b3BodyId b = decode(desc.body_b);
+	if (!impl_->owns(a) || !impl_->owns(b)) {
+		return PhysicsError::InvalidBody;
+	}
+	if (desc.body_a == desc.body_b || !physics::is_valid(desc)) {
+		return PhysicsError::InvalidArgument;
+	}
+
+	const auto base = [&](b3JointDef& def) {
+		def.bodyIdA = a;
+		def.bodyIdB = b;
+		def.localFrameA = to_b3_local(desc.frame_a);
+		def.localFrameB = to_b3_local(desc.frame_b);
+		def.collideConnected = desc.collide_connected;
+	};
+	b3JointId id = b3_nullJointId;
+	switch (desc.type) {
+	case JointType::Spherical: {
+		b3SphericalJointDef def = b3DefaultSphericalJointDef();
+		base(def.base);
+		def.enableConeLimit = desc.limit_cone;
+		def.coneAngle = desc.cone;
+		def.enableTwistLimit = desc.limit_twist;
+		def.lowerTwistAngle = desc.twist_lower;
+		def.upperTwistAngle = desc.twist_upper;
+		def.enableSpring = desc.spring_hertz > 0.0f;
+		def.hertz = desc.spring_hertz;
+		def.dampingRatio = desc.spring_damping;
+		// A motor held at zero speed with a torque cap is joint friction.
+		def.enableMotor = desc.friction_torque > 0.0f;
+		def.maxMotorTorque = desc.friction_torque;
+		def.motorVelocity = b3Vec3{0.0f, 0.0f, 0.0f};
+		id = b3CreateSphericalJoint(impl_->world, &def);
+		break;
+	}
+	case JointType::Revolute: {
+		b3RevoluteJointDef def = b3DefaultRevoluteJointDef();
+		base(def.base);
+		def.enableLimit = desc.limit_twist;
+		def.lowerAngle = desc.twist_lower;
+		def.upperAngle = desc.twist_upper;
+		def.enableSpring = desc.spring_hertz > 0.0f;
+		def.hertz = desc.spring_hertz;
+		def.dampingRatio = desc.spring_damping;
+		def.enableMotor = desc.friction_torque > 0.0f;
+		def.maxMotorTorque = desc.friction_torque;
+		def.motorSpeed = 0.0f;
+		id = b3CreateRevoluteJoint(impl_->world, &def);
+		break;
+	}
+	case JointType::Filter: {
+		b3FilterJointDef def = b3DefaultFilterJointDef();
+		base(def.base);
+		def.base.collideConnected = false;
+		id = b3CreateFilterJoint(impl_->world, &def);
+		break;
+	}
+	}
+	if (B3_IS_NULL(id)) {
+		return PhysicsError::InvalidArgument;
+	}
+	return encode(id);
+}
+
+PhysicsError PhysicsWorld::destroy_joint(JointHandle joint)
+{
+	if (!valid()) {
+		return PhysicsError::InvalidWorld;
+	}
+	const b3JointId id = decode(joint);
+	if (!impl_->owns(id)) {
+		return PhysicsError::InvalidJoint;
+	}
+	b3DestroyJoint(id, true);
+	return PhysicsError::None;
+}
+
+bool PhysicsWorld::is_valid(JointHandle joint) const noexcept
+{
+	return valid() && impl_->owns(decode(joint));
+}
+
+PhysicsResult<JointState> PhysicsWorld::joint_state(JointHandle joint) const
+{
+	const b3JointId id = decode(joint);
+	if (!valid() || !impl_->owns(id)) {
+		return PhysicsError::InvalidJoint;
+	}
+	JointState state;
+	switch (b3Joint_GetType(id)) {
+	case b3_sphericalJoint:
+		state.type = JointType::Spherical;
+		state.cone = b3SphericalJoint_GetConeAngle(id);
+		state.twist = b3SphericalJoint_GetTwistAngle(id);
+		break;
+	case b3_revoluteJoint:
+		state.type = JointType::Revolute;
+		state.twist = b3RevoluteJoint_GetAngle(id);
+		break;
+	default:
+		state.type = JointType::Filter;
+		return state;
+	}
+	state.linear_separation = b3Joint_GetLinearSeparation(id);
+	state.angular_separation = b3Joint_GetAngularSeparation(id);
+	return state;
+}
+
 PhysicsResult<ColliderHandle> PhysicsWorld::add_collider(BodyHandle body, const ColliderDesc& desc)
 {
 	if (!valid()) {
@@ -634,6 +808,19 @@ PhysicsError PhysicsWorld::apply_linear_impulse_at(BodyHandle body, Vec3 impulse
 	return PhysicsError::None;
 }
 
+PhysicsError PhysicsWorld::apply_angular_impulse(BodyHandle body, Vec3 impulse)
+{
+	const b3BodyId id = decode(body);
+	if (!valid() || !impl_->owns(id)) {
+		return PhysicsError::InvalidBody;
+	}
+	if (!is_finite(impulse) || b3Body_GetType(id) != b3_dynamicBody) {
+		return PhysicsError::InvalidArgument;
+	}
+	b3Body_ApplyAngularImpulse(id, to_b3(impulse), true);
+	return PhysicsError::None;
+}
+
 namespace {
 
 // b3World_CastRay reports every candidate; returning the fraction clips the ray there, -1 skips the shape.
@@ -778,6 +965,7 @@ WorldStats PhysicsWorld::stats() const noexcept
 	stats.body_count = counters.bodyCount;
 	stats.collider_count = counters.shapeCount;
 	stats.contact_count = counters.contactCount;
+	stats.joint_count = counters.jointCount;
 	stats.awake_body_count = b3World_GetAwakeBodyCount(impl_->world);
 	stats.step_count = impl_->step_count;
 	return stats;
@@ -787,6 +975,20 @@ bool is_valid(const ColliderDesc& desc) noexcept
 {
 	return std::visit(ShapeValidator{}, desc.shape) && is_finite_non_negative(desc.density) &&
 		is_finite_non_negative(desc.friction) && is_finite_non_negative(desc.restitution);
+}
+
+bool is_valid(const JointDesc& desc) noexcept
+{
+	if (desc.type != JointType::Spherical && desc.type != JointType::Revolute && desc.type != JointType::Filter) {
+		return false;
+	}
+	if (desc.type == JointType::Filter) {
+		return true;
+	}
+	return valid_frame(desc.frame_a) && valid_frame(desc.frame_b) && is_finite(desc.cone) && desc.cone >= 0.0f &&
+		desc.cone <= max_cone && is_finite(desc.twist_lower) && is_finite(desc.twist_upper) && desc.twist_lower <= desc.twist_upper &&
+		desc.twist_lower >= -max_twist && desc.twist_upper <= max_twist && is_finite_non_negative(desc.friction_torque) &&
+		is_finite_non_negative(desc.spring_hertz) && is_finite_non_negative(desc.spring_damping);
 }
 
 int live_world_count() noexcept

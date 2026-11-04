@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <map>
 #include <numbers>
 #include <utility>
@@ -214,6 +215,8 @@ std::array<float, 4> default_color(DebugCategory category) noexcept
 		return {0.55f, 0.45f, 0.35f, 1.0f};
 	case DebugCategory::Sensor:
 		return {1.00f, 1.00f, 0.20f, 0.5f};
+	case DebugCategory::Ragdoll:
+		return {0.85f, 0.45f, 1.00f, 1.0f};
 	}
 	return {1.0f, 0.0f, 1.0f, 1.0f};
 }
@@ -242,6 +245,27 @@ struct ScenePhysics::Impl {
 		std::string issue;
 	};
 
+	// Bodies the run owns (D7, D11). Their user key is the owning entity (0 for debris), so contacts name it and the
+	// moved-body pass, which matches handles, never mistakes them for the entity's own body.
+	struct Part {
+		BodyHandle body;
+		JointHandle joint;
+		int bone = -1;
+		std::vector<CapsuleShape> shapes;
+	};
+	struct Ragdoll {
+		EntityId owner = 0;
+		std::vector<Part> parts;
+		bool owner_disabled = false;
+	};
+	struct Piece {
+		std::uint64_t id = 0;
+		EntityId look = 0;
+		BodyHandle body;
+		Collider built;
+		double lifetime = 0.0, age = 0.0, asleep = 0.0;
+	};
+
 	PhysicsWorld world;
 	std::map<EntityId, Entry> entries;
 	bool simulating = false;
@@ -250,6 +274,73 @@ struct ScenePhysics::Impl {
 	TickReport report;
 	std::vector<CollisionEvent> events;
 	std::vector<std::pair<EntityId, Pose>> pending;
+	std::map<std::uint64_t, Ragdoll> ragdolls;
+	std::map<EntityId, std::uint64_t> ragdoll_owners;
+	std::vector<Piece> pieces; // Oldest first.
+	// By body handle: (ragdoll, part) or debris id.
+	std::map<std::uint64_t, std::pair<std::uint64_t, std::size_t>> part_bodies;
+	std::map<std::uint64_t, std::uint64_t> piece_bodies;
+	std::uint64_t next_runtime_id = 1;
+	std::uint64_t debris_spawned = 0, debris_expired = 0, debris_replaced = 0;
+
+	bool owner_disabled(EntityId id) const noexcept
+	{
+		const auto it = ragdoll_owners.find(id);
+		return it != ragdoll_owners.end() && ragdolls.at(it->second).owner_disabled;
+	}
+
+	void destroy_ragdoll(std::map<std::uint64_t, Ragdoll>::iterator it) noexcept
+	{
+		for (auto part = it->second.parts.rbegin(); part != it->second.parts.rend(); ++part) {
+			part_bodies.erase(part->body.value);
+			if (world.is_valid(part->body)) {
+				world.destroy_body(part->body); // Its joints go with it.
+			}
+		}
+		if (it->second.owner_disabled) {
+			if (const Entry* e = find(it->second.owner); e && world.is_valid(e->handle)) {
+				world.set_body_enabled(e->handle, true);
+			}
+		}
+		ragdoll_owners.erase(it->second.owner);
+		ragdolls.erase(it);
+	}
+
+	void remove_piece(std::size_t index) noexcept
+	{
+		piece_bodies.erase(pieces[index].body.value);
+		if (world.is_valid(pieces[index].body)) {
+			world.destroy_body(pieces[index].body);
+		}
+		pieces.erase(pieces.begin() + static_cast<std::ptrdiff_t>(index));
+	}
+
+	void clear_runtime_bodies() noexcept
+	{
+		while (!ragdolls.empty()) {
+			destroy_ragdoll(ragdolls.begin());
+		}
+		while (!pieces.empty()) {
+			remove_piece(pieces.size() - 1);
+		}
+	}
+
+	// Ages debris by one simulated tick and removes what has slept long enough or outlived its lifetime.
+	void age_debris(double dt)
+	{
+		for (std::size_t i = 0; i < pieces.size();) {
+			Piece& piece = pieces[i];
+			piece.age += dt;
+			const auto awake = world.is_awake(piece.body);
+			piece.asleep = awake && !awake.value() ? piece.asleep + dt : 0.0;
+			if (piece.age >= piece.lifetime || piece.asleep >= debris_sleep_seconds) {
+				remove_piece(i);
+				++debris_expired;
+			} else {
+				++i;
+			}
+		}
+	}
 
 	Entry* find(EntityId id) noexcept
 	{
@@ -348,6 +439,10 @@ struct ScenePhysics::Impl {
 		e.built = std::move(scaled);
 		e.built_scale = d.scale;
 		e.issue.clear();
+		// A rebuilt body stays out while its entity lies as a ragdoll.
+		if (owner_disabled(id)) {
+			world.set_body_enabled(e.handle, false);
+		}
 		++report.rebuilt;
 	}
 
@@ -556,6 +651,7 @@ bool ScenePhysics::simulation_enabled() const noexcept
 
 Result<void> ScenePhysics::reset_simulation(const Scene& scene)
 {
+	impl_->clear_runtime_bodies();
 	for (auto& [id, e] : impl_->entries) {
 		(void)id;
 		e.dirty = true;
@@ -569,6 +665,14 @@ Result<void> ScenePhysics::sync(const Scene& scene)
 {
 	if (!scene.on_owner_thread()) {
 		return fail(ErrorCode::WrongThread, "Physics sync requires the scene owner thread");
+	}
+	// A ragdoll goes with its entity.
+	for (auto it = impl_->ragdolls.begin(); it != impl_->ragdolls.end();) {
+		const auto next = std::next(it);
+		if (!scene.inspect(it->second.owner)) {
+			impl_->destroy_ragdoll(it);
+		}
+		it = next;
 	}
 	// Mirror the scene's physics components: add or update entries, then drop entities that lost them.
 	auto& entries = impl_->entries;
@@ -624,6 +728,7 @@ Result<void> ScenePhysics::step()
 	++impl_->simulated_ticks;
 	impl_->report.stepped = true;
 	impl_->collect_events();
+	impl_->age_debris(std::chrono::duration<double>(impl_->world.config().fixed_timestep).count());
 	return {};
 }
 
@@ -743,13 +848,328 @@ std::optional<RaycastHit> ScenePhysics::raycast(Vec3 origin, Vec3 direction, flo
 	if (!hit.hit) {
 		return std::nullopt;
 	}
-	return RaycastHit{hit.user_key, hit.point, hit.normal, hit.fraction * max_distance};
+	RaycastHit out{hit.user_key, hit.point, hit.normal, hit.fraction * max_distance};
+	if (const auto part = impl_->part_bodies.find(hit.body.value); part != impl_->part_bodies.end()) {
+		out.ragdoll = part->second.first;
+		out.bone = impl_->ragdolls.at(part->second.first).parts[part->second.second].bone;
+	} else if (const auto piece = impl_->piece_bodies.find(hit.body.value); piece != impl_->piece_bodies.end()) {
+		out.debris = piece->second;
+		out.entity = 0;
+	}
+	return out;
 }
 
 bool ScenePhysics::apply_impulse(EntityId entity, Vec3 impulse, Vec3 world_point)
 {
+	if (const std::uint64_t ragdoll = ragdoll_of(entity)) {
+		return apply_ragdoll_impulse(ragdoll, impulse, world_point);
+	}
 	const auto* e = impl_->find(entity);
 	return e && impl_->world.apply_linear_impulse_at(e->handle, impulse, world_point) == PhysicsError::None;
+}
+
+namespace {
+
+bool valid_pose(const Pose& pose) noexcept
+{
+	const Quat& q = pose.rotation;
+	const float n = q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w;
+	return is_finite(pose.position) && std::isfinite(n) && n > 1.0e-6f;
+}
+
+bool finite_non_negative(float value) noexcept
+{
+	return std::isfinite(value) && value >= 0.0f;
+}
+
+// Distance from a point to a capsule's surface, negative inside.
+float capsule_distance(const Pose& pose, const CapsuleShape& capsule, Vec3 point) noexcept
+{
+	const Vec3 a = transform_point(pose, capsule.point_a), b = transform_point(pose, capsule.point_b);
+	const DVec3 ab{b.x - a.x, b.y - a.y, b.z - a.z}, ap{point.x - a.x, point.y - a.y, point.z - a.z};
+	const double squared = dot(ab, ab);
+	const double t = squared > 1.0e-12 ? std::clamp(dot(ap, ab) / squared, 0.0, 1.0) : 0.0;
+	return static_cast<float>(length(ap - ab * t)) - capsule.radius;
+}
+
+} // namespace
+
+Result<std::uint64_t> ScenePhysics::create_ragdoll(EntityId owner, const RagdollDesc& desc)
+{
+	auto& m = *impl_;
+	if (!owner) {
+		return fail(ErrorCode::InvalidArgument, "A ragdoll needs the entity it belongs to");
+	}
+	if (m.ragdoll_owners.contains(owner)) {
+		return fail(ErrorCode::InvalidState, "The entity is already a ragdoll");
+	}
+	if (m.ragdolls.size() >= max_ragdolls) {
+		return fail(ErrorCode::InvalidState, "There can be at most " + std::to_string(max_ragdolls) + " ragdolls");
+	}
+	if (desc.parts.empty() || desc.parts.size() > max_ragdoll_parts) {
+		return fail(ErrorCode::InvalidArgument, "A ragdoll has 1 to " + std::to_string(max_ragdoll_parts) + " parts");
+	}
+	if (!finite_non_negative(desc.linear_damping) || !finite_non_negative(desc.angular_damping)) {
+		return fail(ErrorCode::InvalidArgument, "Ragdoll damping must be finite and not negative");
+	}
+	std::vector<int> bones;
+	for (std::size_t i = 0; i < desc.parts.size(); ++i) {
+		const RagdollPart& p = desc.parts[i];
+		const std::string which = "Ragdoll part " + std::to_string(i) + ": ";
+		if (p.parent < -1 || (p.parent >= 0 && static_cast<std::size_t>(p.parent) >= i)) {
+			return fail(ErrorCode::InvalidArgument, which + "a part's parent comes before it");
+		}
+		if (p.bone < 0 || std::find(bones.begin(), bones.end(), p.bone) != bones.end()) {
+			return fail(ErrorCode::InvalidArgument, which + "each part stands for a different bone");
+		}
+		bones.push_back(p.bone);
+		if (!valid_pose(p.pose) || !is_finite(p.linear_velocity) || !is_finite(p.angular_velocity)) {
+			return fail(ErrorCode::InvalidArgument, which + "its pose and velocities must be finite");
+		}
+		ColliderDesc shape;
+		shape.shape = p.capsule;
+		shape.density = p.density;
+		shape.friction = p.friction;
+		bool shapes_valid = is_valid(shape) && p.more.size() < 16;
+		for (const CapsuleShape& more : p.more) {
+			shape.shape = more;
+			shapes_valid = shapes_valid && is_valid(shape);
+		}
+		if (!shapes_valid || !(p.density > 0.0f)) {
+			return fail(ErrorCode::InvalidArgument, which + "its capsules, density or friction are not accepted");
+		}
+		JointDesc joint;
+		joint.frame_a = p.frame_parent;
+		joint.frame_b = p.frame_child;
+		joint.cone = p.cone;
+		joint.twist_lower = p.twist_lower;
+		joint.twist_upper = p.twist_upper;
+		joint.friction_torque = p.friction_torque;
+		if (i > 0 && !is_valid(joint)) {
+			return fail(ErrorCode::InvalidArgument, which + "its joint frames or limits are not accepted");
+		}
+	}
+
+	const std::uint64_t id = m.next_runtime_id++;
+	Impl::Ragdoll ragdoll;
+	ragdoll.owner = owner;
+	// One negative group per ragdoll: its parts never collide with each other.
+	const int group = -static_cast<int>(1 + id % 0x3fff'ffffu);
+	const auto undo = [&](const std::string& why) -> Result<std::uint64_t> {
+		for (auto part = ragdoll.parts.rbegin(); part != ragdoll.parts.rend(); ++part) {
+			m.world.destroy_body(part->body);
+		}
+		return fail(ErrorCode::InvalidState, why);
+	};
+	for (const RagdollPart& p : desc.parts) {
+		BodyDesc body;
+		body.type = BodyType::Dynamic;
+		body.pose = p.pose;
+		body.linear_velocity = p.linear_velocity;
+		body.angular_velocity = p.angular_velocity;
+		body.linear_damping = desc.linear_damping;
+		body.angular_damping = desc.angular_damping;
+		body.user_key = owner;
+		auto created = m.world.create_body(body);
+		if (!created) {
+			return undo(std::string("Ragdoll body rejected: ") + to_string(created.error()));
+		}
+		std::vector<CapsuleShape> shapes{p.capsule};
+		shapes.insert(shapes.end(), p.more.begin(), p.more.end());
+		ragdoll.parts.push_back({created.value(), {}, p.bone, shapes});
+		for (const CapsuleShape& capsule : shapes) {
+			ColliderDesc collider;
+			collider.shape = capsule;
+			collider.density = p.density;
+			collider.friction = p.friction;
+			collider.filter = {ragdoll_category, desc.mask, group};
+			if (auto added = m.world.add_collider(created.value(), collider); !added) {
+				return undo(std::string("Ragdoll collider rejected: ") + to_string(added.error()));
+			}
+		}
+		if (p.parent >= 0) {
+			JointDesc joint;
+			joint.type = JointType::Spherical;
+			joint.body_a = ragdoll.parts[static_cast<std::size_t>(p.parent)].body;
+			joint.body_b = created.value();
+			joint.frame_a = p.frame_parent;
+			joint.frame_b = p.frame_child;
+			joint.cone = p.cone;
+			joint.twist_lower = p.twist_lower;
+			joint.twist_upper = p.twist_upper;
+			joint.friction_torque = p.friction_torque;
+			auto made = m.world.create_joint(joint);
+			if (!made) {
+				return undo(std::string("Ragdoll joint rejected: ") + to_string(made.error()));
+			}
+			ragdoll.parts.back().joint = made.value();
+		}
+	}
+	if (desc.disable_owner) {
+		ragdoll.owner_disabled = true;
+		if (const Impl::Entry* e = m.find(owner); e && m.world.is_valid(e->handle)) {
+			m.world.set_body_enabled(e->handle, false);
+		}
+	}
+	for (std::size_t i = 0; i < ragdoll.parts.size(); ++i) {
+		m.part_bodies[ragdoll.parts[i].body.value] = {id, i};
+	}
+	m.ragdoll_owners[owner] = id;
+	m.ragdolls.emplace(id, std::move(ragdoll));
+	return id;
+}
+
+bool ScenePhysics::destroy_ragdoll(std::uint64_t id)
+{
+	const auto it = impl_->ragdolls.find(id);
+	if (it == impl_->ragdolls.end()) {
+		return false;
+	}
+	impl_->destroy_ragdoll(it);
+	return true;
+}
+
+std::uint64_t ScenePhysics::ragdoll_of(EntityId owner) const
+{
+	const auto it = impl_->ragdoll_owners.find(owner);
+	return it == impl_->ragdoll_owners.end() ? 0 : it->second;
+}
+
+std::optional<RagdollState> ScenePhysics::ragdoll(std::uint64_t id) const
+{
+	const auto it = impl_->ragdolls.find(id);
+	if (it == impl_->ragdolls.end()) {
+		return std::nullopt;
+	}
+	const PhysicsWorld& w = impl_->world;
+	RagdollState state;
+	state.id = id;
+	state.owner = it->second.owner;
+	for (const Impl::Part& part : it->second.parts) {
+		RagdollPartState s;
+		s.bone = part.bone;
+		s.pose = w.body_pose(part.body).value();
+		s.linear_velocity = w.linear_velocity(part.body).value();
+		s.angular_velocity = w.angular_velocity(part.body).value();
+		state.awake = state.awake || w.is_awake(part.body).value();
+		state.parts.push_back(s);
+	}
+	return state;
+}
+
+std::vector<std::uint64_t> ScenePhysics::ragdolls() const
+{
+	std::vector<std::uint64_t> ids;
+	for (const auto& [id, ragdoll] : impl_->ragdolls) {
+		(void)ragdoll;
+		ids.push_back(id);
+	}
+	return ids;
+}
+
+std::vector<JointState> ScenePhysics::ragdoll_joints(std::uint64_t id) const
+{
+	std::vector<JointState> joints;
+	const auto it = impl_->ragdolls.find(id);
+	if (it == impl_->ragdolls.end()) {
+		return joints;
+	}
+	for (const Impl::Part& part : it->second.parts) {
+		if (const auto state = impl_->world.joint_state(part.joint)) {
+			joints.push_back(state.value());
+		}
+	}
+	return joints;
+}
+
+bool ScenePhysics::apply_ragdoll_impulse(std::uint64_t id, Vec3 impulse, Vec3 world_point, int bone)
+{
+	const auto it = impl_->ragdolls.find(id);
+	if (it == impl_->ragdolls.end() || !is_finite(impulse) || !is_finite(world_point)) {
+		return false;
+	}
+	const Impl::Part* chosen = nullptr;
+	float nearest = 0.0f;
+	for (const Impl::Part& part : it->second.parts) {
+		if (bone >= 0) {
+			if (part.bone == bone) {
+				chosen = &part;
+			}
+			continue;
+		}
+		const Pose pose = impl_->world.body_pose(part.body).value();
+		float distance = std::numeric_limits<float>::max();
+		for (const CapsuleShape& capsule : part.shapes) {
+			distance = std::min(distance, capsule_distance(pose, capsule, world_point));
+		}
+		if (!chosen || distance < nearest) {
+			chosen = &part;
+			nearest = distance;
+		}
+	}
+	return chosen && impl_->world.apply_linear_impulse_at(chosen->body, impulse, world_point) == PhysicsError::None;
+}
+
+Result<std::uint64_t> ScenePhysics::spawn_debris(const Debris& piece)
+{
+	auto& m = *impl_;
+	if (!valid_pose(piece.pose) || !is_finite(piece.linear_velocity) || !is_finite(piece.angular_velocity)) {
+		return fail(ErrorCode::InvalidArgument, "Debris pose and velocities must be finite");
+	}
+	if (!std::isfinite(piece.lifetime) || !(piece.lifetime > 0.0) || piece.lifetime > 600.0) {
+		return fail(ErrorCode::InvalidArgument, "Debris lifetime must be within (0, 600] seconds");
+	}
+	if (!is_valid(piece.collider) || piece.collider.is_sensor || !(piece.collider.density > 0.0f)) {
+		return fail(ErrorCode::InvalidArgument, "Debris needs a solid shape with a positive density");
+	}
+	if (m.pieces.size() >= max_debris) {
+		m.remove_piece(0);
+		++m.debris_replaced;
+	}
+	BodyDesc body;
+	body.type = BodyType::Dynamic;
+	body.pose = piece.pose;
+	body.linear_velocity = piece.linear_velocity;
+	body.angular_velocity = piece.angular_velocity;
+	auto created = m.world.create_body(body);
+	if (!created) {
+		return fail(ErrorCode::InvalidState, std::string("Debris body rejected: ") + to_string(created.error()));
+	}
+	Collider collider = piece.collider;
+	collider.filter.category_bits = debris_category;
+	collider.filter.group = 0;
+	collider.enable_sensor_events = false;
+	collider.enable_contact_events = false;
+	collider.enable_hit_events = false;
+	if (auto added = m.world.add_collider(created.value(), collider); !added) {
+		m.world.destroy_body(created.value());
+		return fail(ErrorCode::InvalidState, std::string("Debris collider rejected: ") + to_string(added.error()));
+	}
+	const std::uint64_t id = m.next_runtime_id++;
+	m.pieces.push_back({id, piece.look, created.value(), collider, piece.lifetime});
+	m.piece_bodies[created.value().value] = id;
+	++m.debris_spawned;
+	return id;
+}
+
+bool ScenePhysics::remove_debris(std::uint64_t id)
+{
+	auto& pieces = impl_->pieces;
+	const auto it = std::find_if(pieces.begin(), pieces.end(), [&](const Impl::Piece& p) { return p.id == id; });
+	if (it == pieces.end()) {
+		return false;
+	}
+	impl_->remove_piece(static_cast<std::size_t>(it - pieces.begin()));
+	return true;
+}
+
+std::vector<DebrisState> ScenePhysics::debris() const
+{
+	std::vector<DebrisState> out;
+	for (const Impl::Piece& p : impl_->pieces) {
+		out.push_back({p.id, p.look, impl_->world.body_pose(p.body).value(), p.age, p.asleep});
+	}
+	return out;
 }
 
 bool ScenePhysics::set_linear_velocity(EntityId entity, Vec3 velocity)
@@ -780,6 +1200,15 @@ PhysicsDiagnostics ScenePhysics::diagnostics() const
 			d.issues.push_back({id, e.issue});
 		}
 	}
+	d.ragdolls = impl_->ragdolls.size();
+	for (const auto& [id, ragdoll] : impl_->ragdolls) {
+		(void)id;
+		d.ragdoll_parts += ragdoll.parts.size();
+	}
+	d.debris = impl_->pieces.size();
+	d.debris_spawned = impl_->debris_spawned;
+	d.debris_expired = impl_->debris_expired;
+	d.debris_replaced = impl_->debris_replaced;
 	return d;
 }
 
@@ -897,7 +1326,28 @@ DebugGeometry ScenePhysics::debug_geometry(const DebugGeometryOptions& options) 
 			std::visit([&](const auto& shape) { emit(sink, shape, segments); }, collider.shape);
 		}
 	}
+	for (const auto& [ragdoll_id, ragdoll] : impl_->ragdolls) {
+		(void)ragdoll_id;
+		for (const auto& part : ragdoll.parts) {
+			const Pose pose = impl_->world.body_pose(part.body).value();
+			for (const CapsuleShape& capsule : part.shapes) {
+				append_shape_lines(geometry.lines, capsule, pose, ragdoll.owner, DebugCategory::Ragdoll, segments);
+			}
+		}
+	}
+	for (const auto& piece : impl_->pieces) {
+		const auto category = impl_->world.is_awake(piece.body).value() ? DebugCategory::DynamicAwake : DebugCategory::DynamicAsleep;
+		append_shape_lines(geometry.lines, piece.built.shape, impl_->world.body_pose(piece.body).value(), 0, category, segments);
+	}
 	return geometry;
+}
+
+void append_shape_lines(std::vector<DebugLine>& lines, const ShapeDesc& shape, const Pose& pose, EntityId entity,
+	DebugCategory category, int circle_segments)
+{
+	const LineSink sink{lines, pose, entity, category};
+	const int segments = std::clamp(circle_segments, 4, 256);
+	std::visit([&](const auto& s) { emit(sink, s, segments); }, shape);
 }
 
 } // namespace engine::physics

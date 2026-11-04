@@ -143,6 +143,9 @@ public:
 
 	// ---- What gameplay and tools ask for (D2) ----
 	[[nodiscard]] Pose pose(std::uint64_t entity) const;
+	// The pose before the last update(): with pose(), how fast each joint was moving, which a ragdoll starts with (D7).
+	// The same as pose() for an animator just started or not playing.
+	[[nodiscard]] Pose previous_pose(std::uint64_t entity) const;
 	[[nodiscard]] std::optional<JointMatrix> joint_model(std::uint64_t entity, std::string_view joint) const;
 	// The joint's world transform this tick: the entity's world times its model-space transform.
 	[[nodiscard]] std::optional<Matrix> joint_world(std::uint64_t entity, std::string_view joint) const;
@@ -168,6 +171,12 @@ private:
 	struct Impl;
 	std::unique_ptr<Impl> impl_;
 };
+
+// A pose in which something else places some joints, as a ragdoll's bodies do (D7). `placed` holds a model-space
+// transform for each joint it moves and nothing for the rest, which keep their transform relative to their parent from
+// `base`. All three in the skeleton's order, parents first, as assets::MeshSkin::joints are. Null when the sizes differ.
+[[nodiscard]] Pose place_joints(std::span<const int> parents, std::span<const JointMatrix> base,
+	std::span<const std::optional<JointMatrix>> placed);
 
 // Which events a clip's time crosses moving from `from` by `delta` seconds (negative plays backwards): indices into
 // `event_times` (ascending), in the order crossed. A looping clip wraps and crosses an event once per lap; one that

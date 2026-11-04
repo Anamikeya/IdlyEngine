@@ -42,7 +42,7 @@ void creation_and_flecs() {
         ++count;
     });
     check(count == 1, "Entity not stored in Flecs");
-    check(registry().size() == 17, "Registry incomplete");
+    check(registry().size() == 18, "Registry incomplete");
     check(describe(Command{DeleteEntity{id}}).name == "entity.delete", "Typed registry mismatch");
 }
 void permissions_and_revision() {
@@ -912,6 +912,75 @@ void format_v7_animation() {
     }
 }
 
+void format_v7_ragdoll() {
+    Scene scene;
+    CommandBus b(scene);
+    Components character;
+    RagdollComponent ragdoll;
+    ragdoll.trigger = RagdollTrigger::OnDemand;
+    ragdoll.density = 985;
+    ragdoll.swing_degrees = 35;
+    ragdoll.twist_degrees = 17.5;
+    ragdoll.joint_friction = 0.25;
+    ragdoll.bones = {{"hand \"L\"", RagdollBody::Own, 0.0625, 0, -1, -1}, {"tail", RagdollBody::None, 0, 0, -1, -1},
+                     {"spine", RagdollBody::Auto, 0, 1200, 30, 10}};
+    character.ragdoll = ragdoll;
+    auto made = b.execute(owner, 0, CreateEntity{"Hero", {}, 0, 0, character});
+    ok(made);
+    const auto hero = made.value().created.front();
+    check(scene.inspect(hero)->components == character, "The ragdoll is stored");
+    std::ostringstream out;
+    ok(write_scene(out, scene.snapshot()));
+    const std::string text = out.str();
+    check(text.find("COMPONENTS 4\n") != std::string::npos, text.c_str());
+    check(text.find("RAGDOLL 1 1 985 35 17.5 0.25\n") != std::string::npos, text.c_str());
+    check(text.find("RAGBONE 1 \"hand \\\"L\\\"\" 1 0.0625 0 -1 -1\nRAGBONE 1 \"tail\" 2 0 0 -1 -1\nRAGBONE 1 \"spine\" 0 0 1200 30 10\n") !=
+              std::string::npos, text.c_str());
+    std::istringstream in(text);
+    auto parsed = read_scene(in);
+    ok(parsed);
+    check(parsed.value() == scene.snapshot(), "Ragdoll and its bones round trip");
+    // The defaults: on death, water's density, 40 degrees of swing, 20 of twist, friction 0.5, no bone settings.
+    ok(b.execute(owner, b.revision(), SetRagdoll{hero, RagdollComponent{}}));
+    check(scene.inspect(hero)->components.ragdoll == RagdollComponent{}, "The ragdoll command changes it");
+    std::ostringstream plain;
+    ok(write_scene(plain, scene.snapshot()));
+    check(plain.str().find("RAGDOLL 1 0 1000 40 20 0.5\n") != std::string::npos && plain.str().find("RAGBONE") == std::string::npos, plain.str().c_str());
+    ok(b.execute(owner, b.revision(), SetRagdoll{hero, std::nullopt}));
+    check(!scene.inspect(hero)->components.ragdoll, "An empty ragdoll command removes it");
+    ok(b.undo(owner, b.revision()));
+    check(scene.inspect(hero)->components.ragdoll == RagdollComponent{}, "Undo restores it");
+    // Invalid values are refused by the command and by the reader.
+    const auto refused = [&](auto change) {
+        auto bad = ragdoll;
+        change(bad);
+        error(b.execute(owner, b.revision(), SetRagdoll{hero, bad}), ErrorCode::InvalidArgument);
+    };
+    refused([](RagdollComponent &r) { r.density = 0; });
+    refused([](RagdollComponent &r) { r.swing_degrees = 181; });
+    refused([](RagdollComponent &r) { r.twist_degrees = 179; });
+    refused([](RagdollComponent &r) { r.joint_friction = -1; });
+    refused([](RagdollComponent &r) { r.trigger = static_cast<RagdollTrigger>(7); });
+    refused([](RagdollComponent &r) { r.bones.push_back(r.bones.front()); });
+    refused([](RagdollComponent &r) { r.bones.front().bone.clear(); });
+    refused([](RagdollComponent &r) { r.bones.front().radius = -0.1; });
+    refused([](RagdollComponent &r) { r.bones.front().swing_degrees = -2; });
+    refused([](RagdollComponent &r) { r.bones.front().body = static_cast<RagdollBody>(3); });
+    refused([](RagdollComponent &r) { r.bones.resize(max_ragdoll_bones + 1, RagdollBone{"x"}); });
+    const std::string head = " 2 1 ENTITY 1 0 \"A\" 0 0 0 0 0 0 1 1 1 1 COMPONENTS ";
+    for (const std::string bad : {"ENGINE_SCENE 6" + head + "1 RAGDOLL 1 0 1000 40 20 0.5",
+                                  "ENGINE_SCENE 7" + head + "1 RAGBONE 1 \"a\" 0 0 0 -1 -1",
+                                  "ENGINE_SCENE 7" + head + "2 RAGDOLL 1 0 1000 40 20 0.5 RAGDOLL 1 0 1000 40 20 0.5",
+                                  "ENGINE_SCENE 7" + head + "1 RAGDOLL 1 3 1000 40 20 0.5",
+                                  "ENGINE_SCENE 7" + head + "1 RAGDOLL 1 0 1000 40 20",
+                                  "ENGINE_SCENE 7" + head + "2 RAGDOLL 1 0 1000 40 20 0.5 RAGBONE 1 \"a\" 3 0 0 -1 -1",
+                                  "ENGINE_SCENE 7" + head + "3 RAGDOLL 1 0 1000 40 20 0.5 RAGBONE 1 \"a\" 0 0 0 -1 -1 RAGBONE 1 \"a\" 0 0 0 -1 -1",
+                                  "ENGINE_SCENE 7" + head + "2 RAGDOLL 1 0 1000 40 20 0.5 RAGBONE 1 a 0 0 0 -1 -1"}) {
+        std::istringstream rejected(bad);
+        check(!read_scene(rejected), bad.c_str());
+    }
+}
+
 } // namespace
 int main() {
     const std::pair<const char *, std::function<void()>> tests[] = {
@@ -919,6 +988,7 @@ int main() {
         {"format_v6", format_v6},
         {"format_v7", format_v7},
         {"format_v7_animation", format_v7_animation},
+        {"format_v7_ragdoll", format_v7_ragdoll},
         {"permissions_and_revision", permissions_and_revision},
         {"atomic_batch", atomic_batch},
         {"hierarchy_and_cycles", hierarchy_and_cycles},

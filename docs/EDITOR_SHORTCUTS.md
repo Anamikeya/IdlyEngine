@@ -93,6 +93,7 @@ While a text field has the keyboard, only Ctrl+P and Ctrl+Shift+P fire.
 | Play Animations |  | Viewport | `Viewport.ShowAnimations` |
 | Restart Animations |  | Viewport | `Viewport.RestartAnimations` |
 | Show Bones |  | Viewport | `Viewport.ShowBones` |
+| Show Ragdolls |  | Viewport | `Viewport.ShowRagdolls` |
 | Game View | `G` | Viewport | `Viewport.GameView` |
 | Maximize Viewport | `F11` | Viewport | `Viewport.Maximize` |
 | Perspective | `Alt+G` | Viewport | `Viewport.Perspective` |
@@ -144,6 +145,8 @@ While a text field has the keyboard, only Ctrl+P and Ctrl+Shift+P fire.
 | Pause |  | Global | `Play.Pause` |
 | Step |  | Global | `Play.Step` |
 | Stop |  | Global | `Play.Stop` |
+| Ragdoll Selected |  | Global | `Play.Ragdoll` |
+| Drop Debris |  | Global | `Play.DropDebris` |
 
 ## Find
 

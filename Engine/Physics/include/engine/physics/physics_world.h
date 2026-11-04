@@ -33,6 +33,7 @@ struct WorldStats {
 	int body_count = 0;
 	int collider_count = 0;
 	int contact_count = 0;
+	int joint_count = 0;
 	int awake_body_count = 0;
 	std::uint64_t step_count = 0;
 };
@@ -65,6 +66,17 @@ public:
 	PhysicsError destroy_body(BodyHandle body);
 	[[nodiscard]] bool is_valid(BodyHandle body) const noexcept;
 
+	// Out of the simulation without being destroyed: it neither moves, collides nor blocks rays, and keeps its velocity
+	// for when it is enabled again. Enabling an enabled body, or disabling a disabled one, does nothing.
+	PhysicsError set_body_enabled(BodyHandle body, bool enabled);
+	[[nodiscard]] PhysicsResult<bool> is_enabled(BodyHandle body) const;
+
+	// Joints. Destroying either body destroys its joints too, and their handles stay invalid.
+	PhysicsResult<JointHandle> create_joint(const JointDesc& desc);
+	PhysicsError destroy_joint(JointHandle joint);
+	[[nodiscard]] bool is_valid(JointHandle joint) const noexcept;
+	[[nodiscard]] PhysicsResult<JointState> joint_state(JointHandle joint) const;
+
 	PhysicsResult<ColliderHandle> add_collider(BodyHandle body, const ColliderDesc& desc);
 	PhysicsError destroy_collider(ColliderHandle collider);
 	[[nodiscard]] bool is_valid(ColliderHandle collider) const noexcept;
@@ -84,6 +96,8 @@ public:
 	// N*s at a world point, so an off-center hit also spins the body. Wakes it. Static and kinematic bodies do not
 	// respond to impulses: InvalidArgument.
 	PhysicsError apply_linear_impulse_at(BodyHandle body, Vec3 impulse, Vec3 world_point);
+	// N*m*s about the body's center of mass. Wakes it. Dynamic bodies only, as above.
+	PhysicsError apply_angular_impulse(BodyHandle body, Vec3 impulse);
 	// Closest collider along origin..origin + translation. Reads the world as of the last step; safe at any time
 	// between steps, never during one.
 	[[nodiscard]] RayHit cast_ray(Vec3 origin, Vec3 translation, const RayFilter& filter = {}) const;
@@ -111,6 +125,8 @@ private:
 
 // True when add_collider would accept the description's shape and material values.
 [[nodiscard]] bool is_valid(const ColliderDesc& desc) noexcept;
+// True when create_joint would accept the description's frames, limits and torques (the bodies are not checked).
+[[nodiscard]] bool is_valid(const JointDesc& desc) noexcept;
 
 // Number of live Box3D worlds in the process, for leak checks.
 int live_world_count() noexcept;

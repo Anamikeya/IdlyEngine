@@ -59,6 +59,9 @@ struct PartMaterial {
 using JointMatrix = std::array<float, 16>;
 using Pose = std::shared_ptr<const std::vector<JointMatrix>>;
 inline constexpr std::size_t max_pose_joints = 1024;
+// Keys from here up are not scene entities but things the run owns and draws with a scene entity's look, such as
+// pieces of debris (Milestone 5, D11). Their bindings must give `world`.
+inline constexpr EntityId runtime_object_base = EntityId{1} << 62;
 struct MeshBinding {
     EntityId entity = 0;
     MeshHandle mesh;

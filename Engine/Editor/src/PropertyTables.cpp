@@ -191,6 +191,27 @@ PropertyTable<AttachToBoneComponent> make_attach() {
         text<T>("bone", "Bone", "Attachment", "A joint of the parent's model. The transform is then relative to it, and the entity is drawn where the joint is.", &T::bone, "bone"),
     }};
 }
+PropertyTable<RagdollComponent> make_ragdoll() {
+    using T = RagdollComponent;
+    return {"Ragdoll", {
+        choice<T>("trigger", "Falls", "Ragdoll", "When the model turns into jointed bodies that fall from its pose. On death: when gameplay kills it. On demand: only when gameplay or Play > Ragdoll Selected asks.", &T::trigger, 0, {"On death", "On demand", "Never"}),
+        field<T>("density", "Density (kg/m3)", "Ragdoll", "Of every part. Water's is 1000, close to a body's.", PropertyType::Number, &T::density, {1, 100000, 10, "%.0f"}),
+        field<T>("swing_degrees", "Swing (deg)", "Joints", "How far each bone may swing from its rest direction.", PropertyType::Number, &T::swing_degrees, {0, 180, 0.5, "%.1f"}),
+        field<T>("twist_degrees", "Twist (deg)", "Joints", "How far each bone may turn about itself, either way.", PropertyType::Number, &T::twist_degrees, {0, 178, 0.5, "%.1f"}),
+        field<T>("joint_friction", "Joint friction", "Joints", "How much the joints resist turning: 0 is limp; 1 holds each part against its own weight.", PropertyType::Number, &T::joint_friction, {0, 10, 0.01}),
+    }};
+}
+PropertyTable<RagdollBone> make_ragdoll_bone() {
+    using T = RagdollBone;
+    return {"Ragdoll Bone", {
+        text<T>("bone", "Bone", "Ragdoll Bone", "A joint of this entity's model.", &T::bone, "joint"),
+        choice<T>("body", "Body", "Ragdoll Bone", "As generated: long bones get one, and hands and feet ride on the bone above. Own body: a body of its own. None: it only follows its parent.", &T::body, 0, {"As generated", "Own body", "None"}),
+        field<T>("radius", "Radius (m)", "Ragdoll Bone", "Of its capsule. 0 sizes it from the skin.", PropertyType::Number, &T::radius, {0, 100, 0.001, "%.3f"}),
+        field<T>("density", "Density (kg/m3)", "Ragdoll Bone", "0 is the ragdoll's.", PropertyType::Number, &T::density, {0, 100000, 10, "%.0f"}),
+        field<T>("swing_degrees", "Swing (deg)", "Ragdoll Bone", "How far it may swing from its rest direction. -1 is the ragdoll's.", PropertyType::Number, &T::swing_degrees, {-1, 180, 0.5, "%.1f"}),
+        field<T>("twist_degrees", "Twist (deg)", "Ragdoll Bone", "How far it may turn about itself, either way. -1 is the ragdoll's.", PropertyType::Number, &T::twist_degrees, {-1, 178, 0.5, "%.1f"}),
+    }};
+}
 }
 std::string property_to_text(const PropertyValue &value) {
     std::ostringstream out;
@@ -241,4 +262,6 @@ const PropertyTable<EnvironmentComponent> &environment_properties() { static con
 const PropertyTable<ParticleEmitterComponent> &emitter_properties() { static const auto table = make_emitter(); return table; }
 const PropertyTable<AnimatorComponent> &animator_properties() { static const auto table = make_animator(); return table; }
 const PropertyTable<AttachToBoneComponent> &attach_properties() { static const auto table = make_attach(); return table; }
+const PropertyTable<RagdollComponent> &ragdoll_properties() { static const auto table = make_ragdoll(); return table; }
+const PropertyTable<RagdollBone> &ragdoll_bone_properties() { static const auto table = make_ragdoll_bone(); return table; }
 } // namespace engine::editor

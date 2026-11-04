@@ -295,6 +295,7 @@ std::vector<CommandInfo> default_command_table() {
         {"Viewport.ShowAnimations", "Play Animations", "Play animators whose preview is on while editing. Only the view changes, never the scene.", "Viewport", viewport, {}},
         {"Viewport.RestartAnimations", "Restart Animations", "Start every animator again from its clip's start time.", "Viewport", viewport, {}},
         {"Viewport.ShowBones", "Show Bones", "Draw the skeletons of skinned and animated models over the view.", "Viewport", viewport, {}},
+        {"Viewport.ShowRagdolls", "Show Ragdolls", "Draw ragdolls' capsules over the view: where the bodies would be, or are.", "Viewport", viewport, {}},
         {"Viewport.GameView", "Game View", "Hide the gizmo, markers, grid and outlines, to see what the player sees.", "Viewport", viewport, {chord(Key::G)}},
         {"Viewport.Maximize", "Maximize Viewport", "Let the viewport fill the window.", "Viewport", viewport, {chord(Key::F11)}},
         {"Viewport.Perspective", "Perspective", "A perspective view.", "Viewport", viewport, {chord(Key::G, alt)}},
@@ -334,6 +335,8 @@ std::vector<CommandInfo> default_command_table() {
         {"Play.Pause", "Pause", "Freeze the run.", "Play", global, {}},
         {"Play.Step", "Step", "Advance the paused run by one tick.", "Play", global, {}},
         {"Play.Stop", "Stop", "Discard the run and return to the editor scene.", "Play", global, {}},
+        {"Play.Ragdoll", "Ragdoll Selected", "Turn the selected entities that have a Ragdoll into one, from the pose they are in. Again stands them up.", "Play", global, {}},
+        {"Play.DropDebris", "Drop Debris", "Drop eight pieces that look like the selected entity from above it. They go once they settle.", "Play", global, {}},
 
         {"Palette.Commands", "Command Palette", "Find and run any command by typing.", "Find", global, {chord(Key::P, ctrl | shift)}, false, false, true},
         {"Palette.QuickOpen", "Quick Open", "Find any entity or asset by typing.", "Find", global, {chord(Key::P, ctrl)}, false, false, true},

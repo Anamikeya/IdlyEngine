@@ -1,7 +1,7 @@
 # Milestone 5 plan: characters and effects
 
 Branch `milestone-5`, worktree `D:\AI\GameEngine-Integration`, created from `main` at `14c6642`.
-**Status: approved 2026-11-03. Slices 0 to 3 done; slice 4 (ragdolls and debris) next.** Do not merge into `main` without the user's approval.
+**Status: approved 2026-11-03. Slices 0 to 4 done; slice 5 (the shooter) next.** Do not merge into `main` without the user's approval.
 
 Decisions (2026-11-03): the plan is approved as written. ozz-animation 0.17.0 goes into `resources` at its pinned commit.
 The enemy is Quaternius' Universal Animation Library (CC0), downloaded in glTF. Edit-mode preview is on by default.
@@ -328,3 +328,81 @@ Cut order if time runs short: foot IK, then debris bodies (particles only), then
     never freed. They hold it weakly now, and are pruned after the asset database lets go. A test checks it.
   - The Bone list of a 25-joint model scrolled its name field out of view. The field is now at the top, has the
     keyboard and narrows the list.
+
+### Slice 4: ragdolls and debris (done 2026-11-04)
+
+- **Joints in `PhysicsWorld`:** ball joints with cone and twist limits, hinges and filter joints, each with friction (a
+  motor held still with a torque cap) and an optional spring; joint state for checking limits; bodies taken out of the
+  simulation and put back; angular impulses. Box3D stays behind the header.
+- **The ragdoll builder** (`engine/physics/ragdoll.h`, plain data, D7):
+  - **Bones:** skinned bones at least 4% of the skeleton's size long get a capsule. A bone runs to its unpaired child that
+    carries most of the skeleton (the spine from the hips, the neck from the chest), or between paired children.
+  - **Limb ends:** the end of a limb shorter than the bone above it (a hand, a foot) rides on that bone's body as a second
+    capsule, as Box3D's `human.c` does. At most 64 parts; past that the shortest bones go.
+  - **Sizes:** from the skin, using the box of the vertices each joint moves most, kept within 8% to 35% of the bone's
+    length or 8% of the skeleton.
+  - **Joints:** joint frames run along each bone and are at rest when the skeleton is. Swing and twist come from the
+    settings (40 and 20 degrees, within `human.c`'s range). Joint friction is a fraction of each part's own weight.
+    Joined parts weigh within 4:1 of each other.
+  - **Settings per bone** by name: body as generated, a body of its own, or none; radius, density, swing and twist.
+  - **Placing:** parts start at the pose, moving as the pose moved over the last tick. A joint the pose has turned past its
+    limits gets them widened to fit, so starting never fights the joints.
+- **Bodies the run owns, in `ScenePhysics`:**
+  - **Ragdolls:** one per entity, at most 64. Their parts never collide with each other. The entity's own body sits out
+    while it lies, even when rebuilt. Contacts and ray hits name the entity, and hits also name the ragdoll and the bone;
+    sensors do not see them. An impulse through the entity lands on its nearest part, so the shooter's shots push ragdolls.
+  - **Debris (D11):** at most 64, the oldest going to make room. A piece goes once asleep for 2 s or past its lifetime,
+    counted in simulated ticks. It has a category bit of its own, and its contacts name no entity.
+  - Both go with `reset_simulation`, and a ragdoll goes with its entity. They never write the scene.
+- **Animation:** `place_joints` makes a pose from the joints a ragdoll's bodies place, and keeps every other joint where it
+  was relative to its parent. `previous_pose` gives the handoff velocity.
+- **Scene format 7, extended (D12):** `RAGDOLL` (trigger, density, swing, twist, joint friction) and `RAGBONE` records, and
+  `component.ragdoll.set`. Version 6 files with either are refused.
+- **Session:**
+  - `ragdoll_plan` sizes the skeleton at the entity's uniform scale; each joint's flesh is cached per model like rigs.
+  - `start_ragdoll` works in Play only. It uses the pose and the one before it, adds the entity's own body's speed, and takes
+    an optional impulse at a point; `stop_ragdoll` undoes it.
+  - Each tick poses the ragdolls from their bodies. Frames, joint queries (D2), bones and bounds use the shown pose: the
+    host's, else the ragdoll's, else the animator's.
+  - `ragdoll_lines` outlines the ragdolls.
+  - `spawn_debris` draws a piece like a template entity at that entity's scale. Pieces use frame keys the run owns
+    (`renderer::runtime_object_base`), and are never picked or snapped to.
+- **Editor:**
+  - **Details:** a Ragdoll section with Falls, density, swing, twist and joint friction, and the body count and mass (hover
+    for each body). Show ragdolls, Add bone settings, a section per bone, and Ragdoll now / Stand up while running.
+  - **Menus:** Add Component > Ragdoll, View > Show Ragdolls, Play > Ragdoll Selected and Play > Drop Debris. The Console has
+    `view.ragdolls`.
+- **Tests:** 519 of 519 CTest entries in Release and in the CI configuration.
+  - New: `physics_tests` +17, `physics_scene_tests` +14, `editor_ragdoll_tests` 8, and a format 7 ragdoll scenario in
+    `engine.core.acceptance`.
+  - **Settling:** a generated person falls from six poses: standing, slumped, sitting in the air, twisted past its limits,
+    face down, and thrown backwards spinning.
+    - Its energy never rises above the start's, and no part moves faster than 7.5 m/s.
+    - Joints stretch by up to 6 cm as a limb hits the floor and close to under 3 mm.
+    - Every fall ends asleep on the floor within 10 s, and the same fall repeats bit for bit.
+  - **Fox:** plans 17 bodies, 46 kg at 1:100. It falls in Play from its walk and starts exactly where the walk left it.
+  - **`--render-test`:** 71 of 71. Fox falls, and the skeleton's top drops from 0.71 m to 0.18 m with 41,277 pixels changed.
+    Debris is drawn like its template and goes on Stop. `--smoke` passes.
+  - **Real input:** `Tests/RealInput/milestone5_ragdoll.ps1`, 18 of 18. Evidence is in `docs/evidence/m5-ragdoll/`.
+- **Deviations from the plan:**
+  - Only ball joints are generated. `human.c` uses hinges for knees and elbows, but a skeleton does not say which joints are
+    knees; hinges are in `PhysicsWorld` for later.
+  - Hands and feet ride on forearms and calves unless asked for. On joints of their own, these light ends whipped about
+    (77 rad/s) and stretched their joints by 8 cm at impact. Damping and more sub-steps did not help.
+  - Limits are centred on the rest pose, then widened per joint to fit the pose a ragdoll starts from.
+  - Nothing kills an entity into a ragdoll yet: On death is stored, and slice 5's enemies use it. Ragdolls fall in Play
+    through Details or Play > Ragdoll Selected.
+  - Debris collides as a box around its template's look. The shooter's glass and crate pieces come in slice 5.
+- **Found by testing:**
+  - Speed and spin limits flagged honest impacts, such as a hand slapping the floor. The settle test now checks energy instead:
+    an explosion is energy from nowhere.
+  - Fox's first plan weighed 71 kg, with fat parts, because each joint's box held every vertex any weight reached. Sizing
+    from each vertex's strongest joint gave 46 kg.
+  - Taking a hand's body away made its forearm look like the end of a limb, so it rode on the upper arm, and a test crashed on
+    the missing body. What ends a limb is now the builder's own choice.
+  - In Play, animators only get their inputs when a frame is drawn. The editor tests now tick the way the editor runs, with
+    a frame between ticks.
+  - Real input found Ragdoll now clipped off the right of the docked Inspector, the third button on its row. Details buttons
+    now go beside the last one only when they fit. The script checks that an item is wholly inside its panel: clipped items
+    keep their place in the UI map. Earlier runs also picked combo rows without opening the combo, a fault in the script.
+  - `small` is a Windows macro.

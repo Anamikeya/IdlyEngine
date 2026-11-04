@@ -8,7 +8,7 @@
 #include <type_traits>
 namespace engine::commands {
 namespace {
-constexpr std::array<CommandDescriptor, 17> descriptors{
+constexpr std::array<CommandDescriptor, 18> descriptors{
     {{"entity.create", Capability::Edit, "name, transform, parent, optional new stable ID, components", "Create Entity"},
      {"entity.delete", Capability::Edit, "stable ID; deletes subtree", "Delete Entity"},
      {"entity.rename", Capability::Edit, "stable ID, name", "Rename Entity"},
@@ -25,7 +25,8 @@ constexpr std::array<CommandDescriptor, 17> descriptors{
      {"component.behaviors.set", Capability::Edit, "stable ID, complete behavior list (empty removes all)", "Change Behaviors"},
      {"component.emitter.set", Capability::Edit, "stable ID, particle effect, auto play, loop and rate scale, or none to remove", "Change Particle Emitter"},
      {"component.animator.set", Capability::Edit, "stable ID, clip source model, clip, speed, loop, start time and edit preview, or none to remove", "Change Animator"},
-     {"component.attach.set", Capability::Edit, "stable ID, joint name of the parent's model, or none to remove", "Change Attach To Bone"}}};
+     {"component.attach.set", Capability::Edit, "stable ID, joint name of the parent's model, or none to remove", "Change Attach To Bone"},
+     {"component.ragdoll.set", Capability::Edit, "stable ID, ragdoll trigger, density, joint limits and friction, and settings per bone, or none to remove", "Change Ragdoll"}}};
 struct Guard {
     bool &busy;
     explicit Guard(bool &b) : busy(b) {
@@ -237,6 +238,8 @@ Result<Receipt> CommandBus::execute(const Context &ctx, std::uint64_t expected,
                         it->second.components.animator = cmd.animator;
                     else if constexpr (std::is_same_v<T, SetAttachToBone>)
                         it->second.components.attach = cmd.attach;
+                    else if constexpr (std::is_same_v<T, SetRagdoll>)
+                        it->second.components.ragdoll = cmd.ragdoll;
                     else if constexpr (std::is_same_v<T, DeleteEntity>) {
                         std::map<EntityId, std::vector<EntityId>> children;
                         for (const auto &[id, e] : staged)

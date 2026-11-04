@@ -210,7 +210,8 @@ template<class T> void property_row(EditorUI &ui, Section<T> &s, const Property<
                 if (p.suggestions == "clip" && typed.empty() && ImGui::Selectable("(none)", !mixed && current.empty())) edit_all<T>(ui, s, name, [&](T &t) { p.set(t, PropertyValue(std::string())); });
                 for (const auto &option : options)
                     if (has_text(option, typed) && ImGui::Selectable(option.c_str(), !mixed && option == current)) edit_all<T>(ui, s, name, [&](T &t) { p.set(t, PropertyValue(option)); });
-                if (options.empty()) ImGui::TextDisabled(p.suggestions == "bone" ? "The parent's model has no skeleton." : "The model has no clips.");
+                if (options.empty())
+                    ImGui::TextDisabled(p.suggestions == "bone" ? "The parent's model has no skeleton." : p.suggestions == "joint" ? "The model has no skeleton." : "The model has no clips.");
                 ImGui::EndCombo();
             }
         } else {
@@ -450,6 +451,7 @@ void EditorUI::inspector() {
     const bool has_emitter = all_have([](const EntityRecord &r) { return r.components.emitter.has_value(); });
     const bool has_animator = all_have([](const EntityRecord &r) { return r.components.animator.has_value(); });
     const bool has_attach = all_have([](const EntityRecord &r) { return r.components.attach.has_value(); });
+    const bool has_ragdoll = all_have([](const EntityRecord &r) { return r.components.ragdoll.has_value(); });
     auto mesh = has_mesh ? Section<MeshComponent>{"Mesh Renderer", mesh_properties(), ids, gather([](const EntityRecord &r) { return *r.components.mesh; }),
                                                   [](EntityId id, const MeshComponent &v) { return commands::Command(commands::SetMesh{id, v}); }}
                          : Section<MeshComponent>{"Mesh Renderer", mesh_properties(), {}, {}, {}};
@@ -474,6 +476,22 @@ void EditorUI::inspector() {
     auto attach = has_attach ? Section<AttachToBoneComponent>{"Attach To Bone", attach_properties(), ids, gather([](const EntityRecord &r) { return *r.components.attach; }),
                                                               [](EntityId id, const AttachToBoneComponent &v) { return commands::Command(commands::SetAttachToBone{id, v}); }}
                              : Section<AttachToBoneComponent>{"Attach To Bone", attach_properties(), {}, {}, {}};
+    auto ragdoll = has_ragdoll ? Section<RagdollComponent>{"Ragdoll", ragdoll_properties(), ids, gather([](const EntityRecord &r) { return *r.components.ragdoll; }),
+                                                           [](EntityId id, const RagdollComponent &v) { return commands::Command(commands::SetRagdoll{id, v}); }}
+                               : Section<RagdollComponent>{"Ragdoll", ragdoll_properties(), {}, {}, {}};
+    // A ragdoll's bone settings by position in its list, while every target has that many.
+    std::vector<Section<RagdollBone>> ragdoll_bones;
+    if (has_ragdoll) {
+        std::size_t shared = primary.components.ragdoll->bones.size();
+        for (const auto &record : details_targets) shared = std::min(shared, record.components.ragdoll->bones.size());
+        for (std::size_t i = 0; i < shared; ++i)
+            ragdoll_bones.push_back({"Ragdoll Bone " + std::to_string(i + 1), ragdoll_bone_properties(), ids, gather([i](const EntityRecord &r) { return r.components.ragdoll->bones[i]; }),
+                                     [this, i](EntityId id, const RagdollBone &v) {
+                                         auto changed = *session.scene().inspect(id)->components.ragdoll;
+                                         changed.bones[i] = v;
+                                         return commands::Command(commands::SetRagdoll{id, std::move(changed)});
+                                     }});
+    }
     // Colliders by position in the list, while every target has that many.
     std::vector<Section<ColliderComponent>> colliders;
     std::size_t shared_colliders = primary.components.colliders.size();
@@ -490,14 +508,14 @@ void EditorUI::inspector() {
         return !s.values.empty() && std::ranges::any_of(s.table.properties, [&](const auto &p) { return settings.flag(settings_key("favorite", s.table.name, p.id), false) && row_wanted(*this, s, p); });
     };
     bool any_favorite = favorites_wanted(transform) || favorites_wanted(mesh) || favorites_wanted(camera) || favorites_wanted(light) || favorites_wanted(environment) || favorites_wanted(body) || favorites_wanted(emitter) ||
-                        favorites_wanted(animator) || favorites_wanted(attach);
+                        favorites_wanted(animator) || favorites_wanted(attach) || favorites_wanted(ragdoll);
     for (const auto &s : colliders) any_favorite |= favorites_wanted(s);
     ImGui::BeginChild("##details", {0, 0});
     if (any_favorite) {
         ImGui::SeparatorText("Favorites");
         if (begin_rows("##favorites")) {
             favorite_rows(*this, transform); favorite_rows(*this, mesh); favorite_rows(*this, camera); favorite_rows(*this, light); favorite_rows(*this, environment); favorite_rows(*this, body); favorite_rows(*this, emitter);
-            favorite_rows(*this, animator); favorite_rows(*this, attach);
+            favorite_rows(*this, animator); favorite_rows(*this, attach); favorite_rows(*this, ragdoll);
             for (auto &s : colliders) favorite_rows(*this, s);
             ImGui::EndTable();
         }
@@ -558,6 +576,70 @@ void EditorUI::inspector() {
         if (!many && !details_search[0] && !details_only_modified && !primary.parent)
             ImGui::TextColored({0.95f, 0.75f, 0.3f, 1}, "No parent: put this entity under a model with a skeleton.");
     }
+    if (has_ragdoll) {
+        section(*this, ragdoll, remover("Ragdoll", [](EntityId id) { return commands::SetRagdoll{id, std::nullopt}; }));
+        if (!many && !details_search[0] && !details_only_modified) {
+            std::string problem;
+            const auto plan = session.ragdoll_plan(primary.id, &problem);
+            const auto rig = session.rig(primary.id);
+            if (plan && rig) {
+                ImGui::TextDisabled("%zu bodies, %.1f kg", plan->bodies.size(), plan->mass);
+                if (ImGui::IsItemHovered() && ImGui::BeginTooltip()) {
+                    for (const auto &b : plan->bodies)
+                        ImGui::Text("%s: %.2f m, %.2f kg%s", rig->joint_name(std::size_t(b.joint)).c_str(), b.length, b.mass, b.more.empty() ? "" : ", with what rides on it");
+                    ImGui::EndTooltip();
+                }
+            } else ImGui::TextColored({0.95f, 0.75f, 0.3f, 1}, "%s", problem.c_str());
+            // The next button goes beside the last one when it fits the panel, and below it otherwise: a narrow dock would
+            // clip it out of reach.
+            const auto beside = [](const char *label) {
+                const auto &style = ImGui::GetStyle();
+                const float width = ImGui::CalcTextSize(label).x + 2 * style.FramePadding.x;
+                const float right = ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMax().x;
+                if (ImGui::GetItemRectMax().x + style.ItemSpacing.x + width <= right) ImGui::SameLine();
+            };
+            if (tip_button(session.view_flags.ragdolls ? "Hide ragdolls" : "Show ragdolls", "Draw ragdolls' capsules over the view (View > Show Ragdolls)")) {
+                session.view_flags.ragdolls = !session.view_flags.ragdolls;
+                save_settings();
+            }
+            mark("Details.ShowRagdolls");
+            beside("Add bone settings");
+            const auto &bones = primary.components.ragdoll->bones;
+            if (tip_button("Add bone settings", "Settings for one bone: its body, radius, density or limits") && rig && bones.size() < max_ragdoll_bones) {
+                // The first bone with a body that has no settings yet, else the first joint without any.
+                const auto free = [&](const std::string &name) { return std::ranges::none_of(bones, [&](const RagdollBone &b) { return b.bone == name; }); };
+                std::string chosen;
+                if (plan)
+                    for (const auto &b : plan->bodies)
+                        if (chosen.empty() && free(rig->joint_name(std::size_t(b.joint)))) chosen = rig->joint_name(std::size_t(b.joint));
+                for (std::size_t j = 0; j < rig->joint_count() && chosen.empty(); ++j)
+                    if (free(rig->joint_name(j))) chosen = rig->joint_name(j);
+                if (!chosen.empty()) {
+                    auto changed = *primary.components.ragdoll;
+                    changed.bones.push_back(RagdollBone{chosen});
+                    details_apply("Add Ragdoll Bone", {commands::SetRagdoll{primary.id, std::move(changed)}});
+                }
+            }
+            mark("Details.AddRagdollBone");
+            if (playing()) {
+                const bool lying = session.ragdolled(primary.id);
+                beside(lying ? "Stand up" : "Ragdoll now");
+                if (tip_button(lying ? "Stand up" : "Ragdoll now", lying ? "Remove its bodies: the animator poses it again" : "Fall as a ragdoll from the pose it is in"))
+                    report(lying ? session.stop_ragdoll(primary.id) : session.start_ragdoll(primary.id), lying ? "Standing again" : "Falling as a ragdoll");
+                mark("Details.RagdollNow");
+            }
+        }
+        for (std::size_t i = 0; i < ragdoll_bones.size(); ++i)
+            section(*this, ragdoll_bones[i], [this, i] {
+                std::vector<commands::Command> edits;
+                for (const auto &record : details_targets) {
+                    auto changed = *record.components.ragdoll;
+                    changed.bones.erase(changed.bones.begin() + std::ptrdiff_t(i));
+                    edits.emplace_back(commands::SetRagdoll{record.id, std::move(changed)});
+                }
+                details_apply("Remove Ragdoll Bone", std::move(edits));
+            });
+    }
     if (has_body) {
         section(*this, body, remover("Rigid Body", [](EntityId id) { return commands::SetRigidBody{id, std::nullopt}; }));
         if (primary.components.colliders.empty()) ImGui::TextColored({0.95f, 0.75f, 0.3f, 1}, "No colliders: this body will not collide.");
@@ -617,6 +699,13 @@ void EditorUI::inspector() {
                 if (r.components.attach) return std::nullopt;
                 const auto bones = name_suggestions("bone", r.id);
                 return commands::SetAttachToBone{r.id, AttachToBoneComponent{bones.empty() ? std::string("root") : bones.front()}};
+            });
+        const bool add_ragdoll = ImGui::MenuItem("Ragdoll", nullptr, false, any_missing([](const EntityRecord &r) { return r.components.ragdoll.has_value(); }));
+        mark("Details.Add.Ragdoll");
+        if (add_ragdoll)
+            details_add("Ragdoll", [](const EntityRecord &r) -> std::optional<commands::Command> {
+                if (r.components.ragdoll) return std::nullopt;
+                return commands::SetRagdoll{r.id, RagdollComponent{}};
             });
         if (ImGui::MenuItem("Rigid Body", nullptr, false, any_missing([](const EntityRecord &r) { return r.components.body.has_value(); })))
             details_add("Rigid Body", [](const EntityRecord &r) -> std::optional<commands::Command> { if (r.components.body) return std::nullopt; return commands::SetRigidBody{r.id, RigidBodyComponent{}}; });

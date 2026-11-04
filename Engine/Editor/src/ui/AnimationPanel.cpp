@@ -19,8 +19,8 @@ std::vector<std::string> EditorUI::name_suggestions(std::string_view kind, Entit
             if (const auto data = session.model(record->components.mesh->mesh_asset))
                 for (const auto &clip : data->clips) names.push_back(clip.name);
         }
-    } else if (kind == "bone" && record->parent) {
-        if (const auto rig = session.rig(record->parent))
+    } else if ((kind == "bone" && record->parent) || kind == "joint") {
+        if (const auto rig = session.rig(kind == "bone" ? record->parent : id))
             for (std::size_t j = 0; j < rig->joint_count(); ++j) names.push_back(rig->joint_name(j));
     }
     return names;

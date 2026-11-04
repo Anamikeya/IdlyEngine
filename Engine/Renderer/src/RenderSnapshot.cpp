@@ -132,7 +132,11 @@ Result<Frame> extract_frame(const Scene &scene, FrameStamp stamp, const Perspect
                                  return std::all_of(m.begin(), m.end(), [](float v) { return std::isfinite(v); });
                              })))
             return fail(ErrorCode::InvalidArgument, "Joint pose is too large or not finite");
-        auto transform = scene.world_transform(binding.entity);
+        // Something the run owns has no scene transform: it says where it is.
+        const bool owned = binding.entity >= runtime_object_base;
+        if (owned && !binding.world)
+            return fail(ErrorCode::InvalidArgument, "A runtime object needs its world transform");
+        auto transform = owned ? binding.world : scene.world_transform(binding.entity);
         if (!transform)
             return fail(ErrorCode::NotFound, "Mesh entity does not exist");
         if (binding.world)

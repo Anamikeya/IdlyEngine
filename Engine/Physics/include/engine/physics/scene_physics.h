@@ -9,6 +9,7 @@
 // scene only as commands::SetTransform batches executed on a CommandBus the host supplies.
 
 #include "engine/physics/physics_world.h"
+#include "engine/physics/ragdoll.h"
 
 #include <engine/commands/CommandBus.hpp>
 #include <engine/scene/Scene.hpp>
@@ -75,10 +76,59 @@ struct RaycastFilter {
 };
 
 struct RaycastHit {
+	// A ragdoll's hit gives the entity it belongs to; a piece of debris gives 0.
 	EntityId entity = 0;
 	Vec3 point;
 	Vec3 normal;
 	float distance = 0.0f;
+	std::uint64_t ragdoll = 0; // The ragdoll hit, if any.
+	int bone = -1;             // Of a ragdoll: the skeleton joint whose body was hit.
+	std::uint64_t debris = 0;  // The piece of debris hit, if any.
+};
+
+// ---- Bodies owned by the run, not the scene (Milestone 5, D7, D11) ----
+// They mirror no entity, never reach the scene or its history, and go with reset_simulation. Their contacts report
+// the entity a ragdoll belongs to, and 0 for debris; sensors do not see them.
+
+// A ragdoll part's category is ragdoll_category alone, and a piece of debris's debris_category alone, so rays can
+// leave them out.
+inline constexpr std::uint64_t ragdoll_category = std::uint64_t{1} << 62;
+inline constexpr std::uint64_t debris_category = std::uint64_t{1} << 63;
+inline constexpr std::size_t max_ragdolls = 64;
+inline constexpr std::size_t max_debris = 64;
+// Debris asleep this long, in seconds of simulation, is removed.
+inline constexpr double debris_sleep_seconds = 2.0;
+
+struct RagdollPartState {
+	int bone = -1;
+	Pose pose;
+	Vec3 linear_velocity;
+	Vec3 angular_velocity;
+};
+
+struct RagdollState {
+	std::uint64_t id = 0;
+	EntityId owner = 0;
+	std::vector<RagdollPartState> parts; // In the order they were described.
+	bool awake = false;                  // Any part.
+};
+
+struct Debris {
+	EntityId look = 0; // Echoed back for the host to draw the piece with; physics never interprets it.
+	Pose pose;
+	Vec3 linear_velocity;
+	Vec3 angular_velocity;
+	// Shape and material. The filter's category gains debris_category; debris collide with each other.
+	ColliderDesc collider;
+	double lifetime = 10.0; // Seconds of simulation, within (0, 600].
+};
+
+struct DebrisState {
+	std::uint64_t id = 0;
+	EntityId look = 0;
+	Pose pose;
+	double age = 0.0;    // Seconds of simulation.
+	double asleep = 0.0; // Seconds it has been asleep for.
 };
 
 struct BodyState {
@@ -116,6 +166,8 @@ struct PhysicsDiagnostics {
 	WorldStats world;
 	std::size_t authored_entities = 0;
 	std::size_t active_bodies = 0;
+	std::size_t ragdolls = 0, ragdoll_parts = 0, debris = 0;
+	std::uint64_t debris_spawned = 0, debris_expired = 0, debris_replaced = 0;
 	TickReport last_tick;
 	std::vector<EntityIssue> issues;
 };
@@ -126,6 +178,7 @@ enum class DebugCategory : std::uint8_t {
 	DynamicAwake,
 	DynamicAsleep,
 	Sensor,
+	Ragdoll, // Ragdoll parts, live or planned.
 };
 
 struct DebugLine {
@@ -149,6 +202,9 @@ struct DebugGeometry {
 
 // Linear RGBA suggestion per category. Renderers are free to use their own palette.
 [[nodiscard]] std::array<float, 4> default_color(DebugCategory category) noexcept;
+// Appends the outline of a shape placed at `pose`, as debug_geometry draws colliders.
+void append_shape_lines(std::vector<DebugLine>& lines, const ShapeDesc& shape, const Pose& pose, EntityId entity,
+	DebugCategory category, int circle_segments = 16);
 
 // Owns one PhysicsWorld whose bodies mirror the physics components of one scene, keyed by stable EntityId.
 // Move-only. Every call must happen on the scene owner thread.
@@ -176,7 +232,7 @@ public:
 	// Disabling pauses: velocities are kept. Use reset_simulation to restart from authored state.
 	void set_simulation_enabled(bool enabled) noexcept;
 	[[nodiscard]] bool simulation_enabled() const noexcept;
-	// Rebuilds every body at its current scene pose with authored initial velocities.
+	// Rebuilds every body at its current scene pose with authored initial velocities, and removes ragdolls and debris.
 	Result<void> reset_simulation(const Scene& scene);
 
 	// One fixed tick (C-3): sync(scene), step() when enabled, publish(scene, bus, context).
@@ -186,7 +242,7 @@ public:
 
 	// The pieces of fixed_update, for hosts that need to interleave their own work.
 	// Brings bodies in line with the scene: reads body and collider components, then builds, rebuilds,
-	// destroys and teleports bodies. Never writes the scene.
+	// destroys and teleports bodies, and removes the ragdolls of entities that are gone. Never writes the scene.
 	Result<void> sync(const Scene& scene);
 	// Steps the world once if simulation is enabled, then collects events and dynamic poses to publish.
 	Result<void> step();
@@ -207,8 +263,35 @@ public:
 
 	// ---- Runtime forces. These act on the live body and keep no scene state, so they fill no undo history. ----
 
-	// N*s at a world point. False when the entity has no dynamic body (a static wall does not move).
+	// N*s at a world point. On an entity with a ragdoll, its part nearest the point takes it. False when the entity has
+	// neither a ragdoll nor a dynamic body (a static wall does not move).
 	bool apply_impulse(EntityId entity, Vec3 impulse, Vec3 world_point);
+
+	// ---- Ragdolls: jointed bodies standing for an entity's skeleton (D7) ----
+
+	// Builds the bodies and joints, starting where and how fast the parts say. One ragdoll per entity, at most
+	// max_ragdolls. Bodies are made in the order of the parts, so the same description falls the same way.
+	Result<std::uint64_t> create_ragdoll(EntityId owner, const RagdollDesc& desc);
+	// Destroys its bodies and gives the owner its own body back. False when there is no such ragdoll.
+	bool destroy_ragdoll(std::uint64_t id);
+	// 0 when the entity has none.
+	[[nodiscard]] std::uint64_t ragdoll_of(EntityId owner) const;
+	[[nodiscard]] std::optional<RagdollState> ragdoll(std::uint64_t id) const;
+	// Ascending.
+	[[nodiscard]] std::vector<std::uint64_t> ragdolls() const;
+	// The joints of a ragdoll, one per part after the root, in the parts' order.
+	[[nodiscard]] std::vector<JointState> ragdoll_joints(std::uint64_t id) const;
+	// N*s at a world point, on the part standing for `bone`, or on the part nearest the point when bone is -1.
+	bool apply_ragdoll_impulse(std::uint64_t id, Vec3 impulse, Vec3 world_point, int bone = -1);
+
+	// ---- Debris: loose pieces that bounce and pile up (D11) ----
+
+	// Past max_debris the oldest piece is removed to make room. A piece goes once asleep for debris_sleep_seconds or
+	// past its lifetime, counted in simulated ticks.
+	Result<std::uint64_t> spawn_debris(const Debris& piece);
+	bool remove_debris(std::uint64_t id);
+	// Oldest first.
+	[[nodiscard]] std::vector<DebrisState> debris() const;
 	// False when the entity has no body, or a static one.
 	bool set_linear_velocity(EntityId entity, Vec3 velocity);
 	// Events of the last step(). Valid until the next step(), fixed_update or reset_simulation.

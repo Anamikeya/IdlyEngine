@@ -729,6 +729,67 @@ void animated_model(Harness &h, const fs::path &model_file) {
     const auto status = h.session.animation().status(entity);
     h.check(status && status->clip == "Walk" && changed > 500, "a real model walks through its animator", std::to_string(changed) + " pixels changed between 0 and 0.35 s");
 }
+// A real model falling in Play as a ragdoll from the pose its animator left, and debris drawn like its template (slice 4).
+void ragdoll_model(Harness &h, const fs::path &model_file) {
+    std::error_code error;
+    if (!fs::is_regular_file(model_file, error)) { std::cout << "SKIP  ragdoll capture: " << model_file.string() << " not found\n"; return; }
+    h.reset();
+    h.sun({-35, 30}, 90000);
+    const auto imported = h.session.import_asset(model_file);
+    if (!imported) { h.check(false, "ragdoll model imports", imported.error().message); return; }
+    const auto placed = h.session.place_asset(imported.value().id);
+    if (!placed) { h.check(false, "ragdoll model is placed", "place failed"); return; }
+    const auto fox = placed.value().created.front();
+    auto record = *h.session.scene().inspect(fox);
+    record.transform.scale = {0.01, 0.01, 0.01};
+    if (!h.session.execute(commands::SetTransform{fox, record.transform}) || !h.session.execute(commands::SetRagdoll{fox, RagdollComponent{}})) {
+        h.check(false, "ragdoll model gets a Ragdoll", "edit failed");
+        return;
+    }
+    // A gray floor, solid to physics.
+    Transform floor; floor.position = {0, -0.05, 0}; floor.scale = {6, 0.1, 6};
+    Components ground{MeshComponent{BuiltinMesh::Cube, {0.5, 0.5, 0.5}, 0.9, 0}, {}, {}};
+    ground.colliders.push_back(ColliderComponent{});
+    h.add("Floor", floor, ground);
+    Transform piece; piece.position = {1.5, 0.04, 1.5}; piece.scale = {0.08, 0.08, 0.08};
+    const auto shard = h.add("Shard", piece, {MeshComponent{BuiltinMesh::Cube, {0.9, 0.1, 0.1}, 0.6, 0}, {}, {}});
+    h.session.select(0);
+    h.session.camera.target = {0, 0.3, 0}; h.session.camera.yaw = 0.9; h.session.camera.pitch = 0.25; h.session.camera.distance = 2.5;
+    if (!h.session.play()) { h.check(false, "ragdoll scene plays", "play failed"); return; }
+    for (int i = 0; i < 10; ++i) { h.session.update(EditorSession::fixed_step); h.frame(); }
+    h.capture("ragdoll_standing");
+    const auto standing = h.renderer.readback(unsigned(h.width), unsigned(h.height));
+    const auto top = [&] {
+        double y = -1e9;
+        for (const auto &line : h.session.bone_lines(fox)) y = std::max({y, line.from.y, line.to.y});
+        return y;
+    };
+    const double standing_top = top();
+    const auto started = h.session.start_ragdoll(fox);
+    h.check(static_cast<bool>(started), "the model turns into a ragdoll in Play", started ? "" : started.error().message);
+    for (int i = 0; i < 150; ++i) { h.session.update(EditorSession::fixed_step); h.frame(); }
+    h.capture("ragdoll_fallen");
+    const auto fallen = h.renderer.readback(unsigned(h.width), unsigned(h.height));
+    std::size_t changed = 0;
+    for (std::size_t i = 0; i + 3 < standing.size() && i + 3 < fallen.size(); i += 4)
+        if (std::abs(standing[i] - fallen[i]) + std::abs(standing[i + 1] - fallen[i + 1]) + std::abs(standing[i + 2] - fallen[i + 2]) > 60) ++changed;
+    const double fallen_top = top();
+    h.check(changed > 2000 && fallen_top < standing_top - 0.1, "the ragdoll falls and is drawn where its bodies lie",
+            std::to_string(changed) + " pixels changed; the skeleton's top went from " + std::to_string(standing_top) + " m to " + std::to_string(fallen_top) + " m");
+    h.check(h.renderer.stats().posed == 1, "the fallen model is drawn posed", std::to_string(h.renderer.stats().posed));
+    // Red pieces like this small cube.
+    h.settle();
+    const auto objects = h.renderer.stats().objects;
+    for (int i = 0; i < 8; ++i)
+        (void)h.session.spawn_debris(shard, {-0.4 + 0.1 * i, 1.0 + 0.05 * i, 0.3}, {}, {0, 0, 0}, {2, 3, 1});
+    for (int i = 0; i < 25; ++i) { h.session.update(EditorSession::fixed_step); h.frame(); }
+    h.capture("debris_falling");
+    h.check(h.session.debris().size() == 8 && h.renderer.stats().objects == objects + 8, "debris is drawn like its template",
+            std::to_string(h.session.debris().size()) + " pieces, " + std::to_string(h.renderer.stats().objects - objects) + " more objects drawn");
+    (void)h.session.stop();
+    h.settle();
+    h.check(h.renderer.stats().objects == objects, "Stop takes the debris away", std::to_string(h.renderer.stats().objects) + " objects");
+}
 void model_with_all_maps(Harness &h, const fs::path &model_file) {
     std::error_code error;
     if (!fs::is_regular_file(model_file, error)) { std::cout << "SKIP  model capture: " << model_file.string() << " not found\n"; return; }
@@ -792,6 +853,7 @@ int run_render_test(GLFWwindow *window, const fs::path &materials, const fs::pat
         skinned_model(h, fs::path(ENGINE_RESOURCES_DIR) / "filament/third_party/models/Fox/Fox.glb");
         animation(h);
         animated_model(h, fs::path(ENGINE_RESOURCES_DIR) / "filament/third_party/models/Fox/Fox.glb");
+        ragdoll_model(h, fs::path(ENGINE_RESOURCES_DIR) / "filament/third_party/models/Fox/Fox.glb");
         const fs::path sample = fs::path(ENGINE_SAMPLES_DIR) / "PhysicsShooter";
         model_with_all_maps(h, sample / "Assets/models/WaterBottle.glb");
         lighting_scene(h, sample);

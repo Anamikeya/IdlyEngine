@@ -36,8 +36,8 @@ template<class T> struct Property {
     std::string_view format = "%.3f";
     std::vector<std::string_view> choices; // For Enum.
     std::string_view asset_type;   // For Asset: "mesh", "texture", "material", "environment" or "effect".
-    // For Text: where the inspector finds names to offer for the entity: "clip" (its animator's clips) or "bone" (the
-    // joints of its parent's model).
+    // For Text: where the inspector finds names to offer for the entity: "clip" (its animator's clips), "bone" (the
+    // joints of its parent's model) or "joint" (the joints of its own model).
     std::string_view suggestions;
     std::size_t max_length = 256;  // For Text, in bytes.
     bool read_only = false;
@@ -95,4 +95,6 @@ const PropertyTable<EnvironmentComponent> &environment_properties();
 const PropertyTable<ParticleEmitterComponent> &emitter_properties();
 const PropertyTable<AnimatorComponent> &animator_properties();
 const PropertyTable<AttachToBoneComponent> &attach_properties();
+const PropertyTable<RagdollComponent> &ragdoll_properties();
+const PropertyTable<RagdollBone> &ragdoll_bone_properties();
 } // namespace engine::editor

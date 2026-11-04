@@ -88,10 +88,14 @@ struct SetAttachToBone {
     EntityId id;
     std::optional<AttachToBoneComponent> attach;
 };
+struct SetRagdoll {
+    EntityId id;
+    std::optional<RagdollComponent> ragdoll;
+};
 using Command = std::variant<CreateEntity, DeleteEntity, RenameEntity, SetTransform, SetParent,
                              ReplaceScene, SetMesh, SetCamera, SetLight, DuplicateEntity,
                              SetRigidBody, SetColliders, SetEnvironment, SetBehaviors, SetParticleEmitter,
-                             SetAnimator, SetAttachToBone>;
+                             SetAnimator, SetAttachToBone, SetRagdoll>;
 struct CommandDescriptor {
     std::string_view name;
     Capability permission;

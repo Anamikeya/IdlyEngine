@@ -83,6 +83,7 @@ void EditorUI::viewport() {
     gizmo(origin, size);
     if (show_colliders && !game && !game_view) collider_outlines(origin, size);
     if (session.view_flags.bones && !game && !game_view) bone_overlay(origin, size);
+    if (session.view_flags.ragdolls && !game && !game_view) ragdoll_overlay(origin, size);
     if (!game && !game_view) selection_outlines(origin, size);
     report_physics();
     report_assets();
@@ -490,6 +491,17 @@ void EditorUI::bone_overlay(ImVec2 origin, ImVec2 size) {
         const ImU32 color = selected ? IM_COL32(120, 230, 255, 255) : IM_COL32(150, 190, 210, 170);
         draw->AddLine(*a, *b, color, px(selected ? 2.0f : 1.5f));
         draw->AddCircleFilled(*b, px(selected ? 3.0f : 2.0f), color);
+    }
+}
+void EditorUI::ragdoll_overlay(ImVec2 origin, ImVec2 size) {
+    auto *draw = ImGui::GetWindowDrawList();
+    const auto c = physics::default_color(physics::DebugCategory::Ragdoll);
+    const ImU32 color = ImGui::ColorConvertFloat4ToU32({c[0], c[1], c[2], 0.75f}), chosen = ImGui::ColorConvertFloat4ToU32({c[0], c[1], c[2], 1});
+    for (const auto &line : session.ragdoll_lines()) {
+        const auto a = project({line.a.x, line.a.y, line.a.z}, origin, size), b = project({line.b.x, line.b.y, line.b.z}, origin, size);
+        if (!a || !b) continue;
+        const bool selected = session.selected().contains(line.entity);
+        draw->AddLine(*a, *b, selected ? chosen : color, px(selected ? 1.5f : 1.0f));
     }
 }
 void EditorUI::collider_outlines(ImVec2 origin, ImVec2 size) {

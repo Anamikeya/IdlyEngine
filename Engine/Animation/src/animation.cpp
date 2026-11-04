@@ -527,6 +527,7 @@ struct Instance {
 	bool ik_reached = true;
 	std::unique_ptr<Buffers> buffers;
 	Pose pose;
+	Pose previous_pose; // Before the last update, for how fast the pose moves (D7).
 	bool dirty = true;
 };
 
@@ -797,6 +798,10 @@ void AnimationSystem::set_animators(std::span<const AnimatorInput> animators)
 		if (inst.dirty) {
 			Impl::compute(inst);
 		}
+		// Starting again is a jump, not movement.
+		if (restart || !inst.previous_pose) {
+			inst.previous_pose = inst.pose;
+		}
 		next.emplace(input.entity, std::move(inst));
 	}
 	impl_->instances = std::move(next);
@@ -806,6 +811,7 @@ void AnimationSystem::update(double seconds)
 {
 	const double dt = std::isfinite(seconds) ? std::clamp(seconds, 0.0, max_step) : 0.0;
 	for (auto& [entity, inst] : impl_->instances) {
+		inst.previous_pose = inst.pose;
 		if (inst.playing && !inst.paused && dt > 0) {
 			impl_->advance(entity, inst, dt);
 		}
@@ -821,6 +827,7 @@ void AnimationSystem::restart()
 		(void)entity;
 		reset(inst);
 		Impl::compute(inst);
+		inst.previous_pose = inst.pose;
 	}
 	impl_->events.clear();
 }
@@ -829,6 +836,12 @@ Pose AnimationSystem::pose(std::uint64_t entity) const
 {
 	const auto* inst = impl_->find(entity);
 	return inst ? inst->pose : nullptr;
+}
+
+Pose AnimationSystem::previous_pose(std::uint64_t entity) const
+{
+	const auto* inst = impl_->find(entity);
+	return inst ? inst->previous_pose : nullptr;
 }
 
 std::optional<JointMatrix> AnimationSystem::joint_model(std::uint64_t entity, std::string_view joint) const
@@ -1014,6 +1027,43 @@ Result<void> AnimationSystem::set_ik(std::uint64_t entity, std::vector<TwoBoneIK
 	inst->chains = std::move(resolved);
 	inst->dirty = true;
 	return {};
+}
+
+Pose place_joints(std::span<const int> parents, std::span<const JointMatrix> base, std::span<const std::optional<JointMatrix>> placed)
+{
+	const std::size_t n = parents.size();
+	if (base.size() != n || placed.size() != n) {
+		return nullptr;
+	}
+	auto out = std::make_shared<std::vector<JointMatrix>>(n);
+	auto& m = *out;
+	for (std::size_t j = 0; j < n; ++j) {
+		const int parent = parents[j];
+		if (placed[j]) {
+			m[j] = *placed[j];
+		} else if (parent >= 0 && static_cast<std::size_t>(parent) < j) {
+			// Its transform relative to its parent, as the base pose has it, under where its parent is now.
+			const auto p = static_cast<std::size_t>(parent);
+			const auto widen = [](const JointMatrix& f) {
+				Matrix d{};
+				std::copy(f.begin(), f.end(), d.begin());
+				return d;
+			};
+			const auto inverse = inverse_affine(widen(base[p]));
+			if (!inverse) {
+				m[j] = base[j];
+				continue;
+			}
+			const Matrix local = multiply(*inverse, base[j]);
+			JointMatrix narrow{};
+			std::transform(local.begin(), local.end(), narrow.begin(), [](double v) { return static_cast<float>(v); });
+			const Matrix now = multiply(widen(m[p]), narrow);
+			std::transform(now.begin(), now.end(), m[j].begin(), [](double v) { return static_cast<float>(v); });
+		} else {
+			m[j] = base[j];
+		}
+	}
+	return out;
 }
 
 } // namespace engine::animation

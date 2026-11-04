@@ -9,7 +9,7 @@ set_target_properties(engine_test_framework PROPERTIES FOLDER "Tests")
 if(GAMEENGINE_WITH_PHYSICS)
 	gameengine_add_test_executable(physics_tests
 		LABELS physics unit
-		SOURCES Physics/physics_world_tests.cpp
+		SOURCES Physics/physics_world_tests.cpp Physics/joint_tests.cpp
 		LIBRARIES engine::physics)
 endif()
 
@@ -17,7 +17,7 @@ endif()
 if(TARGET engine::physics_scene)
 	gameengine_add_test_executable(physics_scene_tests
 		LABELS physics integration
-		SOURCES Physics/scene_physics_tests.cpp
+		SOURCES Physics/scene_physics_tests.cpp Physics/ragdoll_scene_tests.cpp
 		LIBRARIES engine::physics_scene)
 endif()
 
@@ -89,6 +89,12 @@ if(TARGET engine_editor_session)
 		LABELS editor animation unit
 		SOURCES Editor/editor_animation_tests.cpp
 		LIBRARIES engine_editor_session)
+	gameengine_add_test_executable(editor_ragdoll_tests
+		LABELS editor physics unit
+		SOURCES Editor/editor_ragdoll_tests.cpp
+		LIBRARIES engine_editor_session)
+	target_compile_definitions(editor_ragdoll_tests PRIVATE "GAMEENGINE_TEST_RESOURCES_DIR=\"${GAMEENGINE_RESOURCES_DIR}\"")
+	target_include_directories(editor_ragdoll_tests SYSTEM PRIVATE "${GAMEENGINE_RESOURCES_DIR}/glm")
 	target_compile_definitions(editor_panels_tests PRIVATE "GAMEENGINE_TEST_ASSETS_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/Assets\"")
 endif()
 

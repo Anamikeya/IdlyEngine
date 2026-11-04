@@ -66,6 +66,7 @@ struct ViewFlags {
     bool effects = true; // Particle emitters play while editing. Only the preview: it never changes the scene.
     bool animations = true; // Animators whose preview is on play while editing; the same promise.
     bool bones = false;     // Skeletons are drawn over the view.
+    bool ragdolls = false;  // Ragdolls' capsules are drawn over the view: where they would be, or are.
 };
 
 enum class PlayState { Editing, Playing, Paused };
@@ -147,6 +148,11 @@ class EditorSession {
     struct RigEntry { std::weak_ptr<const assets::MeshData> model; std::shared_ptr<const animation::Rig> rig; std::string problem; };
     struct ClipEntry { std::weak_ptr<const assets::MeshData> model, source; std::shared_ptr<const animation::ClipSet> clips; std::string problem; };
     mutable std::map<const assets::MeshData *, RigEntry> rigs_;
+    // The flesh of each joint of a model, for sizing ragdolls: the box, in the joint's own space, of the vertices it
+    // moves more than any other joint does. Kept and dropped like rigs.
+    struct FleshEntry { std::weak_ptr<const assets::MeshData> model; std::vector<assets::Bounds> boxes; std::vector<char> any; };
+    mutable std::map<const assets::MeshData *, FleshEntry> flesh_;
+    const FleshEntry &flesh_for(const std::shared_ptr<const assets::MeshData> &) const;
     mutable std::map<std::pair<const assets::MeshData *, const assets::MeshData *>, ClipEntry> clip_sets_;
     std::deque<animation::AnimationEvent> recent_events_;
     // One ordered history of named steps. A scene step's data lives in the command bus; a material edit carries its own.
@@ -511,6 +517,31 @@ public:
     Result<void> set_clip_events(assets::AssetId model, std::vector<assets::ClipEvent> events);
     // Gives the entity an animator playing `clip` of its own model, or changes its clip. One undo step.
     Result<commands::Receipt> assign_clip(EntityId, const std::string &clip);
+    // The pose the entity is drawn with now: the host's, else its ragdoll's, else its animator's. Null: its rest pose.
+    renderer::Pose shown_pose(EntityId) const;
+
+    // ---- Ragdolls (Milestone 5, D7): the run's physics holds the bodies; the scene keeps only the Ragdoll settings ----
+    // What the entity's Ragdoll would build from its model's skeleton and skin, sized as the entity stands. Empty, with
+    // the reason in `problem`, when it cannot be built.
+    std::optional<physics::RagdollPlan> ragdoll_plan(EntityId, std::string *problem = nullptr) const;
+    // Only while running: turns the entity into a ragdoll from the pose it is in, moving as that pose and its body were.
+    // An impulse at a world point (a shot) lands on the part nearest it. The entity's own body sits out meanwhile.
+    Result<void> start_ragdoll(EntityId, std::optional<std::pair<Vec3, Vec3>> impulse_at = std::nullopt);
+    // Removes its bodies: the animator poses it again, and its own body comes back.
+    Result<void> stop_ragdoll(EntityId);
+    bool ragdolled(EntityId) const;
+    // Entities lying as ragdolls now, ascending.
+    std::vector<EntityId> ragdolled_entities() const;
+    // Outlines of ragdolls, as Show Ragdolls draws them: the capsules at the entity's pose, which is where its bodies
+    // are once it falls. `only` keeps one entity's.
+    std::vector<physics::DebugLine> ragdoll_lines(EntityId only = 0) const;
+
+    // ---- Debris (D11): loose pieces in the run's physics, at most physics::max_debris, gone once they settle ----
+    // Only while running: a piece that looks like `look` (its model and material, at its scale) with a box around it,
+    // starting at a point, turned and moving as given.
+    Result<std::uint64_t> spawn_debris(EntityId look, const Vec3 &position, const Quaternion &rotation, const Vec3 &velocity,
+                                       const Vec3 &spin = {}, double lifetime = 10);
+    std::vector<physics::DebrisState> debris() const;
 
     // ---- Lighting ----
     // The environment in force for the shown scene: the first by entity ID, or the defaults.
@@ -545,6 +576,15 @@ private:
     // nothing is attached. `records` finds entities, so a frame can use its snapshot.
     std::array<double, 16> attachment_correction(EntityId id, const std::function<std::optional<EntityRecord>(EntityId)> &records) const;
     void keep_events(std::vector<animation::AnimationEvent> events);
+    // An entity's ragdoll as the builder reads it: its model, skeleton and plan, and where it is drawn.
+    struct RagdollBuild {
+        std::shared_ptr<const assets::MeshData> model;
+        physics::RagdollPlan plan;
+        std::array<double, 16> world{};
+    };
+    std::optional<RagdollBuild> ragdoll_build(EntityId, std::string &problem) const;
+    // Poses the run's ragdolls from their bodies; tick() calls it after physics.
+    void pose_ragdolls();
 };
 // Keeps a transaction open for a scope. Nested guards join the outer one.
 class ScopedTransaction {

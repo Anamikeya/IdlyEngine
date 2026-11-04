@@ -207,6 +207,7 @@ void EditorUI::bind_console() {
     flag("r.effects", "Play particle emitters while editing.", session.view_flags.effects);
     flag("r.animations", "Play animators whose preview is on while editing.", session.view_flags.animations);
     flag("view.bones", "Draw the skeletons of skinned and animated models.", session.view_flags.bones);
+    flag("view.ragdolls", "Draw ragdolls' capsules: where the bodies would be, or are.", session.view_flags.ragdolls);
     flag("view.grid", "Draw the grid.", show_grid);
     flag("view.collision", "Draw collider outlines.", show_colliders);
     flag("view.markers", "Draw the markers for lights and cameras.", show_markers);

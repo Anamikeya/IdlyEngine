@@ -276,6 +276,7 @@ void EditorUI::bind_commands() {
     toggle("Viewport.ShowAnimations", session.view_flags.animations);
     bind("Viewport.RestartAnimations", [this] { session.restart_animations(); });
     toggle("Viewport.ShowBones", session.view_flags.bones);
+    toggle("Viewport.ShowRagdolls", session.view_flags.ragdolls);
     bind("Viewport.GameView", [this] { game_view = !game_view; }, {}, [this] { return game_view; });
     bind("Viewport.Maximize", [this] { viewport_maximized = !viewport_maximized; }, {}, [this] { return viewport_maximized; });
     constexpr const char *views[] = {"Viewport.Perspective", "Viewport.Front", "Viewport.Top", "Viewport.Side"};
@@ -339,6 +340,13 @@ void EditorUI::bind_commands() {
     bind("Play.Pause", [this] { report(session.pause(), "Paused"); }, [this] { return session.play_state() == PlayState::Playing; });
     bind("Play.Step", [this] { report(session.step(), "Stepped one tick"); }, [this] { return session.play_state() == PlayState::Paused; });
     bind("Play.Stop", [this] { stop_play(); }, [this] { return playing(); });
+    bind("Play.Ragdoll", [this] { ragdoll_selected(); }, [this] {
+        return playing() && std::ranges::any_of(session.selected().items(), [this](EntityId id) { const auto r = session.scene().inspect(id); return r && r->components.ragdoll; });
+    });
+    bind("Play.DropDebris", [this] { drop_debris(); }, [this] {
+        const auto r = session.scene().inspect(session.selection());
+        return playing() && r && r->components.mesh;
+    });
     // ---- Window ----
     bind("Window.UndoHistory", [this] { show_history = !show_history; }, {}, [this] { return show_history; });
     bind("Window.KeyboardShortcuts", [this] { show_shortcuts = !show_shortcuts; }, {}, [this] { return show_shortcuts; });
@@ -446,7 +454,7 @@ void EditorUI::main_menu() {
         ImGui::Separator();
         for (const auto *id : {"Viewport.Lit", "Viewport.Wireframe", "Viewport.Unlit"}) command_item(id);
         ImGui::Separator();
-        for (const auto *id : {"Viewport.ShowGrid", "Viewport.ToggleColliders", "Viewport.ShowMarkers", "Viewport.ShowSkybox", "Viewport.ShowShadows", "Viewport.ShowAmbientOcclusion", "Viewport.ShowBloom", "Viewport.ShowEffects", "Viewport.ShowAnimations", "Viewport.ShowBones"}) command_item(id);
+        for (const auto *id : {"Viewport.ShowGrid", "Viewport.ToggleColliders", "Viewport.ShowMarkers", "Viewport.ShowSkybox", "Viewport.ShowShadows", "Viewport.ShowAmbientOcclusion", "Viewport.ShowBloom", "Viewport.ShowEffects", "Viewport.ShowAnimations", "Viewport.ShowBones", "Viewport.ShowRagdolls"}) command_item(id);
         for (const auto *id : {"Viewport.RestartEffects", "Viewport.RestartAnimations"}) command_item(id);
         if (ImGui::BeginMenu("Bookmarks")) {
             for (int slot = 0; slot < 10; ++slot) command_item(("Bookmark.Go" + std::to_string(slot)).c_str());
@@ -470,6 +478,8 @@ void EditorUI::main_menu() {
         for (const auto *id : {"Play.Play", "Play.Simulate", "Play.Pause", "Play.Step", "Play.Stop"}) command_item(id);
         ImGui::Separator();
         for (const auto *id : {"Play.Eject", "Play.FreeMouse", "Play.Escape"}) command_item(id);
+        ImGui::Separator();
+        for (const auto *id : {"Play.Ragdoll", "Play.DropDebris"}) command_item(id);
         ImGui::EndMenu();
     }
     const bool open_window = ImGui::BeginMenu("Window");
@@ -685,6 +695,7 @@ void EditorUI::load_settings() {
     session.view_flags.effects = settings.flag("view.effects", session.view_flags.effects);
     session.view_flags.animations = settings.flag("view.animations", session.view_flags.animations);
     session.view_flags.bones = settings.flag("view.bones", session.view_flags.bones);
+    session.view_flags.ragdolls = settings.flag("view.ragdolls", session.view_flags.ragdolls);
     constexpr const char *panel_keys[] = {"toolbar", "hierarchy", "inspector", "lighting", "material", "assets", "console", "message_log", "effect", "animation"};
     const auto flags = panel_flags();
     for (std::size_t i = 0; i < flags.size(); ++i) *flags[i] = settings.flag(std::string("panel.") + panel_keys[i], *flags[i]);
@@ -726,6 +737,7 @@ void EditorUI::save_settings() {
     settings.set("view.effects", session.view_flags.effects);
     settings.set("view.animations", session.view_flags.animations);
     settings.set("view.bones", session.view_flags.bones);
+    settings.set("view.ragdolls", session.view_flags.ragdolls);
     constexpr const char *panel_keys[] = {"toolbar", "hierarchy", "inspector", "lighting", "material", "assets", "console", "message_log", "effect", "animation"};
     const auto flags = panel_flags();
     saved_panels.clear();
@@ -762,7 +774,57 @@ std::string EditorUI::log_fields() const {
            " primary_scale=" + primary_scale + " primary_rot=" + primary_rot +
            " gizmo_typed=" + (gizmo_entry.active() ? gizmo_entry.text() : std::string("-")) + " tooltip=" + tooltip_for_log(shown_tooltip) +
            " thumbnails=" + std::to_string(std::ranges::count_if(thumbnails, [this](const auto &entry) { return renderer.thumbnail(entry.first.value).texture != 0; })) +
-           " selected_asset=" + assets::to_string(selected_asset) + effect_fields() + animation_fields();
+           " selected_asset=" + assets::to_string(selected_asset) + effect_fields() + animation_fields() + ragdoll_fields();
+}
+// Ragdolls and debris for real-input runs: the selected entity's Ragdoll and plan, what lies as a ragdoll, how high the
+// selected skeleton reaches, and the pieces of debris.
+std::string EditorUI::ragdoll_fields() const {
+    const auto id = session.selection();
+    const auto record = session.scene().inspect(id);
+    const auto &ragdoll = record ? record->components.ragdoll : std::nullopt;
+    std::size_t with = 0;
+    for (const auto &e : session.scene().snapshot().entities) with += e.components.ragdoll.has_value();
+    const auto plan = ragdoll ? session.ragdoll_plan(id) : std::nullopt;
+    double top = -1e9;
+    for (const auto &line : session.bone_lines(id)) top = std::max({top, line.from.y, line.to.y});
+    char height[32] = "-";
+    if (top > -1e9) std::snprintf(height, sizeof height, "%.3f", top);
+    const auto d = session.physics_bridge().diagnostics();
+    return " ragdolls=" + std::to_string(with) + " ragdoll_trigger=" + (ragdoll ? std::to_string(int(ragdoll->trigger)) : std::string("-")) +
+           " ragdoll_bones=" + (ragdoll ? std::to_string(ragdoll->bones.size()) : std::string("-")) +
+           " ragdoll_bodies=" + (plan ? std::to_string(plan->bodies.size()) : std::string("-")) +
+           " ragdolled=" + std::to_string(session.ragdolled_entities().size()) + " ragdoll_parts=" + std::to_string(d.ragdoll_parts) +
+           " skeleton_top=" + height + " debris=" + std::to_string(d.debris) + " debris_spawned=" + std::to_string(d.debris_spawned) +
+           " ragdolls_on=" + std::to_string(session.view_flags.ragdolls ? 1 : 0);
+}
+void EditorUI::ragdoll_selected() {
+    std::size_t fell = 0, stood = 0;
+    for (const auto id : session.selected().items()) {
+        const auto record = session.scene().inspect(id);
+        if (!record || !record->components.ragdoll) continue;
+        if (session.ragdolled(id)) {
+            if (session.stop_ragdoll(id)) ++stood;
+        } else if (const auto started = session.start_ragdoll(id); started) ++fell;
+        else log_error(started.error().message);
+    }
+    if (fell) log(std::to_string(fell) + (fell == 1 ? " entity falls" : " entities fall") + " as a ragdoll");
+    if (stood) log(std::to_string(stood) + (stood == 1 ? " entity stands" : " entities stand") + " up again");
+}
+void EditorUI::drop_debris() {
+    const auto id = session.selection();
+    const auto world = session.drawn_world(id);
+    if (!world) return;
+    const auto &m = world->matrix;
+    // Eight pieces in a ring a metre above it, flung outwards and turning, the same way every time.
+    std::size_t dropped = 0;
+    for (int i = 0; i < 8; ++i) {
+        const double angle = i * 0.785398163397448, c = std::cos(angle), s = std::sin(angle);
+        const auto piece = session.spawn_debris(id, {m[12] + 0.3 * c, m[13] + 1.0 + 0.1 * (i % 3), m[14] + 0.3 * s}, {0, std::sin(angle / 2), 0, std::cos(angle / 2)},
+                                                {1.5 * c, 2.0, 1.5 * s}, {3.0 * s, 4.0, 3.0 * c});
+        if (piece) ++dropped;
+        else { log_error(piece.error().message); break; }
+    }
+    if (dropped) log("Dropped " + std::to_string(dropped) + " pieces of debris");
 }
 // Animation for real-input runs: the selected animator's clip and time, the shown animators, and the model's events.
 std::string EditorUI::animation_fields() const {

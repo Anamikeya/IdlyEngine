@@ -323,6 +323,12 @@ struct EditorUI {
     // Lines between joints of the shown skeletons (View > Show Bones).
     void bone_overlay(ImVec2 origin, ImVec2 size);
     std::string animation_fields() const;
+    // Capsules of the shown ragdolls (View > Show Ragdolls).
+    void ragdoll_overlay(ImVec2 origin, ImVec2 size);
+    std::string ragdoll_fields() const;
+    // Play > Ragdoll Selected and Drop Debris.
+    void ragdoll_selected();
+    void drop_debris();
     // Puts physics problems in the Console once, when they appear.
     void report_physics();
     // Puts asset problems in the Console once, when they appear.

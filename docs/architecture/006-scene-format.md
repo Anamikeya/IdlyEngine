@@ -19,10 +19,11 @@ COMPONENTS <component_count>
 - `next_id`: the next stable entity ID the scene will allocate. IDs are never recycled.
 - `ENTITY`: stable ID, parent ID (0 = root), quoted name (`\"` and `\\` escapes, at most 256 bytes, no control
   characters), local translation, rotation quaternion (x, y, z, w) and scale.
-- `COMPONENTS`: at most one `MESH`, `CAMERA`, `LIGHT`, `BODY`, `ENVIRONMENT`, `EMITTER`, `ANIMATOR` and `ATTACH` per entity,
-  and up to 64 `COLLIDER`, 64 `MATSLOT` and 16 `BEHAVIOR` records per entity. The writer sorts them by entity, then `MESH`
-  with its `MATSLOT`s, `CAMERA`, `LIGHT`, `BODY`, `COLLIDER`, `ENVIRONMENT`, `BEHAVIOR`, `EMITTER`, `ANIMATOR`, `ATTACH`; the
-  reader accepts any order, keeping colliders and behaviors in file order and slots sorted.
+- `COMPONENTS`: at most one `MESH`, `CAMERA`, `LIGHT`, `BODY`, `ENVIRONMENT`, `EMITTER`, `ANIMATOR`, `ATTACH` and `RAGDOLL` per
+  entity, and up to 64 `COLLIDER`, 64 `MATSLOT`, 16 `BEHAVIOR` and 256 `RAGBONE` records per entity. The writer sorts them by
+  entity, then `MESH` with its `MATSLOT`s, `CAMERA`, `LIGHT`, `BODY`, `COLLIDER`, `ENVIRONMENT`, `BEHAVIOR`, `EMITTER`, `ANIMATOR`,
+  `ATTACH`, `RAGDOLL` with its `RAGBONE`s; the reader accepts any order, keeping colliders, behaviors and ragdoll bones in file
+  order and slots sorted, except that a `RAGBONE` must come after its entity's `RAGDOLL`.
 
 ### Component records
 
@@ -41,6 +42,8 @@ Colors are sRGB in [0, 1], as picked in the editor. Renderers convert them to li
 | `EMITTER <entity> <effect> <auto_play> <loop> <rate_scale>` | `effect`: asset reference to a `.effect` file, or `-`; flags `0` or `1`; rate scale in [0, 1000] | Plays a particle effect at the entity. `auto_play` starts it by itself in Play and in the editor's preview; otherwise only gameplay fires it. `loop` starts it again when the effect's duration ends. The rate scale multiplies its rate and bursts. Particles are visual only and never change the scene |
 | `ANIMATOR <entity> <clips> "<clip>" <speed> <loop> <start> <preview>` | `clips`: asset reference to a model, or `-`; clip name quoted like an entity name, at most 256 bytes, empty allowed; speed in [−10, 10]; start in [0, 3600] seconds; flags `0` or `1` | Plays a clip of the entity's model (its `MESH` model) from `start`. `clips` names another model whose clips play on the joints with the same names; `-` uses the entity's own model. An empty or unknown clip leaves the model in its rest pose. `preview` plays it in the editor while editing. Poses live in the animation runtime and are never written to a scene |
 | `ATTACH <entity> "<bone>"` | joint name quoted, 1 to 256 bytes | Draws the entity, and what is under it, on that joint of its parent's model: its transform is then relative to the joint. A joint the parent's model does not have leaves it on the parent. Physics and gameplay see the plain parent transform |
+| `RAGDOLL <entity> <trigger> <density> <swing> <twist> <friction>` | `trigger`: `0` on death, `1` on demand, `2` never; density in [1, 100000] kg/m³; swing in [0, 180] and twist in [0, 178] degrees; friction in [0, 10] | Turns the entity's skinned model into jointed bodies that fall from its pose. The bodies are generated from the skeleton when it falls and live in the run's physics, never in a scene: a capsule per long enough bone, sized from the skin, and ball joints that let each bone swing up to `swing` from its rest direction and turn up to `twist` about itself. `friction` is how much the joints resist turning, as a fraction of each part's own weight |
+| `RAGBONE <entity> "<bone>" <body> <radius> <density> <swing> <twist>` | joint name quoted, 1 to 256 bytes, each at most once per entity; `body`: `0` as generated, `1` a body of its own, `2` none; radius in [0, 100] m, `0` sized from the skin; density in [0, 100000], `0` the ragdoll's; swing `-1` or [0, 180], twist `-1` or [0, 178], `-1` the ragdoll's | Settings for one bone of the entity's `RAGDOLL`, over what is generated for it. With `body` none the bone has neither a body nor a capsule and only follows its parent |
 
 An asset reference is `-` (none), or the 16 hex digit asset ID followed by the quoted path inside the project's
 `Assets` folder (at most 1024 bytes, no control characters): `MESH 1 cube 1 1 1 0.65 0 6a1f0c3e9b2d4a01 "models/helmet.glb" - - 1 1`.
@@ -139,7 +142,7 @@ reference or `-` for a soft round dot. `max_particles` is 1 to 20000.
 
 ## Earlier versions
 
-- **Version 6** (Milestone 4): no `EMITTER`, `ANIMATOR` or `ATTACH` record.
+- **Version 6** (Milestone 4): no `EMITTER`, `ANIMATOR`, `ATTACH`, `RAGDOLL` or `RAGBONE` record.
 - **Version 5** (Milestone 3 slice S5): `MESH` has no material or UV scale, `LIGHT` no cones or shadows, `BODY` no rotation
   lock, `COLLIDER` no filter; `MATSLOT`, `ENVIRONMENT`, `BEHAVIOR` and the `spot` type are rejected.
 - **Version 4** (Milestone 3 slice S4): `MESH` has no asset reference fields.

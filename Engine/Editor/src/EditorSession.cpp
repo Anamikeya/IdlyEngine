@@ -151,6 +151,15 @@ struct EditorSession::Runtime {
     std::unique_ptr<gameplay::Game> game; // Holds references to the three above.
     effects::ParticleSystem particles{1}; // The same seed each run, so a run's particles repeat.
     animation::AnimationSystem animation; // Ticks with the game, so what gameplay plays is in step with it.
+    // Entities lying as ragdolls: their bodies are in `physics`; this turns them back into a pose each tick (D7).
+    struct RagdollRun {
+        std::uint64_t id = 0;
+        std::vector<int> parents;                // Of the model's joints.
+        std::vector<animation::JointMatrix> base; // The pose it fell from; joints without a body keep its local transforms.
+        std::vector<glm::dvec3> scales;          // Each joint's world scale when it fell, which bodies do not carry.
+        renderer::Pose pose;
+    };
+    std::map<EntityId, RagdollRun> ragdolls;
     bool paused = false;
     std::uint64_t ticks = 0;
     std::chrono::nanoseconds accumulated{0};
@@ -574,7 +583,8 @@ std::pair<EntityId, std::optional<double>> EditorSession::cast_ray(const rendere
     double nearest = limit;
     EntityId entity = 0;
     for (const auto &object : frame.objects) {
-        if (exclude.contains(object.entity)) continue;
+        // Debris and the like cannot be picked, and do not hide what is behind them.
+        if (exclude.contains(object.entity) || object.entity >= renderer::runtime_object_base) continue;
         const auto inverse = glm::inverse(glm::make_mat4(object.world.matrix.data()));
         // The local ray is not normalized, so t stays a world-space distance along the ray.
         const glm::dvec3 origin(inverse * a), ray(inverse * d);
@@ -642,7 +652,7 @@ std::optional<Vec3> EditorSession::nearest_vertex(const renderer::FrameSnapshot 
         if (squared < best_distance) { best_distance = squared; best = Vec3{at.x, at.y, at.z}; }
     };
     for (const auto &object : frame.objects) {
-        if (exclude.contains(object.entity)) continue;
+        if (exclude.contains(object.entity) || object.entity >= renderer::runtime_object_base) continue;
         const auto world = glm::make_mat4(object.world.matrix.data());
         if (const auto data = resources_.find(object.mesh)) {
             // A model far from the cursor is passed over by its box, so one with many vertices costs nothing unless near.
@@ -973,8 +983,7 @@ std::optional<std::pair<Vec3, Vec3>> EditorSession::local_bounds(EntityId id) co
     if (const auto data = model(mesh.mesh_asset)) {
         auto box = data->bounds;
         // A posed model outlines where its pose puts it.
-        renderer::Pose posed = pose(id);
-        if (!posed) posed = animation().pose(id);
+        const renderer::Pose posed = shown_pose(id);
         if (posed && !data->skin.empty() && posed->size() == data->skin.joints.size())
             box = assets::skinned_bounds(data->skin, assets::skinning_palette(data->skin, *posed));
         const auto low = vector(box.min), high = vector(box.max);
@@ -999,6 +1008,39 @@ Result<renderer::Frame> EditorSession::frame(double aspect) {
     // Animators first, so the meshes below draw this frame's poses.
     auto &animated = animation();
     animated.set_animators(animator_inputs(entities, problem));
+    // How a mesh renderer draws: its model, material and surface, under `key`.
+    const auto look_of = [&](const MeshComponent &look, EntityId key) {
+        const auto *m = &look;
+        renderer::Surface surface{linear(m->color), m->roughness, m->metallic};
+        surface.uv_scale_u = m->uv_scale_u; surface.uv_scale_v = m->uv_scale_v;
+        auto handle = mesh_handle(m->mesh);
+        // The built-in plane has always drawn from both sides; closed shapes cull their back faces.
+        surface.double_sided = m->mesh_asset.empty() && m->mesh == BuiltinMesh::Plane;
+        if (!m->mesh_asset.empty()) {
+            const auto &resolved = resolve(m->mesh_asset, assets::AssetType::Mesh);
+            handle = resolved.mesh.index ? resolved.mesh : renderer::builtin_cube;
+            if (!resolved.mesh.index) { surface.linear_color = placeholder_color; problem(resolved.problem); }
+        }
+        if (!m->texture.empty()) {
+            const auto &resolved = resolve(m->texture, assets::AssetType::Texture);
+            surface.texture = resolved.texture;
+            if (!resolved.texture.index) { surface.linear_color = placeholder_color; problem(resolved.problem); }
+        }
+        renderer::MaterialHandle material = renderer::builtin_lit;
+        if (!m->material.empty()) {
+            const auto &resolved = resolve(m->material, assets::AssetType::Material);
+            if (resolved.material.index) material = resolved.material;
+            else { surface.linear_color = placeholder_color; problem(resolved.problem); }
+            if (!resolved.problem.empty() && resolved.material.index) problem(resolved.problem);
+        }
+        std::vector<renderer::PartMaterial> parts;
+        for (const auto &slot : m->material_slots) {
+            const auto &resolved = resolve(slot.material, assets::AssetType::Material);
+            if (resolved.material.index) parts.push_back({slot.slot, resolved.material});
+            if (!resolved.problem.empty()) problem(resolved.problem);
+        }
+        return renderer::MeshBinding{key, handle, material, true, surface, std::move(parts), nullptr, std::nullopt};
+    };
     // Where things attached to a joint are drawn. Most scenes have none, and then nothing is worked out.
     std::map<EntityId, const EntityRecord *> by_id;
     bool attached = false;
@@ -1016,38 +1058,11 @@ Result<renderer::Frame> EditorSession::frame(double aspect) {
     };
     for (const auto &e : entities) {
         if (const auto &m = e.components.mesh) {
-            renderer::Surface surface{linear(m->color), m->roughness, m->metallic};
-            surface.uv_scale_u = m->uv_scale_u; surface.uv_scale_v = m->uv_scale_v;
-            auto handle = mesh_handle(m->mesh);
-            // The built-in plane has always drawn from both sides; closed shapes cull their back faces.
-            surface.double_sided = m->mesh_asset.empty() && m->mesh == BuiltinMesh::Plane;
-            if (!m->mesh_asset.empty()) {
-                const auto &resolved = resolve(m->mesh_asset, assets::AssetType::Mesh);
-                handle = resolved.mesh.index ? resolved.mesh : renderer::builtin_cube;
-                if (!resolved.mesh.index) { surface.linear_color = placeholder_color; problem(resolved.problem); }
-            }
-            if (!m->texture.empty()) {
-                const auto &resolved = resolve(m->texture, assets::AssetType::Texture);
-                surface.texture = resolved.texture;
-                if (!resolved.texture.index) { surface.linear_color = placeholder_color; problem(resolved.problem); }
-            }
-            renderer::MaterialHandle material = renderer::builtin_lit;
-            if (!m->material.empty()) {
-                const auto &resolved = resolve(m->material, assets::AssetType::Material);
-                if (resolved.material.index) material = resolved.material;
-                else { surface.linear_color = placeholder_color; problem(resolved.problem); }
-                if (!resolved.problem.empty() && resolved.material.index) problem(resolved.problem);
-            }
-            std::vector<renderer::PartMaterial> parts;
-            for (const auto &slot : m->material_slots) {
-                const auto &resolved = resolve(slot.material, assets::AssetType::Material);
-                if (resolved.material.index) parts.push_back({slot.slot, resolved.material});
-                if (!resolved.problem.empty()) problem(resolved.problem);
-            }
-            // A pose the host set wins over the animator's.
-            renderer::Pose posed = pose(e.id);
-            if (!posed) posed = animated.pose(e.id);
-            meshes.push_back({e.id, handle, material, runtime_ || !hidden(e.id), surface, std::move(parts), std::move(posed), placed_on_joint(e.id)});
+            auto binding = look_of(*m, e.id);
+            binding.visible = runtime_ || !hidden(e.id);
+            binding.pose = shown_pose(e.id);
+            binding.world = placed_on_joint(e.id);
+            meshes.push_back(std::move(binding));
         }
         if (const auto &l = e.components.light; l && (runtime_ || !hidden(e.id))) {
             const auto kind = l->type == LightType::Point ? renderer::LightKind::Point : l->type == LightType::Spot ? renderer::LightKind::Spot : renderer::LightKind::Directional;
@@ -1055,6 +1070,22 @@ Result<renderer::Frame> EditorSession::frame(double aspect) {
                               placed_on_joint(e.id)});
         }
     }
+    // Debris looks like the entity it was made from, at that entity's scale, wherever its body is (D11).
+    if (runtime_)
+        for (const auto &piece : runtime_->physics->debris()) {
+            const auto look = by_id.find(piece.look);
+            if (look == by_id.end() || !look->second->components.mesh) continue;
+            const auto world = shown.world_transform(piece.look);
+            if (!world) continue;
+            const glm::dmat4 m = glm::make_mat4(world->matrix.data());
+            const glm::dvec3 scale(glm::length(glm::dvec3(m[0])), glm::length(glm::dvec3(m[1])), glm::length(glm::dvec3(m[2])));
+            const auto &p = piece.pose;
+            const glm::dmat4 at = glm::translate(glm::dmat4(1), glm::dvec3(p.position.x, p.position.y, p.position.z)) *
+                                  glm::mat4_cast(glm::dquat(p.rotation.w, p.rotation.x, p.rotation.y, p.rotation.z)) * glm::scale(glm::dmat4(1), scale);
+            auto binding = look_of(*look->second->components.mesh, renderer::runtime_object_base + piece.id);
+            binding.world = copy(at);
+            meshes.push_back(std::move(binding));
+        }
     const EnvironmentComponent authored = environment();
     renderer::RenderEnvironment environment_settings;
     environment_settings.source = authored.source;
@@ -1274,6 +1305,7 @@ void EditorSession::tick() {
     // Poses advance with the tick, so a run's animation is the same however the frames fall.
     r.animation.update(std::chrono::duration<double>(fixed_step).count());
     keep_events(r.animation.take_events());
+    pose_ragdolls();
     if (r.game) {
         r.game->post_physics();
         // One-shot effects the game asked for, from the emitter on their source entity. Visual only.
@@ -1477,6 +1509,7 @@ std::size_t EditorSession::release_unused_assets() {
     // Skeletons and clips of models whose data is now gone.
     std::erase_if(clip_sets_, [](const auto &entry) { return entry.second.model.expired() || entry.second.source.expired(); });
     std::erase_if(rigs_, [](const auto &entry) { return entry.second.model.expired(); });
+    std::erase_if(flesh_, [](const auto &entry) { return entry.second.model.expired(); });
     assets_released_ += freed;
     return freed;
 }
@@ -1692,7 +1725,7 @@ Result<void> EditorSession::open_project(const std::filesystem::path &root) {
     std::erase_if(redo_steps_, [](const HistoryStep &step) { return step.material.has_value() || step.effect.has_value() || step.events.has_value(); });
     edit_particles_ = effects::ParticleSystem(1);
     edit_animation_ = animation::AnimationSystem();
-    rigs_.clear(); clip_sets_.clear(); recent_events_.clear();
+    rigs_.clear(); clip_sets_.clear(); flesh_.clear(); recent_events_.clear();
     if (!std::filesystem::is_directory(asset_folder(), ec)) return {};
     auto database = assets::AssetDatabase::open(asset_folder());
     if (!database) return database.error();
@@ -1936,8 +1969,7 @@ std::optional<animation::JointMatrix> EditorSession::joint_model(EntityId id, st
     const auto at = std::find_if(joints.begin(), joints.end(), [&](const assets::Joint &j) { return j.name == joint; });
     if (at == joints.end()) return std::nullopt;
     const auto index = static_cast<std::size_t>(at - joints.begin());
-    renderer::Pose posed = pose(id);
-    if (!posed) posed = animation().pose(id);
+    const renderer::Pose posed = shown_pose(id);
     if (posed && posed->size() == joints.size()) return (*posed)[index];
     std::string why;
     if (const auto skeleton = rig_for(data, why)) return (*skeleton->rest_pose())[index];
@@ -1980,8 +2012,7 @@ std::vector<EditorSession::BoneLine> EditorSession::bone_lines(EntityId only) co
         if ((only && e.id != only) || !e.components.mesh || (!runtime_ && hidden(e.id))) continue;
         const auto data = model(e.components.mesh->mesh_asset);
         if (!data || data->skin.empty()) continue;
-        renderer::Pose joints = pose(e.id);
-        if (!joints) joints = animation().pose(e.id);
+        renderer::Pose joints = shown_pose(e.id);
         if (!joints || joints->size() != data->skin.joints.size()) {
             std::string why;
             const auto skeleton = rig_for(data, why);
@@ -2030,5 +2061,259 @@ Result<commands::Receipt> EditorSession::assign_clip(EntityId id, const std::str
     auto animator = record->components.animator.value_or(AnimatorComponent{});
     animator.clip = clip;
     return execute(commands::SetAnimator{id, animator}, clip.empty() ? "Clear Clip" : "Play " + clip);
+}
+renderer::Pose EditorSession::shown_pose(EntityId id) const {
+    if (auto host = pose(id)) return host;
+    if (runtime_)
+        if (const auto run = runtime_->ragdolls.find(id); run != runtime_->ragdolls.end() && run->second.pose) return run->second.pose;
+    return animation().pose(id);
+}
+// ---- Ragdolls and debris (D7, D11) ----
+namespace {
+// A matrix as a rigid pose and the length of each axis.
+struct Rigid {
+    physics::Pose pose;
+    glm::dvec3 scale{1};
+};
+Rigid rigid(const glm::dmat4 &m) {
+    Rigid out;
+    out.scale = {glm::length(glm::dvec3(m[0])), glm::length(glm::dvec3(m[1])), glm::length(glm::dvec3(m[2]))};
+    const glm::dmat3 r(glm::dvec3(m[0]) / out.scale.x, glm::dvec3(m[1]) / out.scale.y, glm::dvec3(m[2]) / out.scale.z);
+    const glm::dquat q = glm::normalize(glm::quat_cast(r));
+    out.pose.position = {float(m[3].x), float(m[3].y), float(m[3].z)};
+    out.pose.rotation = {float(q.x), float(q.y), float(q.z), float(q.w)};
+    return out;
+}
+glm::dmat4 widen(const animation::JointMatrix &m) { return glm::dmat4(glm::make_mat4(m.data())); }
+physics::RagdollSettings ragdoll_settings(const RagdollComponent &r) {
+    physics::RagdollSettings s;
+    s.density = float(r.density);
+    s.cone = float(glm::radians(r.swing_degrees));
+    s.twist = float(glm::radians(r.twist_degrees));
+    s.joint_friction = float(r.joint_friction);
+    for (const auto &b : r.bones)
+        s.bones.push_back({b.bone, b.body == RagdollBody::Own ? 1 : b.body == RagdollBody::None ? 0 : -1, float(b.radius), float(b.density),
+                           b.swing_degrees < 0 ? -1.0f : float(glm::radians(b.swing_degrees)),
+                           b.twist_degrees < 0 ? -1.0f : float(glm::radians(b.twist_degrees))});
+    return s;
+}
+}
+std::optional<EditorSession::RagdollBuild> EditorSession::ragdoll_build(EntityId id, std::string &problem) const {
+    problem.clear();
+    const auto record = scene().inspect(id);
+    if (!record || !record->components.ragdoll) { problem = "it has no ragdoll"; return std::nullopt; }
+    const auto say = [&](const std::string &why) -> std::optional<RagdollBuild> {
+        problem = "Ragdoll on '" + record->name + "' cannot be built: " + why;
+        return std::nullopt;
+    };
+    const auto &m = record->components.mesh;
+    if (!m || m->mesh_asset.empty()) return say("its entity draws no model");
+    const auto data = model(m->mesh_asset);
+    if (!data) return say("its model cannot be loaded");
+    if (data->skin.empty()) return say("model '" + m->mesh_asset.path + "' has no skeleton");
+    const auto drawn = drawn_world(id);
+    if (!drawn) return say("it has no place in the world");
+    const glm::dmat4 world = glm::make_mat4(drawn->matrix.data());
+    const auto split = rigid(world);
+    const double s = split.scale.x;
+    if (!(s > 1e-9) || std::abs(split.scale.y - s) > 1e-4 * s || std::abs(split.scale.z - s) > 1e-4 * s)
+        return say("its scale must be the same on every axis");
+    // The skeleton at rest as it stands in the world, in meters, with the box of the skin each joint moves.
+    const auto rest = assets::rest_pose(data->skin);
+    const auto &flesh = flesh_for(data);
+    std::vector<physics::RagdollJoint> skeleton;
+    skeleton.reserve(rest.size());
+    for (std::size_t j = 0; j < rest.size(); ++j) {
+        const auto joint = rigid(glm::scale(glm::dmat4(1), glm::dvec3(s)) * widen(rest[j]));
+        physics::RagdollJoint out;
+        out.name = data->skin.joints[j].name;
+        out.parent = data->skin.joints[j].parent;
+        out.rest = joint.pose;
+        if (flesh.any[j]) {
+            out.skinned = true;
+            // The joint's own space is scaled as the joint is; the builder wants meters.
+            const auto &box = flesh.boxes[j];
+            const glm::dvec3 lo = glm::dvec3(box.min[0], box.min[1], box.min[2]) * joint.scale.x;
+            const glm::dvec3 hi = glm::dvec3(box.max[0], box.max[1], box.max[2]) * joint.scale.x;
+            out.flesh_min = {float(lo.x), float(lo.y), float(lo.z)};
+            out.flesh_max = {float(hi.x), float(hi.y), float(hi.z)};
+        }
+        skeleton.push_back(std::move(out));
+    }
+    RagdollBuild build;
+    build.model = data;
+    build.plan = physics::plan_ragdoll(skeleton, ragdoll_settings(*record->components.ragdoll));
+    if (!build.plan.ok()) return say(build.plan.problem);
+    std::copy_n(glm::value_ptr(world), 16, build.world.begin());
+    return build;
+}
+const EditorSession::FleshEntry &EditorSession::flesh_for(const std::shared_ptr<const assets::MeshData> &data) const {
+    auto found = flesh_.find(data.get());
+    // Freed data's address can come back for other data.
+    if (found != flesh_.end() && found->second.model.lock() != data) { flesh_.erase(found); found = flesh_.end(); }
+    if (found != flesh_.end()) return found->second;
+    FleshEntry entry{data, std::vector<assets::Bounds>(data->skin.joints.size()), std::vector<char>(data->skin.joints.size(), 0)};
+    const auto &skin = data->skin;
+    for (std::size_t v = 0; v < data->vertices.size() && v < skin.influences.size(); ++v) {
+        // The strongest influence comes first.
+        const auto b = skin.influences[v].binding[0];
+        if (b >= skin.bindings.size() || skin.bindings[b].joint < 0) continue;
+        const auto j = std::size_t(skin.bindings[b].joint);
+        if (j >= entry.boxes.size()) continue;
+        const auto p = assets::transform_point(skin.bindings[b].inverse_bind, data->vertices[v].position);
+        auto &box = entry.boxes[j];
+        if (!entry.any[j]) { box.min = box.max = p; entry.any[j] = 1; continue; }
+        for (int k = 0; k < 3; ++k) { box.min[k] = std::min(box.min[k], p[k]); box.max[k] = std::max(box.max[k], p[k]); }
+    }
+    return flesh_.emplace(data.get(), std::move(entry)).first->second;
+}
+std::optional<physics::RagdollPlan> EditorSession::ragdoll_plan(EntityId id, std::string *problem) const {
+    std::string why;
+    auto build = ragdoll_build(id, why);
+    if (problem) *problem = why;
+    if (!build) return std::nullopt;
+    return std::move(build->plan);
+}
+Result<void> EditorSession::start_ragdoll(EntityId id, std::optional<std::pair<Vec3, Vec3>> impulse_at) {
+    if (!runtime_) return fail(ErrorCode::InvalidState, "Ragdolls fall only while the scene runs");
+    if (runtime_->ragdolls.contains(id)) return {};
+    std::string why;
+    auto build = ragdoll_build(id, why);
+    if (!build) return fail(ErrorCode::InvalidArgument, why);
+    const auto &skin = build->model->skin;
+    const std::size_t n = skin.joints.size();
+    // The pose it is in, and the one a tick before: their difference is how it was moving.
+    renderer::Pose now = shown_pose(id);
+    if (!now || now->size() != n) {
+        std::string unused;
+        const auto skeleton = rig_for(build->model, unused);
+        if (!skeleton) return fail(ErrorCode::InvalidArgument, "Its model has no usable skeleton");
+        now = skeleton->rest_pose();
+    }
+    renderer::Pose before = pose(id) ? nullptr : runtime_->animation.previous_pose(id);
+    if (!before || before->size() != n) before = now;
+    const glm::dmat4 world = glm::make_mat4(build->world.data());
+    std::vector<physics::Pose> at_now(n), at_before(n);
+    Runtime::RagdollRun run;
+    run.scales.resize(n);
+    for (std::size_t j = 0; j < n; ++j) {
+        const auto placed = rigid(world * widen((*now)[j]));
+        at_now[j] = placed.pose;
+        run.scales[j] = placed.scale;
+        at_before[j] = rigid(world * widen((*before)[j])).pose;
+        run.parents.push_back(skin.joints[j].parent);
+    }
+    auto desc = physics::place_ragdoll(build->plan, at_now, at_before, float(std::chrono::duration<double>(fixed_step).count()));
+    if (desc.parts.empty()) return fail(ErrorCode::InvalidArgument, "Its pose is not usable");
+    // A character carried by its own body keeps that body's speed.
+    if (const auto body = runtime_->physics->body_state(id); body && body->type != physics::BodyType::Static)
+        for (auto &part : desc.parts) {
+            part.linear_velocity.x += body->linear_velocity.x;
+            part.linear_velocity.y += body->linear_velocity.y;
+            part.linear_velocity.z += body->linear_velocity.z;
+        }
+    auto made = runtime_->physics->create_ragdoll(id, desc);
+    if (!made) return made.error();
+    if (impulse_at) {
+        const auto &[impulse, point] = *impulse_at;
+        runtime_->physics->apply_ragdoll_impulse(made.value(), {float(impulse.x), float(impulse.y), float(impulse.z)},
+                                                 {float(point.x), float(point.y), float(point.z)});
+    }
+    run.id = made.value();
+    run.base = *now;
+    run.pose = now;
+    runtime_->ragdolls[id] = std::move(run);
+    return {};
+}
+Result<void> EditorSession::stop_ragdoll(EntityId id) {
+    if (!runtime_) return fail(ErrorCode::InvalidState, "Ragdolls fall only while the scene runs");
+    const auto run = runtime_->ragdolls.find(id);
+    if (run == runtime_->ragdolls.end()) return fail(ErrorCode::NotFound, "It is not a ragdoll");
+    runtime_->physics->destroy_ragdoll(run->second.id);
+    runtime_->ragdolls.erase(run);
+    return {};
+}
+bool EditorSession::ragdolled(EntityId id) const { return runtime_ && runtime_->ragdolls.contains(id); }
+std::vector<EntityId> EditorSession::ragdolled_entities() const {
+    std::vector<EntityId> ids;
+    if (runtime_)
+        for (const auto &[id, run] : runtime_->ragdolls) { (void)run; ids.push_back(id); }
+    return ids;
+}
+void EditorSession::pose_ragdolls() {
+    auto &r = *runtime_;
+    for (auto it = r.ragdolls.begin(); it != r.ragdolls.end();) {
+        auto &run = it->second;
+        const auto state = r.physics->ragdoll(run.id);
+        const auto world = r.scene.world_transform(it->first);
+        // Its entity is gone, and physics took the bodies with it.
+        if (!state || !world) { it = r.ragdolls.erase(it); continue; }
+        // Each body puts its joint in the world; the model space is the entity's.
+        const glm::dmat4 to_model = glm::inverse(glm::make_mat4(drawn_world(it->first).value_or(*world).matrix.data()));
+        std::vector<std::optional<animation::JointMatrix>> placed(run.base.size());
+        for (const auto &part : state->parts) {
+            const auto j = std::size_t(part.bone);
+            if (j >= placed.size()) continue;
+            const auto &p = part.pose;
+            const glm::dmat4 at = glm::translate(glm::dmat4(1), glm::dvec3(p.position.x, p.position.y, p.position.z)) *
+                                  glm::mat4_cast(glm::dquat(p.rotation.w, p.rotation.x, p.rotation.y, p.rotation.z)) * glm::scale(glm::dmat4(1), run.scales[j]);
+            const glm::mat4 model(to_model * at);
+            animation::JointMatrix m{};
+            std::copy_n(glm::value_ptr(model), 16, m.begin());
+            placed[j] = m;
+        }
+        if (auto posed = animation::place_joints(run.parents, run.base, placed)) run.pose = std::move(posed);
+        ++it;
+    }
+}
+std::vector<physics::DebugLine> EditorSession::ragdoll_lines(EntityId only) const {
+    std::vector<physics::DebugLine> lines;
+    for (const auto &e : scene().snapshot().entities) {
+        if ((only && e.id != only) || !e.components.ragdoll || (!runtime_ && hidden(e.id))) continue;
+        std::string why;
+        const auto build = ragdoll_build(e.id, why);
+        if (!build) continue;
+        const std::size_t n = build->model->skin.joints.size();
+        renderer::Pose joints = shown_pose(e.id);
+        if (!joints || joints->size() != n) {
+            const auto skeleton = rig_for(build->model, why);
+            if (!skeleton) continue;
+            joints = skeleton->rest_pose();
+        }
+        const glm::dmat4 world = glm::make_mat4(build->world.data());
+        for (const auto &body : build->plan.bodies) {
+            const auto at = rigid(world * widen((*joints)[std::size_t(body.joint)])).pose;
+            physics::append_shape_lines(lines, body.capsule, at, e.id, physics::DebugCategory::Ragdoll, 12);
+            for (const auto &more : body.more) physics::append_shape_lines(lines, more, at, e.id, physics::DebugCategory::Ragdoll, 12);
+        }
+    }
+    return lines;
+}
+Result<std::uint64_t> EditorSession::spawn_debris(EntityId look, const Vec3 &position, const Quaternion &rotation, const Vec3 &velocity,
+                                                  const Vec3 &spin, double lifetime) {
+    if (!runtime_) return fail(ErrorCode::InvalidState, "Debris falls only while the scene runs");
+    const auto record = scene().inspect(look);
+    if (!record || !record->components.mesh) return fail(ErrorCode::InvalidArgument, "Debris looks like an entity with a mesh renderer");
+    const auto world = scene().world_transform(look);
+    const auto bounds = local_bounds(look);
+    if (!world || !bounds) return fail(ErrorCode::InvalidArgument, "That entity cannot be drawn as debris");
+    // A box around how it looks, at its scale.
+    const glm::dvec3 scale = rigid(glm::make_mat4(world->matrix.data())).scale;
+    const glm::dvec3 lo(bounds->first.x, bounds->first.y, bounds->first.z), hi(bounds->second.x, bounds->second.y, bounds->second.z);
+    const glm::dvec3 half = glm::max((hi - lo) * 0.5 * scale, glm::dvec3(0.005)), center = (hi + lo) * 0.5 * scale;
+    physics::Debris piece;
+    piece.look = look;
+    piece.pose.position = {float(position.x), float(position.y), float(position.z)};
+    piece.pose.rotation = {float(rotation.x), float(rotation.y), float(rotation.z), float(rotation.w)};
+    piece.linear_velocity = {float(velocity.x), float(velocity.y), float(velocity.z)};
+    piece.angular_velocity = {float(spin.x), float(spin.y), float(spin.z)};
+    piece.collider.shape = physics::BoxShape{{float(half.x), float(half.y), float(half.z)}, {{float(center.x), float(center.y), float(center.z)}, {}}};
+    piece.collider.density = record->components.colliders.empty() ? 1000.0f : float(record->components.colliders.front().density);
+    piece.collider.restitution = 0.1f;
+    piece.lifetime = lifetime;
+    return runtime_->physics->spawn_debris(piece);
+}
+std::vector<physics::DebrisState> EditorSession::debris() const {
+    return runtime_ ? runtime_->physics->debris() : std::vector<physics::DebrisState>{};
 }
 } // namespace engine::editor
