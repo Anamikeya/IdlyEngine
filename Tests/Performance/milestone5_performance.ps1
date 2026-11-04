@@ -45,10 +45,14 @@ foreach ($scene in @('physics_shooter', 'stress_test')) {
     $clock = [Diagnostics.Stopwatch]::StartNew()
     $process = Start-Process -FilePath $Editor -ArgumentList $arguments -WorkingDirectory $Work -PassThru -Wait `
         -RedirectStandardOutput (Join-Path $Output "editor_$scene.out.txt") -RedirectStandardError (Join-Path $Output "editor_$scene.err.txt")
-    # Idle since before the editor started: nobody touched the machine during the run.
+    # Idle since before the editor started: nobody touched the machine during the run. A lock screen changes what is
+    # presented, so a run that ends locked is marked too.
     $idle = [Win32Input]::IdleMilliseconds() -ge $clock.ElapsedMilliseconds
+    $locked = Test-DesktopLocked
     if ($process.ExitCode -ne 0 -or -not (Test-Path $log)) { throw "The $scene run failed (exit $($process.ExitCode)); see editor_$scene.err.txt" }
     Add-Content -Encoding ascii $log "desktop_idle_throughout $(if ($idle) { 1 } else { 0 })"
+    Add-Content -Encoding ascii $log "desktop_locked_at_end $(if ($locked) { 1 } else { 0 })"
+    if ($locked) { $idle = $false }
     $values = @{}
     foreach ($line in Get-Content $log) { $k, $v = $line -split ' ', 2; $values[$k] = $v }
     $line = '{0,-16} fps {1,6:N1} mean, {2,6:N1} at p99 | frame {3:N2} ms mean, {4:N2} ms p99 | particles {5} peak | skinned {6} | animators {7} | idle {8}' -f $scene,
