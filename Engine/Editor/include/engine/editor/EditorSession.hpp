@@ -71,10 +71,11 @@ struct ViewFlags {
 
 enum class PlayState { Editing, Playing, Paused };
 
-// Time spent in fixed ticks, since the session began.
+// Time spent in fixed ticks, since the session began. `animation` is posing animators and ragdolls in a tick, apart from
+// `gameplay`. `effects` is advancing Play's particles, once an update, over `effect_updates` updates.
 struct SimulationTiming {
-    std::uint64_t ticks = 0;
-    std::chrono::nanoseconds physics{0}, physics_max{0}, gameplay{0};
+    std::uint64_t ticks = 0, effect_updates = 0;
+    std::chrono::nanoseconds physics{0}, physics_max{0}, gameplay{0}, animation{0}, animation_max{0}, effects{0}, effects_max{0};
 };
 
 // What an import left in the asset folder.

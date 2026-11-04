@@ -273,6 +273,11 @@ void EditorUI::draw_stats(ImVec2 origin, ImVec2 size) {
         const double ticks = double(std::max<std::uint64_t>(timing.ticks, 1));
         std::snprintf(text, sizeof text, "Physics %.3f ms  Gameplay %.3f ms a tick", std::chrono::duration<double, std::milli>(timing.physics).count() / ticks, std::chrono::duration<double, std::milli>(timing.gameplay).count() / ticks);
         lines.emplace_back(text);
+        const double updates = double(std::max<std::uint64_t>(timing.effect_updates, 1));
+        std::snprintf(text, sizeof text, "Animation %.3f ms a tick  Particles %.3f ms", std::chrono::duration<double, std::milli>(timing.animation).count() / ticks, std::chrono::duration<double, std::milli>(timing.effects).count() / updates);
+        lines.emplace_back(text);
+        std::snprintf(text, sizeof text, "Skinned %zu  Particles %zu", stats.skinned, stats.particles);
+        lines.emplace_back(text);
         std::snprintf(text, sizeof text, "Objects %zu  Lights %zu  Parts %zu", stats.objects, stats.lights, stats.parts);
         lines.emplace_back(text);
     }

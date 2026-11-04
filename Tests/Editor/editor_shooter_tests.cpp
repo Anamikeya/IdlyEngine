@@ -11,6 +11,7 @@
 #include <cmath>
 #include <filesystem>
 #include <string>
+#include <vector>
 
 using namespace engine;
 using namespace engine::editor;
@@ -27,10 +28,10 @@ struct Shooter {
 	gameplay::Game* game = nullptr;
 	double yaw = 0, pitch = 0;
 
-	Shooter()
+	explicit Shooter(const char* scene = "physics_shooter.scene")
 	{
 		ENGINE_REQUIRE(s.open_project(sample));
-		ENGINE_REQUIRE(s.load(sample / "physics_shooter.scene"));
+		ENGINE_REQUIRE(s.load(sample / scene));
 		authored = s.editor_scene().snapshot();
 		revision = s.commands().revision();
 		ENGINE_REQUIRE(s.play());
@@ -225,5 +226,47 @@ ENGINE_TEST(sample_glass_breaks_into_debris_drawn_like_its_shard)
 	// Settled, they go: asleep for two seconds, or past their five.
 	play.ticks(400);
 	ENGINE_CHECK(s.debris().empty());
+	play.stop_and_check_the_editor_scene();
+}
+
+// The performance scene (slice 6) holds what its numbers claim: ten enemies walking and 5,000 particles alive.
+ENGINE_TEST(stress_scene_has_ten_walking_enemies_and_five_thousand_particles)
+{
+	Shooter play("stress_test.scene");
+	auto& s = play.s;
+	std::vector<EntityId> enemies;
+	std::vector<Vec3> starts;
+	for (int i = 1; i <= 10; ++i) {
+		enemies.push_back(play.find("Enemy " + std::to_string(i)));
+		ENGINE_REQUIRE(enemies.back() != 0);
+		starts.push_back(play.position(enemies.back()));
+	}
+	ENGINE_CHECK_EQ(play.find("Enemy 11"), EntityId{0});
+	const auto targets = play.game->hud().targets_remaining;
+	ENGINE_CHECK(targets == 19);
+	std::size_t most = 0;
+	for (int i = 0; i < 180; ++i) {
+		play.tick();
+		most = std::max(most, s.effect_stats().particles);
+	}
+	// Ten fountains of 500 each, full after two seconds, and footstep dust on top.
+	ENGINE_CHECK(most >= 5000);
+	ENGINE_CHECK(most < 5600);
+	ENGINE_CHECK(s.effect_stats().emitters >= 10);
+	const std::size_t animators = s.animation().stats().animators;
+	ENGINE_CHECK_EQ(animators, std::size_t{10});
+	for (std::size_t i = 0; i < enemies.size(); ++i) {
+		const auto status = s.animation().status(enemies[i]);
+		ENGINE_REQUIRE(status.has_value());
+		ENGINE_CHECK_EQ(std::string(status->clip), std::string("Walk_Loop"));
+		const Vec3 now = play.position(enemies[i]);
+		ENGINE_CHECK(std::hypot(now.x - starts[i].x, now.z - starts[i].z) > 2.0); // About 3 m at a walk.
+	}
+	ENGINE_CHECK(s.game_issues().empty());
+	// The timings slice 6 reports: animation and particles counted apart from gameplay.
+	const auto& timing = s.timing();
+	ENGINE_CHECK(timing.ticks >= 180);
+	ENGINE_CHECK(timing.animation.count() > 0 && timing.animation_max.count() > 0);
+	ENGINE_CHECK(timing.effect_updates >= 180 && timing.effects.count() > 0);
 	play.stop_and_check_the_editor_scene();
 }

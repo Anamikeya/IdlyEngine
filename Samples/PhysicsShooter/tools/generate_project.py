@@ -106,6 +106,12 @@ STEP_DUST = effect("footstep_dust", duration=0.6, rate=0, burst=7, lifetime=(0.3
 SLIVERS = effect("glass_slivers", duration=1, rate=0, burst=45, lifetime=(0.4, 1.1), speed=(1.5, 4.5), cone=55, drag=0.4, spin=(-400, 400),
                  size=(0, 0.035, 1, 0.015), color=(0, 0.85, 0.95, 1, 0.9, 1, 0.85, 0.95, 1, 0), emissive_strength=1.5, blend="additive",
                  collide_floor=1, bounce=0.2, max_particles=600)
+# For the performance scene: looping fountains that each keep 500 particles alive, one kind added, one blended.
+FOUNTAIN_GLOW = effect("stress_fountain_glow", duration=1, rate=300, lifetime=(1.8, 2), speed=(3.5, 5), cone=12, size=(0, 0.06, 1, 0.03),
+                       color=(0, 0.4, 0.8, 1, 1, 1, 0.2, 0.5, 1, 0), emissive_strength=2.5, blend="additive", collide_floor=1, bounce=0.35,
+                       max_particles=500)
+FOUNTAIN_SMOKE = effect("stress_fountain_smoke", duration=1, rate=300, lifetime=(1.8, 2), speed=(1.5, 2.5), cone=25, acceleration=(0, 0.4, 0),
+                        drag=0.5, size=(0, 0.1, 1, 0.45), color=(0, 0.6, 0.6, 0.62, 0.6, 1, 0.5, 0.5, 0.52, 0), blend="alpha", max_particles=500)
 
 
 def euler(pitch=0.0, yaw=0.0):
@@ -191,7 +197,9 @@ def crate(s, name, position, size=1.0, density=70):
     return id
 
 
-def physics_shooter():
+def physics_shooter(stress=False):
+    """The sample's arena. With `stress`, the performance scene: ten enemies in view of the player and ten fountains that
+    keep 5,000 particles alive."""
     s = Scene()
     rules = s.add("Game Rules")
     s.behavior(rules, "game_mode", time_limit=90)
@@ -341,7 +349,12 @@ def physics_shooter():
     s.behavior(bottle, "impact_damage", min_speed=4, scale=30)
 
     # Enemies: Quaternius' mannequin walking back and forth, each a target. Shot they flinch; killed they fall as ragdolls.
-    for i, (a, b) in enumerate((((-12, 4), (-7, 4)), ((0, -3), (0, -9)), ((8.5, 5.5), (12.5, 5.5)))):
+    lanes = [((-12, 4), (-7, 4)), ((0, -3), (0, -9)), ((8.5, 5.5), (12.5, 5.5))]
+    if stress:
+        # Seven more, on open floor in front of the player's start.
+        lanes += [((-14, -1), (-14, -6)), ((12, -1), (12, -4.5)), ((-7.5, -2), (-7.5, -6)), ((-3.5, 1.5), (3.5, 1.5)),
+                  ((-1.5, 5.5), (-5.5, 5.5)), ((2, 5.5), (6.5, 5.5)), ((-2.5, -7), (-6.5, -7))]
+    for i, (a, b) in enumerate(lanes):
         enemy = s.add(f"Enemy {i + 1}", (a[0], 0, a[1]), rotation=euler(0, math.degrees(math.atan2(b[0] - a[0], b[1] - a[1]))))
         s.mesh(enemy, model=MANNEQUIN)
         s.body(enemy, "kinematic", sleep=0)
@@ -361,7 +374,12 @@ def physics_shooter():
     s.mesh(ammo, "sphere", mat=PICKUP_AMMO)
     s.collider(ammo, "sphere", radius=0.9, sensor=1, events=1)
     s.behavior(ammo, "pickup", ammo=45)
-    s.write(ROOT / "physics_shooter.scene")
+    if stress:
+        # Along the far wall, in view: 500 particles each once they have run for two seconds.
+        for i in range(10):
+            fountain = s.add(f"Stress Fountain {i + 1}", (-13.5 + 3 * i, 0.05, -14.6))
+            s.emitter(fountain, FOUNTAIN_GLOW if i % 2 == 0 else FOUNTAIN_SMOKE, auto_play=1, loop=1)
+    s.write(ROOT / ("stress_test.scene" if stress else "physics_shooter.scene"))
 
 
 def lighting_test():
@@ -394,5 +412,6 @@ def lighting_test():
 
 
 physics_shooter()
+physics_shooter(stress=True)
 lighting_test()
 print("Wrote the sample's scenes, materials and .meta files.")

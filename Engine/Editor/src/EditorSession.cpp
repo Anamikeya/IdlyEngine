@@ -1284,7 +1284,12 @@ void EditorSession::update(std::chrono::nanoseconds elapsed) {
     advance_animations(elapsed);
     if (!runtime_ || runtime_->paused || elapsed.count() <= 0) return;
     auto &r = *runtime_;
+    const auto before_effects = std::chrono::steady_clock::now();
     r.particles.update(std::chrono::duration<double>(elapsed).count());
+    const auto effects_took = std::chrono::steady_clock::now() - before_effects;
+    ++timing_.effect_updates;
+    timing_.effects += effects_took;
+    timing_.effects_max = std::max<std::chrono::nanoseconds>(timing_.effects_max, effects_took);
     r.accumulated += elapsed;
     int ticks = 0;
     while (r.accumulated >= fixed_step && ticks < max_ticks_per_update && !r.paused) { r.accumulated -= fixed_step; tick(); ++ticks; }
@@ -1306,6 +1311,7 @@ void EditorSession::tick() {
     const auto after_physics = std::chrono::steady_clock::now();
     // Poses advance with the tick, so a run's animation is the same however the frames fall.
     r.animation.update(std::chrono::duration<double>(fixed_step).count());
+    auto animation_took = std::chrono::steady_clock::now() - after_physics;
     auto heard = r.animation.take_events();
     if (r.game) {
         // The game hears clip events where the entity's foot is: its lowest joint. A ragdoll's animator is not its pose.
@@ -1315,7 +1321,9 @@ void EditorSession::tick() {
         r.game->hear(notices);
     }
     keep_events(std::move(heard));
+    const auto before_ragdolls = std::chrono::steady_clock::now();
     pose_ragdolls();
+    animation_took += std::chrono::steady_clock::now() - before_ragdolls;
     if (r.game) {
         r.game->post_physics();
         // What the game asked of the animations and ragdolls.
@@ -1340,7 +1348,9 @@ void EditorSession::tick() {
     ++timing_.ticks;
     timing_.physics += after_physics - before_physics;
     timing_.physics_max = std::max<std::chrono::nanoseconds>(timing_.physics_max, after_physics - before_physics);
-    timing_.gameplay += (before_physics - start) + (end - after_physics);
+    timing_.gameplay += (before_physics - start) + (end - after_physics) - animation_took;
+    timing_.animation += animation_took;
+    timing_.animation_max = std::max<std::chrono::nanoseconds>(timing_.animation_max, animation_took);
     reconcile();
 }
 void EditorSession::sync_physics() {
