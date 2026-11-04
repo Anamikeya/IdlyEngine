@@ -128,6 +128,7 @@ class EditorSession {
     mutable renderer::ResourceRegistry resources_;
     mutable std::map<std::tuple<std::uint64_t, std::string, assets::AssetType>, Resolved> resolved_;
     std::vector<std::string> asset_problems_;
+    std::map<EntityId, renderer::Pose> poses_;
     // Material edits in progress, not saved yet (a drag in the Material Editor); these win over the file.
     std::map<assets::AssetId, assets::MaterialData> material_drafts_;
     // The same for particle effects in the Effect Editor.
@@ -373,6 +374,8 @@ public:
         std::uint32_t width = 0, height = 0;                // Of `pixels`.
         std::uint32_t source_width = 0, source_height = 0;  // Of the image.
         std::size_t vertices = 0, triangles = 0;
+        std::size_t joints = 0;            // Of a model's skeleton.
+        std::vector<std::string> clips;    // A model's animations, by name.
         bool failed = false;
     };
     // Decodes a model or texture on a worker, without touching the catalogue.
@@ -397,6 +400,11 @@ public:
     // Problems with the references in the last frame().
     const std::vector<std::string> &asset_problems() const { return asset_problems_; }
     const renderer::ResourceRegistry &resources() const { return resources_; }
+    // ---- Poses of skinned models: visual only, never in the scene, its file or its history (Milestone 5, D1) ----
+    // Model-space joint transforms frames draw an entity's model with, in its skeleton's order. Null: its rest pose.
+    void set_pose(EntityId, renderer::Pose);
+    renderer::Pose pose(EntityId) const;
+    void clear_poses() { poses_.clear(); }
 
     // ---- Background import: decoding happens on a worker; the catalogue and the GPU stay on this thread ----
     std::uint64_t begin_import(const std::filesystem::path &file);

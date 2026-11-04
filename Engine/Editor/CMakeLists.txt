@@ -110,7 +110,8 @@ target_link_libraries(engine_editor PRIVATE engine_editor_session engine_desktop
 target_include_directories(engine_editor SYSTEM PRIVATE "${GAMEENGINE_RESOURCES_DIR}/glm")
 # Like the materials, the sample is found by an absolute path, so the editor runs from its build tree.
 get_filename_component(ENGINE_SAMPLES_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../Samples" ABSOLUTE)
-target_compile_definitions(engine_editor PRIVATE EDITOR_MATERIAL_DIR="${MATERIAL_DIR}" ENGINE_SAMPLES_DIR="${ENGINE_SAMPLES_DIR}")
+target_compile_definitions(engine_editor PRIVATE EDITOR_MATERIAL_DIR="${MATERIAL_DIR}" ENGINE_SAMPLES_DIR="${ENGINE_SAMPLES_DIR}"
+    ENGINE_RESOURCES_DIR="${GAMEENGINE_RESOURCES_DIR}") # The render test draws a skinned model from the dependency tree when it is there.
 target_compile_options(engine_editor PRIVATE /W4 /permissive- /utf-8)
 option(ENGINE_EDITOR_GPU_TESTS "Register visible desktop GPU smoke test (requires interactive desktop)" OFF)
 if(ENGINE_EDITOR_GPU_TESTS)

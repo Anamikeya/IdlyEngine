@@ -7,6 +7,7 @@
 #include <imgui.h>
 #include <imgui_impl_glfw.h>
 #include <engine/editor/EditorSession.hpp>
+#include <engine/assets/skeleton.h>
 #include <engine/renderer/DesktopRenderer.hpp>
 #include <glm/gtc/quaternion.hpp>
 #include <glm/gtc/type_ptr.hpp>
@@ -466,6 +467,183 @@ void particles(Harness &h) {
     h.check(h.pixel(0.5f, 0.56f)[1] < 20, "turning the preview off hides the particles", text(h.pixel(0.5f, 0.56f)));
     h.session.view_flags.effects = true;
 }
+// A red bar 1 m wide from y = -1 to y = 1 facing +Z, in three rows of vertices. Skinned: joint "root" at the bottom row and
+// "tip" at the middle one, bound as they rest; the bottom row follows root, the top row tip, the middle both equally.
+std::vector<std::uint8_t> bar_model(bool skinned) {
+    std::vector<std::uint8_t> bin;
+    std::vector<std::string> views, accessors;
+    const auto add = [&](const void *data, std::size_t bytes, const std::string &accessor) {
+        while (bin.size() % 4) bin.push_back(0);
+        views.push_back("{\"buffer\":0,\"byteOffset\":" + std::to_string(bin.size()) + ",\"byteLength\":" + std::to_string(bytes) + "}");
+        bin.insert(bin.end(), static_cast<const std::uint8_t *>(data), static_cast<const std::uint8_t *>(data) + bytes);
+        accessors.push_back("{\"bufferView\":" + std::to_string(views.size() - 1) + "," + accessor + "}");
+        return std::to_string(accessors.size() - 1);
+    };
+    const std::vector<float> positions{-0.5f, -1, 0, 0.5f, -1, 0, -0.5f, 0, 0, 0.5f, 0, 0, -0.5f, 1, 0, 0.5f, 1, 0};
+    std::vector<float> normals;
+    for (int i = 0; i < 6; ++i) normals.insert(normals.end(), {0, 0, 1});
+    const std::vector<std::uint16_t> indices{0, 1, 3, 0, 3, 2, 2, 3, 5, 2, 5, 4};
+    std::string attributes = "\"POSITION\":" + add(positions.data(), positions.size() * 4, "\"componentType\":5126,\"count\":6,\"type\":\"VEC3\",\"min\":[-0.5,-1,0],\"max\":[0.5,1,0]") +
+                             ",\"NORMAL\":" + add(normals.data(), normals.size() * 4, "\"componentType\":5126,\"count\":6,\"type\":\"VEC3\"");
+    const std::string index = add(indices.data(), indices.size() * 2, "\"componentType\":5123,\"count\":12,\"type\":\"SCALAR\"");
+    std::string nodes = "{\"name\":\"bar\",\"mesh\":0}", roots = "[0]", skins;
+    if (skinned) {
+        const std::vector<std::uint16_t> joints{0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0};
+        const std::vector<float> weights{1, 0, 0, 0, 1, 0, 0, 0, 0.5f, 0.5f, 0, 0, 0.5f, 0.5f, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0};
+        const std::vector<float> inverse_binds{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 1, 0, 1, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+        attributes += ",\"JOINTS_0\":" + add(joints.data(), joints.size() * 2, "\"componentType\":5123,\"count\":6,\"type\":\"VEC4\"") +
+                      ",\"WEIGHTS_0\":" + add(weights.data(), weights.size() * 4, "\"componentType\":5126,\"count\":6,\"type\":\"VEC4\"");
+        const std::string ibm = add(inverse_binds.data(), inverse_binds.size() * 4, "\"componentType\":5126,\"count\":2,\"type\":\"MAT4\"");
+        nodes = "{\"name\":\"bar\",\"mesh\":0,\"skin\":0},{\"name\":\"root\",\"translation\":[0,-1,0],\"children\":[2]},{\"name\":\"tip\",\"translation\":[0,1,0]}";
+        roots = "[0,1]";
+        skins = ",\"skins\":[{\"joints\":[1,2],\"inverseBindMatrices\":" + ibm + "}]";
+    }
+    std::string json = "{\"asset\":{\"version\":\"2.0\"},\"scene\":0,\"scenes\":[{\"nodes\":" + roots + "}],\"nodes\":[" + nodes +
+                       "],\"meshes\":[{\"primitives\":[{\"attributes\":{" + attributes + "},\"indices\":" + index + ",\"material\":0}]}]," +
+                       "\"materials\":[{\"pbrMetallicRoughness\":{\"baseColorFactor\":[1,0,0,1],\"roughnessFactor\":0.9,\"metallicFactor\":0}}]" + skins +
+                       ",\"buffers\":[{\"byteLength\":" + std::to_string(bin.size()) + "}],\"bufferViews\":[";
+    for (std::size_t i = 0; i < views.size(); ++i) json += (i ? "," : "") + views[i];
+    json += "],\"accessors\":[";
+    for (std::size_t i = 0; i < accessors.size(); ++i) json += (i ? "," : "") + accessors[i];
+    json += "]}";
+    while (json.size() % 4) json.push_back(' ');
+    while (bin.size() % 4) bin.push_back(0);
+    std::vector<std::uint8_t> glb;
+    const auto u32 = [&](std::size_t v) { for (int i = 0; i < 4; ++i) glb.push_back(std::uint8_t(v >> (8 * i))); };
+    glb.insert(glb.end(), {'g', 'l', 'T', 'F'});
+    u32(2); u32(12 + 8 + json.size() + 8 + bin.size());
+    u32(json.size()); u32(0x4E4F534A); glb.insert(glb.end(), json.begin(), json.end());
+    u32(bin.size()); u32(0x004E4942); glb.insert(glb.end(), bin.begin(), bin.end());
+    return glb;
+}
+// Where a world point lands in the window, as fractions of its width and height from the top left.
+std::array<float, 2> on_screen(Harness &h, glm::dvec3 p) {
+    const auto frame = h.session.frame(double(h.width) / double(h.height));
+    if (!frame) throw std::runtime_error("Frame failed");
+    const auto clip = glm::make_mat4(frame.value()->camera.projection.matrix.data()) * glm::make_mat4(frame.value()->camera.view.matrix.data()) * glm::dvec4(p, 1);
+    return {float((clip.x / clip.w + 1) / 2), float((1 - clip.y / clip.w) / 2)};
+}
+renderer::Pose joints_at(std::vector<glm::dvec3> positions) {
+    auto pose = std::make_shared<std::vector<renderer::JointMatrix>>();
+    for (const auto &p : positions) pose->push_back({1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, float(p.x), float(p.y), float(p.z), 1});
+    return pose;
+}
+void skinning(Harness &h) {
+    h.reset(); h.sun({0, 0, 0});
+    h.settle(); // The window's size, which on_screen needs.
+    const auto import = [&](const std::string &name, bool skinned) {
+        const fs::path file = h.output / "source" / (name + ".glb");
+        fs::create_directories(file.parent_path());
+        const auto bytes = bar_model(skinned);
+        std::ofstream(file, std::ios::binary).write(reinterpret_cast<const char *>(bytes.data()), std::streamsize(bytes.size()));
+        auto imported = h.session.import_asset(file);
+        if (!imported) throw std::runtime_error("Import failed: " + imported.error().message);
+        return imported.value().id;
+    };
+    const auto place = [&](assets::AssetId id, Vec3 base) {
+        auto placed = h.session.place_asset_at(id, base);
+        if (!placed) throw std::runtime_error("Place failed: " + placed.error().message);
+        return placed.value().created.front();
+    };
+    const auto remove = [&](EntityId id) { if (!h.session.execute(commands::DeleteEntity{id})) throw std::runtime_error("Delete failed"); };
+    const auto skinned_id = import("bar_skinned", true), plain_id = import("bar_plain", false);
+    // Points on the bar and around it; none on the grid's line through the middle of the view.
+    const std::vector<glm::dvec3> probes{{0, -0.6, 0}, {0.3, 0.6, 0}, {-0.3, 0.3, 0}, {0, 0.85, 0}, {0.9, 0.6, 0}, {-0.9, -0.6, 0}, {1.3, 0.8, 0}};
+    std::vector<std::array<float, 2>> at;
+    for (const auto &p : probes) at.push_back(on_screen(h, p));
+    const auto read = [&]() { std::vector<Color> out; for (const auto &s : at) out.push_back(h.pixel(s[0], s[1])); return out; };
+
+    auto bar = place(skinned_id, {0, -1, 0});
+    const auto skinned_rest = read();
+    h.check(h.renderer.stats().skinned == 1 && h.renderer.stats().posed == 0, "a skinned model is drawn with bones", "skinned " + std::to_string(h.renderer.stats().skinned));
+    h.capture("skin_rest");
+    remove(bar);
+    const auto twin = place(plain_id, {0, -1, 0});
+    const auto plain = read();
+    remove(twin);
+    bool same = true;
+    std::string detail;
+    for (std::size_t i = 0; i < plain.size(); ++i) {
+        for (int c = 0; c < 3; ++c) same = same && std::abs(plain[i][c] - skinned_rest[i][c]) <= 3;
+        detail += (i ? "; " : "") + text(skinned_rest[i]) + " vs " + text(plain[i]);
+    }
+    h.check(same && plain[0][0] > 60 && plain[0][0] > 3 * plain[0][1], "at rest a skinned model draws as its unskinned twin", detail);
+
+    // The tip 1.5 m to the right: the top half follows it, the bottom stays, the middle row goes half as far.
+    bar = place(skinned_id, {0, -1, 0});
+    h.session.set_pose(bar, joints_at({{0, -1, 0}, {1.5, 0, 0}}));
+    const auto posed = read();
+    h.capture("skin_posed");
+    h.check(std::abs(posed[0][0] - skinned_rest[0][0]) <= 3, "posing leaves the part on the still joint", text(skinned_rest[0]) + " to " + text(posed[0]));
+    h.check(posed[3][0] < skinned_rest[3][0] - 40 && posed[6][0] > skinned_rest[6][0] + 40, "posing moves the part on the moved joint",
+            "top " + text(skinned_rest[3]) + " to " + text(posed[3]) + ", right " + text(skinned_rest[6]) + " to " + text(posed[6]));
+    h.check(h.renderer.stats().posed == 1, "the renderer counts the posed model", std::to_string(h.renderer.stats().posed));
+    // A pose for another skeleton is not used.
+    h.session.set_pose(bar, joints_at({{0, -1, 0}}));
+    h.check(std::abs(read()[3][0] - skinned_rest[3][0]) <= 3, "a pose of the wrong size draws the rest pose", text(read()[3]));
+    remove(bar);
+
+    // Placed 6 m to the left, out of view, and posed back into it: culling must use the pose's box, not the rest one.
+    // The background is gray-blue, the bar red.
+    const auto red = [](const Color &c) { return c[0] > 60 && c[0] > 3 * c[1]; };
+    const auto background = [](const Color &c) { return c[0] < c[2]; };
+    bar = place(skinned_id, {-6, -1, 0});
+    const auto away = read()[0];
+    h.session.set_pose(bar, joints_at({{6, -1, 0}, {6, 0, 0}}));
+    const auto back = read()[0];
+    h.check(background(away) && red(back), "a pose outside the rest box is not culled", "away " + text(away) + ", posed back " + text(back));
+    h.session.set_pose(bar, nullptr);
+    const auto cleared = read()[0];
+    h.check(background(cleared), "clearing the pose returns to rest", text(cleared));
+    remove(bar);
+    h.settle();
+    h.check(h.renderer.stats().skinned == 0, "deleting the model frees its skinned renderable", std::to_string(h.renderer.stats().skinned));
+}
+// A real skinned model, as it rests and in the first pose of a clip, for inspection.
+void skinned_model(Harness &h, const fs::path &model_file) {
+    std::error_code error;
+    if (!fs::is_regular_file(model_file, error)) { std::cout << "SKIP  skinned model capture: " << model_file.string() << " not found\n"; return; }
+    h.reset();
+    h.sun({-35, 30}, 90000);
+    const auto imported = h.session.import_asset(model_file);
+    if (!imported) { h.check(false, "skinned model imports", imported.error().message); return; }
+    const auto placed = h.session.place_asset(imported.value().id);
+    if (!placed) { h.check(false, "skinned model is placed", "place failed"); return; }
+    const auto entity = placed.value().created.front();
+    h.session.focus(); h.session.select(0);
+    h.session.camera.yaw = 0.9; h.session.camera.pitch = 0.15;
+    const auto data = h.session.model(h.session.scene().inspect(entity)->components.mesh->mesh_asset);
+    if (!data || data->skin.empty() || data->clips.empty()) { h.check(false, "skinned model has a skeleton and clips", "none"); return; }
+    h.capture(model_file.stem().string() + "_rest");
+    // The view is centred on the model's box, so its middle is on the model.
+    const auto rest = h.pixel(0.5f, 0.5f);
+    h.settle();
+    const auto rest_frame = h.renderer.readback(unsigned(h.width), unsigned(h.height));
+    // Each joint at the clip's keys closest to its middle, or at rest where the clip has none.
+    const auto &clip = data->clips.back();
+    std::vector<assets::Matrix4> local;
+    for (std::size_t j = 0; j < data->skin.joints.size(); ++j) {
+        const auto &joint = data->skin.joints[j];
+        const auto &track = clip.tracks[j];
+        const auto middle = [&](const auto &keys, auto rest_value) {
+            if (keys.empty()) return rest_value;
+            const auto found = std::lower_bound(keys.begin(), keys.end(), clip.duration / 2, [](const auto &key, float t) { return key.time < t; });
+            return (found == keys.end() ? keys.back() : *found).value;
+        };
+        local.push_back(assets::compose(middle(track.translation, joint.translation), middle(track.rotation, joint.rotation), middle(track.scale, joint.scale)));
+    }
+    const auto model_space = assets::model_pose(data->skin, local);
+    h.session.set_pose(entity, std::make_shared<std::vector<renderer::JointMatrix>>(model_space.begin(), model_space.end()));
+    h.capture(model_file.stem().string() + "_" + clip.name);
+    h.settle();
+    const auto posed_frame = h.renderer.readback(unsigned(h.width), unsigned(h.height));
+    std::size_t changed = 0;
+    for (std::size_t i = 0; i + 3 < rest_frame.size() && i + 3 < posed_frame.size(); i += 4)
+        if (std::abs(rest_frame[i] - posed_frame[i]) + std::abs(rest_frame[i + 1] - posed_frame[i + 1]) + std::abs(rest_frame[i + 2] - posed_frame[i + 2]) > 60) ++changed;
+    // The fox is orange against a gray-blue background.
+    h.check(rest[0] > rest[2] + 30, "a real skinned model draws in its rest pose", text(rest));
+    h.check(h.renderer.stats().posed == 1 && changed > 1000, "posed by a frame of its clip, its pixels move", std::to_string(changed) + " pixels changed");
+}
 void model_with_all_maps(Harness &h, const fs::path &model_file) {
     std::error_code error;
     if (!fs::is_regular_file(model_file, error)) { std::cout << "SKIP  model capture: " << model_file.string() << " not found\n"; return; }
@@ -476,12 +654,18 @@ void model_with_all_maps(Harness &h, const fs::path &model_file) {
     h.add("Sun", aimed({0, 5, 0}, -40, 30), {{}, {}, sun});
     const auto imported = h.session.import_asset(model_file);
     if (!imported) { h.check(false, "PBR model imports", imported.error().message); return; }
-    if (!h.session.place_asset(imported.value().id)) { h.check(false, "PBR model is placed", "place failed"); return; }
+    const auto placed = h.session.place_asset(imported.value().id);
+    if (!placed) { h.check(false, "PBR model is placed", "place failed"); return; }
+    const auto bottle = placed.value().created.front();
     h.session.focus(); h.session.select(0);
     h.session.camera.yaw = 0.5; h.session.camera.pitch = 0.2;
+    // The same view without the model, to tell the model from the floor and sky behind it.
+    h.session.set_hidden(bottle, true);
+    const auto empty = h.pixel(0.55f, 0.56f);
+    h.session.set_hidden(bottle, false);
     h.capture(fs::path(model_file).stem().string());
     const auto c = h.pixel(0.55f, 0.56f);
-    h.check(brightness(c) > 30, "PBR model is visible", text(c));
+    h.check(std::abs(c[0] - empty[0]) + std::abs(c[1] - empty[1]) + std::abs(c[2] - empty[2]) > 30, "PBR model is visible", "without " + text(empty) + ", with " + text(c));
 }
 // The sample's lighting test scene, through its own camera position, for visual inspection.
 void lighting_scene(Harness &h, const fs::path &sample) {
@@ -519,6 +703,8 @@ int run_render_test(GLFWwindow *window, const fs::path &materials, const fs::pat
         punctual_lights(h);
         resource_lifecycle(h);
         particles(h);
+        skinning(h);
+        skinned_model(h, fs::path(ENGINE_RESOURCES_DIR) / "filament/third_party/models/Fox/Fox.glb");
         const fs::path sample = fs::path(ENGINE_SAMPLES_DIR) / "PhysicsShooter";
         model_with_all_maps(h, sample / "Assets/models/WaterBottle.glb");
         lighting_scene(h, sample);

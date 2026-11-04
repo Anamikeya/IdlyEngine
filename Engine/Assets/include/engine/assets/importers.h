@@ -36,9 +36,13 @@ Result<TextureData> import_ppm(std::span<const std::uint8_t> bytes, const Import
 
 // Self-contained binary glTF 2.0. All primitives of the default scene become one mesh with node transforms
 // baked in and one SubMesh per primitive. Factors, the five metallic-roughness maps, alpha mode and
-// double-sidedness are kept. Ignored features (skins, animation, morph targets, secondary UV sets, texture
-// transforms, non-triangle primitives) and unusable secondary maps are listed in MeshData::warnings.
+// double-sidedness are kept. Ignored features (morph targets, secondary UV sets, texture transforms,
+// non-triangle primitives, unused skins) and unusable secondary maps are listed in MeshData::warnings.
 // External files, Draco and other required extensions are errors.
+// Skins and animated nodes give the mesh a skeleton (MeshData::skin): skinned primitives keep their bind-space
+// vertices, every other part is baked as it rests and follows the nearest joint above it. Each animation becomes
+// an AnimationClip. More than 4 influences keep the strongest 4; a model needing more than max_skin_bindings bones
+// is refused. ImportSettings::mesh_scale scales joint, key and inverse bind translations along with the vertices.
 Result<MeshData> import_glb(std::span<const std::uint8_t> bytes, const ImportSettings& settings = {},
 	const ImportLimits& limits = {});
 

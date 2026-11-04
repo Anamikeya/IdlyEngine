@@ -1,5 +1,6 @@
 #include <engine/renderer/DesktopRenderer.hpp>
 #include <engine/renderer/ResourceRegistry.hpp>
+#include <engine/assets/skeleton.h>
 #include "FilamentUtilities.hpp"
 #include "ImGuiRenderer.hpp"
 #include <filament/Camera.h>
@@ -74,11 +75,34 @@ struct Part {
     bool own_material = false;
     Parameters own;
 };
+// Bone indices and weights, in a vertex buffer of their own beside the main one.
+struct SkinVertex { ushort4 bones; float4 weights; };
 struct GpuMesh : Mesh {
     uint32_t generation = 1;
     std::vector<Part> parts;
     std::vector<Texture *> images;
+    // Skinned meshes: the skeleton and bones without per-vertex data, the rest pose's palette and its box.
+    assets::MeshSkin rig;
+    std::vector<mat4f> rest_palette;
+    bool skinned() const { return !rest_palette.empty(); }
 };
+mat4f matrix(const std::array<float, 16> &m) {
+    mat4f out;
+    for (int c = 0; c < 4; ++c) for (int r = 0; r < 4; ++r) out[c][r] = m[std::size_t(c * 4 + r)];
+    return out;
+}
+std::vector<mat4f> matrices(const std::vector<assets::Matrix4> &palette) {
+    std::vector<mat4f> out;
+    out.reserve(palette.size());
+    for (const auto &m : palette) out.push_back(matrix(m));
+    return out;
+}
+Box box(const assets::Bounds &b) {
+    Box out;
+    out.set(float3{b.min[0], b.min[1], b.min[2]}, float3{b.max[0], b.max[1], b.max[2]});
+    out.halfExtent = max(out.halfExtent, float3(0.001f)); // A flat model still needs a volume to pass culling.
+    return out;
+}
 // A standalone image, uploaded once per color space it is used in.
 struct GpuTexture { Texture *srgb = nullptr, *linear = nullptr; uint32_t generation = 0; };
 struct ParticleVertex { float3 position; float4 color; float2 uv; };
@@ -191,7 +215,8 @@ const ToneMapper *new_tone_mapper(ToneMapping tone) {
 }
 struct DesktopRenderer::Impl {
     struct PartState { MaterialInstance *instance = nullptr; Parameters applied; bool written = false; };
-    struct Object { utils::Entity entity; std::vector<PartState> parts; MeshHandle mesh; bool shadows = true; };
+    // `pose`: what its bones were last set from; null is the rest pose it is built with.
+    struct Object { utils::Entity entity; std::vector<PartState> parts; MeshHandle mesh; bool shadows = true; bool skinned = false; Pose pose; };
     struct Light { utils::Entity entity; LightKind kind; bool shadows = false; };
     using Key = std::pair<std::uint64_t, EntityId>; // Frame scene identity, entity.
     Engine *engine = nullptr;
@@ -288,19 +313,33 @@ struct DesktopRenderer::Impl {
         }
         GpuMesh result;
         result.generation = generation;
-        result.vertices = VertexBuffer::Builder().vertexCount(static_cast<uint32_t>(vertices.size())).bufferCount(1)
+        const bool skinned = !data.skin.empty() && !data.skin.bindings.empty() && data.skin.bindings.size() <= assets::max_skin_bindings &&
+                             data.skin.influences.size() == data.vertices.size();
+        auto builder = VertexBuffer::Builder().vertexCount(static_cast<uint32_t>(vertices.size())).bufferCount(skinned ? 2 : 1)
             .attribute(VertexAttribute::POSITION, 0, VertexBuffer::AttributeType::FLOAT3, offsetof(Vertex, position), sizeof(Vertex))
             .attribute(VertexAttribute::TANGENTS, 0, VertexBuffer::AttributeType::FLOAT4, offsetof(Vertex, tangent), sizeof(Vertex))
             .attribute(VertexAttribute::COLOR, 0, VertexBuffer::AttributeType::FLOAT4, offsetof(Vertex, color), sizeof(Vertex))
-            .attribute(VertexAttribute::UV0, 0, VertexBuffer::AttributeType::FLOAT2, offsetof(Vertex, uv), sizeof(Vertex)).build(*engine);
+            .attribute(VertexAttribute::UV0, 0, VertexBuffer::AttributeType::FLOAT2, offsetof(Vertex, uv), sizeof(Vertex));
+        if (skinned)
+            builder.attribute(VertexAttribute::BONE_INDICES, 1, VertexBuffer::AttributeType::USHORT4, offsetof(SkinVertex, bones), sizeof(SkinVertex))
+                .attribute(VertexAttribute::BONE_WEIGHTS, 1, VertexBuffer::AttributeType::FLOAT4, offsetof(SkinVertex, weights), sizeof(SkinVertex));
+        result.vertices = builder.build(*engine);
         result.indices = IndexBuffer::Builder().indexCount(static_cast<uint32_t>(data.indices.size())).bufferType(IndexBuffer::IndexType::UINT).build(*engine);
         result.count = static_cast<uint32_t>(data.indices.size());
         result.vertices->setBufferAt(*engine, 0, detail::upload(vertices.data(), vertices.size() * sizeof(Vertex)));
         result.indices->setBuffer(*engine, detail::upload(data.indices.data(), data.indices.size() * sizeof(uint32_t)));
-        const auto &b = data.bounds;
-        const float3 low{b.min[0], b.min[1], b.min[2]}, high{b.max[0], b.max[1], b.max[2]};
-        result.bounds.set(low, high);
-        result.bounds.halfExtent = max(result.bounds.halfExtent, float3(0.001f)); // A flat model still needs a volume to pass culling.
+        if (skinned) {
+            std::vector<SkinVertex> skin; skin.reserve(data.vertices.size());
+            for (const auto &influence : data.skin.influences) {
+                const auto &b = influence.binding; const auto &w = influence.weight;
+                skin.push_back({ushort4{b[0], b[1], b[2], b[3]}, float4{w[0], w[1], w[2], w[3]}});
+            }
+            result.vertices->setBufferAt(*engine, 1, detail::upload(skin.data(), skin.size() * sizeof(SkinVertex)));
+            result.rig.joints = data.skin.joints;
+            result.rig.bindings = data.skin.bindings;
+            result.rest_palette = matrices(assets::skinning_palette(result.rig, assets::rest_pose(result.rig)));
+        }
+        result.bounds = box(data.bounds); // As it rests; a pose replaces it with the box of that pose.
         for (const auto &image : data.images) result.images.push_back(upload(*image, image->srgb));
         const auto own_image = [&](int index) { return index >= 0 ? result.images.at(static_cast<std::size_t>(index)) : nullptr; };
         for (const auto &source : data.submeshes) {
@@ -530,7 +569,8 @@ struct DesktopRenderer::Impl {
             thumbnail_object = utils::EntityManager::get().create();
             RenderableManager::Builder builder(gpu->parts.size());
             builder.boundingBox(gpu->bounds).castShadows(false).receiveShadows(false);
-            const RenderObject probe{0, request.mesh, request.material, {}, Surface{}, {}};
+            if (gpu->skinned()) builder.skinning(gpu->rest_palette.size(), gpu->rest_palette.data());
+            const RenderObject probe{0, request.mesh, request.material, {}, Surface{}, {}, {}};
             for (std::size_t i = 0; i < gpu->parts.size(); ++i) {
                 const Parameters wanted = parameters(probe, gpu->parts[i], static_cast<std::uint32_t>(i), registry, used);
                 auto *instance = pbr[size_t(wanted.alpha_mode)]->createInstance();
@@ -635,9 +675,10 @@ struct DesktopRenderer::Impl {
             auto it = objects.find(key);
             if (it != objects.end() && it->second.mesh != object.mesh) { remove(it->second); objects.erase(it); it = objects.end(); }
             if (it == objects.end()) {
-                Object fresh{utils::EntityManager::get().create(), {}, object.mesh, true};
+                Object fresh{utils::EntityManager::get().create(), {}, object.mesh, true, gpu->skinned(), {}};
                 RenderableManager::Builder builder(gpu->parts.size());
                 builder.boundingBox(gpu->bounds).castShadows(true).receiveShadows(true);
+                if (gpu->skinned()) builder.skinning(gpu->rest_palette.size(), gpu->rest_palette.data());
                 fresh.parts.resize(gpu->parts.size());
                 for (std::size_t i = 0; i < gpu->parts.size(); ++i) {
                     fresh.parts[i].instance = pbr[size_t(AlphaMode::Opaque)]->createInstance();
@@ -670,6 +711,7 @@ struct DesktopRenderer::Impl {
             if (shadows != record.shadows) { rm.setCastShadows(renderable, shadows); record.shadows = shadows; }
             auto &tm = engine->getTransformManager();
             tm.setTransform(tm.getInstance(record.entity), matrix(object.world));
+            if (gpu->skinned()) pose(record, *gpu, object.pose, renderable);
         }
         for (auto it = objects.begin(); it != objects.end();)
             if (!live.contains(it->first)) { remove(it->second); it = objects.erase(it); } else ++it;
@@ -684,6 +726,23 @@ struct DesktopRenderer::Impl {
             if (it->first >= ResourceRegistry::first_index && !used_meshes.contains(it->first)) { destroy(it->second); it = meshes.erase(it); } else ++it;
         for (auto it = textures.begin(); it != textures.end();)
             if (!used_textures.contains(it->first)) { destroy(it->second); it = textures.erase(it); } else ++it;
+    }
+    // Sets a skinned object's bones and box from its pose when the pose changes. A pose that does not fit the
+    // skeleton draws the rest pose, as a missing one does.
+    void pose(Object &record, const GpuMesh &gpu, const Pose &wanted, RenderableManager::Instance renderable) {
+        const Pose usable = wanted && wanted->size() == gpu.rig.joints.size() ? wanted : nullptr;
+        if (record.pose == usable) return;
+        auto &rm = engine->getRenderableManager();
+        if (!usable) {
+            rm.setBones(renderable, gpu.rest_palette.data(), gpu.rest_palette.size());
+            rm.setAxisAlignedBoundingBox(renderable, gpu.bounds);
+        } else {
+            const auto palette = assets::skinning_palette(gpu.rig, *usable);
+            const auto bones = matrices(palette);
+            rm.setBones(renderable, bones.data(), bones.size());
+            rm.setAxisAlignedBoundingBox(renderable, box(assets::skinned_bounds(gpu.rig, palette)));
+        }
+        record.pose = usable;
     }
     // Builds each batch's quads on the CPU and hands them to its renderable. Alpha batches are sorted back to front.
     // Textures the batches use are added to `used`, so the texture sweep keeps them.
@@ -798,7 +857,7 @@ struct DesktopRenderer::Impl {
     }
     // The preview sphere uses the chosen material; its textures count as used so the sweep above keeps them.
     void update_preview(const ResourceRegistry &registry, std::set<uint32_t> &used) {
-        const RenderObject probe{0, builtin_sphere, preview_material, {}, Surface{}, {}};
+        const RenderObject probe{0, builtin_sphere, preview_material, {}, Surface{}, {}, {}};
         const Parameters wanted = parameters(probe, Part{}, 0, registry, used);
         if (preview_applied && *preview_applied == wanted) return;
         auto *instance = preview_instances[size_t(wanted.alpha_mode)];
@@ -997,7 +1056,10 @@ RendererStats DesktopRenderer::stats() const {
     RendererStats s;
     const auto &p = *impl_;
     s.objects = p.objects.size(); s.lights = p.lights.size();
-    for (const auto &[key, object] : p.objects) { (void)key; s.parts += object.parts.size(); s.material_instances += object.parts.size(); }
+    for (const auto &[key, object] : p.objects) {
+        (void)key; s.parts += object.parts.size(); s.material_instances += object.parts.size();
+        s.skinned += object.skinned ? 1 : 0; s.posed += object.pose ? 1 : 0;
+    }
     s.meshes = asset_mesh_count(); s.textures = p.textures.size();
     s.environment_builds = p.environment_builds;
     s.particle_batches = p.particles.size(); s.particles = p.particles_drawn;

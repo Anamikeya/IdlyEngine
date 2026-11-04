@@ -127,13 +127,18 @@ Result<Frame> extract_frame(const Scene &scene, FrameStamp stamp, const Perspect
         for (const auto &part : binding.parts)
             if (!part.material.index || !part.material.generation)
                 return fail(ErrorCode::InvalidArgument, "Invalid part material handle");
+        if (binding.pose && (binding.pose->size() > max_pose_joints ||
+                             !std::all_of(binding.pose->begin(), binding.pose->end(), [](const JointMatrix &m) {
+                                 return std::all_of(m.begin(), m.end(), [](float v) { return std::isfinite(v); });
+                             })))
+            return fail(ErrorCode::InvalidArgument, "Joint pose is too large or not finite");
         const auto transform = scene.world_transform(binding.entity);
         if (!transform)
             return fail(ErrorCode::NotFound, "Mesh entity does not exist");
         if (!finite(*transform))
             return fail(ErrorCode::InvalidArgument, "Non-finite mesh world transform");
         if (binding.visible)
-            frame.objects.push_back({binding.entity, binding.mesh, binding.material, *transform, binding.surface, binding.parts});
+            frame.objects.push_back({binding.entity, binding.mesh, binding.material, *transform, binding.surface, binding.parts, binding.pose});
     }
     seen.clear();
     for (const auto &binding : lights) {

@@ -1,6 +1,7 @@
 // Viewport behavior without a window: the camera state machine, framing, floor snapping, vertex snapping, hiding,
 // bookmarks and orthographic views. Real Scene, CommandBus and EditorSession; no mocks.
 #include "engine/test/test.h"
+#include "../Assets/glb_writer.hpp"
 
 #include <engine/editor/CameraController.hpp>
 #include <engine/editor/EditorCommands.hpp>
@@ -10,6 +11,8 @@
 #include <cmath>
 #include <filesystem>
 #include <fstream>
+#include <limits>
+#include <memory>
 #include <string>
 
 using namespace engine;
@@ -782,4 +785,100 @@ ENGINE_TEST(the_requested_viewport_keys_are_registered) {
 	};
 	for (const auto& [id, keys] : expected) ENGINE_CHECK_EQ(r.shortcut(id), std::string(keys));
 	ENGINE_CHECK(!mouse_gestures().empty());
+}
+
+// ---- Skinned models (Milestone 5): a pose is drawn and snapped to, and never edits the scene ----
+namespace {
+// Rows of vertices at y = 0, 1 and 2, x from 0 to 1. Joint "root" at the origin, "tip" a metre up, bound as they rest:
+// the bottom row follows root, the top row tip, the middle both equally.
+assets::AssetId skinned_bar(EditorSession& s, const std::filesystem::path& folder) {
+	engine::test::Glb g;
+	const int positions = g.floats({0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 1, 0, 0, 2, 0, 1, 2, 0}, 3, true);
+	const int indices = g.u16({0, 1, 3, 0, 3, 2, 2, 3, 5, 2, 5, 4}, 1);
+	const int joints = g.u16({0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0}, 4);
+	const int weights = g.floats({1, 0, 0, 0, 1, 0, 0, 0, 0.5f, 0.5f, 0, 0, 0.5f, 0.5f, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0}, 4);
+	const int binds = g.floats({1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, -1, 0, 1}, 16);
+	const auto bytes = g.build(R"("scene":0,"scenes":[{"nodes":[0,2]}],"nodes":[{"name":"root","children":[1]},{"name":"tip","translation":[0,1,0]},)"
+		R"({"name":"bar","mesh":0,"skin":0}],"meshes":[{"primitives":[{"attributes":{"POSITION":)" + std::to_string(positions) +
+		R"(,"JOINTS_0":)" + std::to_string(joints) + R"(,"WEIGHTS_0":)" + std::to_string(weights) + R"(},"indices":)" + std::to_string(indices) +
+		R"(}]}],"skins":[{"joints":[0,1],"inverseBindMatrices":)" + std::to_string(binds) + "}]");
+	const auto file = folder / "source" / "bar.glb";
+	std::filesystem::create_directories(file.parent_path());
+	std::ofstream(file, std::ios::binary).write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+	const auto imported = s.import_asset(file);
+	ENGINE_REQUIRE(imported);
+	return imported.value().id;
+}
+renderer::Pose tip_at(Vec3 tip) {
+	return std::make_shared<std::vector<renderer::JointMatrix>>(std::vector<renderer::JointMatrix>{
+		{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1},
+		{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, float(tip.x), float(tip.y), float(tip.z), 1}});
+}
+// Where a world point lands on an 800 x 800 view, by the frame's own matrices.
+std::pair<double, double> screen_of(const renderer::FrameSnapshot& f, Vec3 p) {
+	const auto& m = f.camera.projection.matrix;
+	const auto& v = f.camera.view.matrix;
+	const double vx = v[0] * p.x + v[4] * p.y + v[8] * p.z + v[12], vy = v[1] * p.x + v[5] * p.y + v[9] * p.z + v[13], vz = v[2] * p.x + v[6] * p.y + v[10] * p.z + v[14];
+	const double w = m[3] * vx + m[7] * vy + m[11] * vz + m[15];
+	return {((m[0] * vx + m[4] * vy + m[8] * vz + m[12]) / w + 1) / 2 * 800, (1 - (m[1] * vx + m[5] * vy + m[9] * vz + m[13]) / w) / 2 * 800};
+}
+} // namespace
+
+ENGINE_TEST(a_pose_is_drawn_but_never_edits_the_scene) {
+	const auto folder = fresh_folder("pose");
+	EditorSession s;
+	ENGINE_REQUIRE(s.open_project(folder));
+	const auto placed = s.place_asset_at(skinned_bar(s, folder), {0, 0, 0});
+	ENGINE_REQUIRE(placed);
+	const auto bar = placed.value().created.front();
+	s.mark_clean();
+	const auto revision = s.scene_revision();
+	const auto pose = tip_at({1, 1, 0});
+	for (int tick = 0; tick < 60; ++tick) s.set_pose(bar, tip_at({tick * 0.01, 1, 0})); // A second of animation ...
+	s.set_pose(bar, pose);
+	const auto f = frame_of(s);
+	ENGINE_REQUIRE(f->objects.size() == 1);
+	ENGINE_CHECK(f->objects[0].pose == pose); // ... reaches the frame as a shared pointer, not a copy,
+	ENGINE_CHECK_EQ(s.scene_revision(), revision); // and adds nothing to the scene, its history or its file.
+	ENGINE_CHECK(!s.dirty());
+	ENGINE_CHECK(s.pose(bar) == pose);
+	s.set_pose(bar, nullptr);
+	ENGINE_CHECK(frame_of(s)->objects[0].pose == nullptr);
+	// A non-finite pose is refused by the frame rather than drawn.
+	auto broken = std::make_shared<std::vector<renderer::JointMatrix>>(2, renderer::JointMatrix{});
+	(*broken)[1][12] = std::numeric_limits<float>::quiet_NaN();
+	s.set_pose(bar, broken);
+	ENGINE_CHECK(!s.frame(1.5));
+	// A new scene starts with no poses.
+	s.set_pose(bar, pose);
+	ENGINE_REQUIRE(s.new_scene());
+	ENGINE_CHECK(s.pose(bar) == nullptr);
+}
+ENGINE_TEST(a_skinned_models_vertices_snap_where_its_pose_puts_them) {
+	const auto folder = fresh_folder("pose-snap");
+	EditorSession s;
+	ENGINE_REQUIRE(s.open_project(folder));
+	const auto placed = s.place_asset_at(skinned_bar(s, folder), {0, 0, 0});
+	ENGINE_REQUIRE(placed);
+	const auto bar = placed.value().created.front();
+	s.select(0);
+	s.camera.target = {1, 1, 0}; s.camera.yaw = 0; s.camera.pitch = 0; s.camera.distance = 6;
+	// The tip a metre to the right carries the top right corner from (1, 2, 0) to (2, 2, 0).
+	s.set_pose(bar, tip_at({1, 1, 0}));
+	auto f = frame_of(s, 1.0);
+	auto [x, y] = screen_of(*f, {2, 2, 0});
+	const auto found = s.nearest_vertex(*f, x + 3, y - 3, 800, 800, 20);
+	ENGINE_REQUIRE(found.has_value());
+	ENGINE_CHECK_NEAR(length(*found, {2, 2, 0}), 0, 1e-5);
+	// A click where only the posed bar is picks it.
+	const auto [px, py] = screen_of(*f, {1.6, 1.8, 0});
+	ENGINE_CHECK_EQ(s.pick(*f, px / 400 - 1, 1 - py / 400), bar);
+	// At rest nothing is there.
+	s.set_pose(bar, nullptr);
+	f = frame_of(s, 1.0);
+	ENGINE_CHECK(!s.nearest_vertex(*f, x + 3, y - 3, 800, 800, 20).has_value());
+	ENGINE_CHECK_EQ(s.pick(*f, px / 400 - 1, 1 - py / 400), EntityId{0});
+	const auto rest = s.nearest_vertex(*f, screen_of(*f, {1, 2, 0}).first, screen_of(*f, {1, 2, 0}).second, 800, 800, 20);
+	ENGINE_REQUIRE(rest.has_value());
+	ENGINE_CHECK_NEAR(length(*rest, {1, 2, 0}), 0, 1e-5);
 }

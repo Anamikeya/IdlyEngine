@@ -87,6 +87,7 @@ void EditorUI::update_thumbnails() {
         if (thumbnail_task) tasks.set_name(thumbnail_task, "Making thumbnails: " + std::to_string(++thumbnails_made) + " done");
         auto &state = thumbnails[data.id];
         state.vertices = data.vertices; state.triangles = data.triangles;
+        state.joints = data.joints; state.clips = data.clips;
         state.width = data.source_width; state.height = data.source_height;
         if (data.failed) { state.failed = true; continue; }
         if (data.type == assets::AssetType::Mesh) renderer.request_thumbnail(data.id.value, data.mesh, renderer::builtin_lit);
@@ -138,6 +139,12 @@ void EditorUI::asset_tooltip(const assets::AssetMetadata &meta) {
     if (found != thumbnails.end()) {
         if (found->second.width) ImGui::TextDisabled("%u x %u pixels", found->second.width, found->second.height);
         if (found->second.triangles) ImGui::TextDisabled("%zu triangles, %zu vertices", found->second.triangles, found->second.vertices);
+        if (found->second.joints) ImGui::TextDisabled("Skeleton of %zu joints", found->second.joints);
+        if (!found->second.clips.empty()) {
+            std::string names;
+            for (const auto &clip : found->second.clips) names += (names.empty() ? "" : ", ") + clip;
+            ImGui::TextDisabled("%zu animation%s: %s", found->second.clips.size(), found->second.clips.size() == 1 ? "" : "s", names.c_str());
+        }
     }
     ImGui::EndTooltip();
 }

@@ -10,6 +10,7 @@ class ResourceRegistry;
 // What the renderer holds, for diagnostics and leak checks.
 struct RendererStats {
     std::size_t objects = 0, parts = 0, lights = 0; // `parts` is the primitives submitted before culling.
+    std::size_t skinned = 0, posed = 0;             // Objects drawn with bones, and those of them in a pose other than rest.
     std::size_t particle_batches = 0, particles = 0; // Drawn in the latest frame.
     std::size_t meshes = 0, textures = 0;           // Asset resources on the GPU, not built-ins.
     std::size_t material_instances = 0;

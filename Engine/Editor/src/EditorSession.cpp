@@ -1,5 +1,6 @@
 #include <engine/editor/EditorSession.hpp>
 #include <engine/assets/importers.h>
+#include <engine/assets/skeleton.h>
 #include <engine/editor/EditorPrefs.hpp>
 #include <algorithm>
 #include <cmath>
@@ -39,6 +40,16 @@ renderer::MeshHandle mesh_handle(BuiltinMesh mesh) {
     case BuiltinMesh::Plane: return renderer::builtin_plane;
     default: return renderer::builtin_cube;
     }
+}
+// A posed skinned model's palette, empty for any other model or a pose that does not fit its skeleton.
+std::vector<assets::Matrix4> posed_palette(const renderer::RenderObject &object, const assets::MeshData &data) {
+    if (data.skin.empty() || !object.pose || object.pose->size() != data.skin.joints.size()) return {};
+    return assets::skinning_palette(data.skin, *object.pose);
+}
+// A model's box in its own space: where its pose puts it, or as it rests.
+assets::Bounds model_box(const renderer::RenderObject &object, const assets::MeshData &data) {
+    const auto palette = posed_palette(object, data);
+    return palette.empty() ? data.bounds : assets::skinned_bounds(data.skin, palette);
 }
 // Nearest t in [0, limit] where the local ray origin + t * ray enters the box, or a negative value for a miss.
 double box_hit(const glm::dvec3 &low, const glm::dvec3 &high, const glm::dvec3 &origin, const glm::dvec3 &ray, double limit) {
@@ -327,6 +338,7 @@ Result<void> EditorSession::new_scene() {
     auto r = execute(commands::ReplaceScene{SceneSnapshot{}}, "New Scene");
     if (!r) return r.error();
     selection_.clear();
+    poses_.clear();
     clean_.clear(); dirty_revision_ = ~std::uint64_t(0);
     document_.clear();
     view_state_ = {};
@@ -372,6 +384,7 @@ Result<void> EditorSession::load(const std::filesystem::path &path) {
     auto r = execute(commands::ReplaceScene{std::move(snapshot.value())}, "Load Scene");
     if (!r) return r.error();
     selection_.clear();
+    poses_.clear();
     mark_clean();
     document_ = path;
     load_view_state();
@@ -555,7 +568,8 @@ std::pair<EntityId, std::optional<double>> EditorSession::cast_ray(const rendere
         const glm::dvec3 origin(inverse * a), ray(inverse * d);
         // Models are tested by their bounding box.
         const auto data = resources_.find(object.mesh);
-        const double t = data ? box_hit(vector(data->bounds.min), vector(data->bounds.max), origin, ray, nearest) : hit(object.mesh, origin, ray, nearest);
+        const auto box = data ? model_box(object, *data) : assets::Bounds{};
+        const double t = data ? box_hit(vector(box.min), vector(box.max), origin, ray, nearest) : hit(object.mesh, origin, ray, nearest);
         if (t >= 0 && t < nearest) { nearest = t; entity = object.entity; }
     }
     if (!entity) return {0, std::nullopt};
@@ -619,9 +633,13 @@ std::optional<Vec3> EditorSession::nearest_vertex(const renderer::FrameSnapshot 
         const auto world = glm::make_mat4(object.world.matrix.data());
         if (const auto data = resources_.find(object.mesh)) {
             // A model far from the cursor is passed over by its box, so one with many vertices costs nothing unless near.
+            // A skinned model's box and vertices are where its pose, or its rest pose, puts them.
+            auto palette = posed_palette(object, *data);
+            const assets::Bounds box = palette.empty() ? data->bounds : assets::skinned_bounds(data->skin, palette);
+            if (palette.empty() && !data->skin.empty()) palette = assets::skinning_palette(data->skin, assets::rest_pose(data->skin));
             double min_x = std::numeric_limits<double>::max(), max_x = std::numeric_limits<double>::lowest(), min_y = min_x, max_y = max_x;
             bool behind = false;
-            const auto low = vector(data->bounds.min), high = vector(data->bounds.max);
+            const auto low = vector(box.min), high = vector(box.max);
             for (int i = 0; i < 8; ++i) {
                 const auto clip = clip_from_world * world * glm::dvec4(i & 1 ? high.x : low.x, i & 2 ? high.y : low.y, i & 4 ? high.z : low.z, 1);
                 if (clip.w <= 1e-6) { behind = true; break; }
@@ -629,7 +647,11 @@ std::optional<Vec3> EditorSession::nearest_vertex(const renderer::FrameSnapshot 
                 min_x = std::min(min_x, sx); max_x = std::max(max_x, sx); min_y = std::min(min_y, sy); max_y = std::max(max_y, sy);
             }
             if (!behind && (x < min_x - radius || x > max_x + radius || y < min_y - radius || y > max_y + radius)) continue;
-            for (const auto &vertex : data->vertices) consider(world, vector(vertex.position));
+            if (palette.empty()) {
+                for (const auto &vertex : data->vertices) consider(world, vector(vertex.position));
+            } else {
+                for (std::size_t i = 0; i < data->vertices.size(); ++i) consider(world, vector(assets::skinned_position(data->skin, palette, data->vertices[i], i)));
+            }
         } else if (object.mesh == renderer::builtin_plane) {
             for (const double sx : {-0.5, 0.5}) for (const double sz : {-0.5, 0.5}) consider(world, {sx, 0, sz});
         } else if (object.mesh == renderer::builtin_sphere) {
@@ -876,6 +898,8 @@ std::vector<EditorSession::ThumbnailData> EditorSession::poll_thumbnail_data() {
             data.mesh = resources_.mesh(data.id, assets_->revision(data.id), prepared->mesh);
             data.vertices = prepared->mesh->vertices.size();
             data.triangles = prepared->mesh->indices.size() / 3;
+            data.joints = prepared->mesh->skin.joints.size();
+            for (const auto &clip : prepared->mesh->clips) data.clips.push_back(clip.name);
         } else if (prepared && prepared->texture && prepared->texture->width && prepared->texture->height) {
             const auto &image = *prepared->texture;
             data.source_width = image.width; data.source_height = image.height;
@@ -982,7 +1006,7 @@ Result<renderer::Frame> EditorSession::frame(double aspect) {
                 if (resolved.material.index) parts.push_back({slot.slot, resolved.material});
                 if (!resolved.problem.empty()) problem(resolved.problem);
             }
-            meshes.push_back({e.id, handle, material, runtime_ || !hidden(e.id), surface, std::move(parts)});
+            meshes.push_back({e.id, handle, material, runtime_ || !hidden(e.id), surface, std::move(parts), pose(e.id)});
         }
         if (const auto &l = e.components.light; l && (runtime_ || !hidden(e.id))) {
             const auto kind = l->type == LightType::Point ? renderer::LightKind::Point : l->type == LightType::Spot ? renderer::LightKind::Spot : renderer::LightKind::Directional;
@@ -1609,6 +1633,7 @@ Result<void> EditorSession::open_project(const std::filesystem::path &root) {
     if (!std::filesystem::is_directory(root, ec)) return fail(ErrorCode::NotFound, "Project folder not found: " + root.generic_string());
     project_ = root;
     assets_.reset(); resolved_.clear();
+    poses_.clear(); // Joint orders belong to the old project's models.
     // Material and effect edits belong to the old project's files.
     material_drafts_.clear();
     effect_drafts_.clear();
@@ -1705,6 +1730,14 @@ Result<commands::Receipt> EditorSession::place_asset_at(assets::AssetId asset, c
     auto result = execute(commands::CreateEntity{std::move(name), t, 0, 0, Components{mesh, {}, {}}}, label);
     if (result) selection_.set(result.value().created.front());
     return result;
+}
+void EditorSession::set_pose(EntityId id, renderer::Pose pose) {
+    if (pose) poses_[id] = std::move(pose);
+    else poses_.erase(id);
+}
+renderer::Pose EditorSession::pose(EntityId id) const {
+    const auto found = poses_.find(id);
+    return found == poses_.end() ? nullptr : found->second;
 }
 std::shared_ptr<const assets::MeshData> EditorSession::model(const AssetRef &ref) const {
     return ref.empty() ? nullptr : resources_.find(resolve(ref, assets::AssetType::Mesh).mesh);

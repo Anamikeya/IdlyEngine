@@ -3,7 +3,9 @@ add_library(engine_assets STATIC
 	include/engine/assets/asset_types.h
 	include/engine/assets/importers.h
 	include/engine/assets/asset_database.h
+	include/engine/assets/skeleton.h
 	src/importers.cpp
+	src/skeleton.cpp
 	src/gltf_importer.cpp
 	src/asset_database.cpp
 )

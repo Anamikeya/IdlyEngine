@@ -59,6 +59,7 @@ struct ImportLimits {
 	std::size_t max_vertices = std::size_t{1} << 22;
 	std::size_t max_indices = std::size_t{1} << 24;
 	std::uint32_t max_texture_dimension = 16384;
+	std::size_t max_animation_keys = std::size_t{1} << 22; // All clips of a model together, after resampling.
 };
 
 struct AssetMetadata {
@@ -123,14 +124,92 @@ struct SubMesh {
 
 struct TextureData;
 
+// Column-major 4x4, as glTF and the renderer store them.
+using Matrix4 = std::array<float, 16>;
+inline constexpr Matrix4 identity_matrix{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+
+// A joint of a model's skeleton: a node of the source file. The rest transform is relative to the parent joint.
+struct Joint {
+	std::string name;                          // Unique within the skeleton.
+	int parent = -1;                           // An earlier joint, or -1 for a root.
+	std::array<float, 3> translation{};
+	std::array<float, 4> rotation{0, 0, 0, 1}; // Unit quaternion x, y, z, w.
+	std::array<float, 3> scale{1, 1, 1};
+
+	friend bool operator==(const Joint&, const Joint&) = default;
+};
+
+// One bone of the palette a skinned mesh is drawn with: the joint it follows, and the inverse of that joint's
+// model-space transform when the vertices were bound. Joint -1 is the model itself: vertices that follow no joint.
+// Its skinning matrix is joint_model[joint] * inverse_bind.
+struct SkinBinding {
+	int joint = -1;
+	Matrix4 inverse_bind = identity_matrix;
+	Bounds bounds; // Of the vertices it moves, as stored: a conservative box for any pose.
+
+	friend bool operator==(const SkinBinding&, const SkinBinding&) = default;
+};
+
+// Up to 4 bindings per vertex. Weights are positive and sum to 1, strongest first; unused slots have weight 0.
+struct VertexInfluence {
+	std::array<std::uint16_t, 4> binding{};
+	std::array<float, 4> weight{1, 0, 0, 0};
+
+	friend bool operator==(const VertexInfluence&, const VertexInfluence&) = default;
+};
+
+// Filament draws at most this many bones per renderable.
+inline constexpr std::size_t max_skin_bindings = 256;
+inline constexpr std::size_t max_skeleton_joints = 1024;
+
+// The skeleton of a model and how its vertices follow it. Empty for a model without skins or animations.
+// Skinned vertices keep the bind-space positions of the file; unskinned parts are baked as they rest and follow the
+// nearest joint above them rigidly. Linear blend skinning: position = sum of weight * skinning matrix * vertex.
+struct MeshSkin {
+	std::vector<Joint> joints;               // Parents before children.
+	std::vector<SkinBinding> bindings;       // At most max_skin_bindings.
+	std::vector<VertexInfluence> influences; // One per vertex of MeshData::vertices.
+
+	[[nodiscard]] bool empty() const noexcept { return joints.empty(); }
+	friend bool operator==(const MeshSkin&, const MeshSkin&) = default;
+};
+
+struct Vec3Key {
+	float time = 0;
+	std::array<float, 3> value{};
+	friend bool operator==(const Vec3Key&, const Vec3Key&) = default;
+};
+struct RotationKey {
+	float time = 0;
+	std::array<float, 4> value{0, 0, 0, 1}; // Unit quaternion x, y, z, w.
+	friend bool operator==(const RotationKey&, const RotationKey&) = default;
+};
+// Keys of one joint, linearly interpolated, times ascending. A channel without keys holds the joint's rest value.
+struct JointTrack {
+	std::vector<Vec3Key> translation;
+	std::vector<RotationKey> rotation;
+	std::vector<Vec3Key> scale;
+	friend bool operator==(const JointTrack&, const JointTrack&) = default;
+};
+// An animation of the skeleton. STEP keys become pairs of keys a moment apart; CUBICSPLINE is sampled at 30 Hz.
+struct AnimationClip {
+	std::string name;              // Unique within the model.
+	float duration = 0;            // Seconds: the last key's time. 0 for a single pose.
+	std::vector<JointTrack> tracks; // One per joint of the skeleton.
+	friend bool operator==(const AnimationClip&, const AnimationClip&) = default;
+};
+
 // Triangle list, counter-clockwise front faces, 32-bit indices.
 struct MeshData {
 	std::vector<MeshVertex> vertices;
 	std::vector<std::uint32_t> indices;
-	Bounds bounds;
+	Bounds bounds; // As the model rests: skinned vertices are placed by the skeleton's rest pose.
 	// GLB models: the parts and their embedded images. Empty for sources without materials (OBJ).
 	std::vector<SubMesh> submeshes;
 	std::vector<std::shared_ptr<const TextureData>> images;
+	// GLB models with skins or animated nodes.
+	MeshSkin skin;
+	std::vector<AnimationClip> clips;
 	// Features of the source that were ignored, for the host to show when the asset is imported.
 	std::vector<std::string> warnings;
 	// The source had no normals for some corners; area-weighted normals were generated for the mesh.

@@ -54,6 +54,11 @@ struct PartMaterial {
     MaterialHandle material;
     bool operator==(const PartMaterial &) const = default;
 };
+// A skeleton's pose: the model-space transform of each joint, column-major, in the order of the mesh's skeleton.
+// Shared, so a frame copies a pointer; whoever animates makes a new one each tick. Null: the mesh as it rests.
+using JointMatrix = std::array<float, 16>;
+using Pose = std::shared_ptr<const std::vector<JointMatrix>>;
+inline constexpr std::size_t max_pose_joints = 1024;
 struct MeshBinding {
     EntityId entity = 0;
     MeshHandle mesh;
@@ -61,6 +66,7 @@ struct MeshBinding {
     bool visible = true;
     Surface surface;
     std::vector<PartMaterial> parts;
+    Pose pose; // For a skinned mesh; a pose whose size is not the skeleton's draws the rest pose.
 };
 struct PerspectiveCamera {
     EntityId entity = 0;
@@ -86,6 +92,7 @@ struct RenderObject {
     WorldTransform world;
     Surface surface;
     std::vector<PartMaterial> parts;
+    Pose pose;
 };
 struct RenderLight {
     EntityId entity;

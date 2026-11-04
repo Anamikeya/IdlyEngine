@@ -152,7 +152,10 @@ selected, an edit reaches all of them, and values that differ show as "Multiple 
 background, and a long one shows a progress bar with Cancel. Files are copied into the project's `Assets` folder.
 
 Supported files are `.glb`, `.obj`, `.png`, `.jpg`, `.tga`, `.ppm` and `.hdr`, up to 64 MB. Re-export `.gltf` models as self-contained
-`.glb` files. Models import without animation: a skinned model comes in its bind pose.
+`.glb` files. A skinned or animated model brings its skeleton and animations with it; hold the mouse over it in the Asset Browser to
+see how many joints it has and the names of its animations. For now it stands in its rest pose: playing animations comes with the
+Animator component later in Milestone 5. A model that needs more than 256 bones to draw is refused, and a vertex moved by more than
+4 joints keeps the strongest 4.
 
 If you add files to `Assets` yourself, press **Rescan**.
 

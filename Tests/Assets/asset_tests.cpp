@@ -805,8 +805,11 @@ ENGINE_TEST(glb_reports_ignored_features)
 	spec.material = R"("alphaMode":"BLEND")";
 	const auto result = import_glb(triangle_glb(spec));
 	ENGINE_REQUIRE(static_cast<bool>(result));
-	ENGINE_CHECK(has_warning(result.value(), "skinning"));
-	ENGINE_CHECK(has_warning(result.value(), "animations"));
+	// Since Milestone 5 skins and animations are read; this skin skins nothing and the animation moves nothing.
+	ENGINE_CHECK(has_warning(result.value(), "skins that no mesh"));
+	ENGINE_CHECK(has_warning(result.value(), "animations that move nothing"));
+	ENGINE_CHECK(result.value().skin.empty());
+	ENGINE_CHECK(result.value().clips.empty());
 	ENGINE_CHECK(has_warning(result.value(), "cameras"));
 	ENGINE_CHECK(result.value().submeshes[0].material.alpha_mode == AlphaMode::Blend); // Kept since Milestone 4, no longer a warning.
 }
@@ -1158,8 +1161,9 @@ ENGINE_TEST(glb_real_models)
 	if (fs::exists(fox)) {
 		const auto mesh = import_glb(read_bytes(fox));
 		ENGINE_REQUIRE(static_cast<bool>(mesh));
-		ENGINE_CHECK(has_warning(mesh.value(), "skinning"));
-		ENGINE_CHECK(has_warning(mesh.value(), "animations"));
+		// Its skeleton and clips are checked in skin_tests.cpp.
+		ENGINE_CHECK(!mesh.value().skin.empty());
+		ENGINE_CHECK_EQ(mesh.value().clips.size(), std::size_t{3});
 	}
 	const fs::path webp = models / "third_party/models/DamagedHelmet/DamagedHelmetWebp.glb";
 	if (fs::exists(webp)) {

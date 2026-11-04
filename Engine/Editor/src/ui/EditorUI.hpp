@@ -350,7 +350,8 @@ struct EditorUI {
         bool requested = false, failed = false;
         renderer::MaterialHandle material;
         std::uint32_t width = 0, height = 0;
-        std::size_t vertices = 0, triangles = 0;
+        std::size_t vertices = 0, triangles = 0, joints = 0;
+        std::vector<std::string> clips;
     };
     std::map<assets::AssetId, AssetThumbnail> thumbnails;
     int thumbnail_cooldown = 0;

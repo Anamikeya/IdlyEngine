@@ -1,7 +1,7 @@
 # Milestone 5 plan: characters and effects
 
 Branch `milestone-5`, worktree `D:\AI\GameEngine-Integration`, created from `main` at `14c6642`.
-**Status: approved 2026-11-03. Slices 0 and 1 done; slice 2 (skinned import and drawing) next.** Do not merge into `main` without the user's approval.
+**Status: approved 2026-11-03. Slices 0, 1 and 2 done; slice 3 (animation runtime) next.** Do not merge into `main` without the user's approval.
 
 Decisions (2026-11-03): the plan is approved as written. ozz-animation 0.17.0 goes into `resources` at its pinned commit.
 The enemy is Quaternius' Universal Animation Library (CC0), downloaded in glTF. Edit-mode preview is on by default.
@@ -221,3 +221,41 @@ Cut order if time runs short: foot IK, then debris bodies (particles only), then
 - **Not done here:** the shooter's own effects (sparks, dust, glass) are slice 5. Real input runs used the CI-style build
   (`build-ux-windows-msvc-ci`), because an editor started on 2026-11-02 still holds the Release build's executable.
 
+### Slice 2: skinned import and drawing (done 2026-11-04)
+
+- **Skeletons (D3):** a GLB gets a skeleton when a mesh in its scene is skinned or a node in it is animated. The skeleton
+  holds those joints and every node above them, parents first, with unique names and rest translation, rotation and
+  scale (a node's matrix is split; shear is lost). At most 1,024 joints.
+- **Bones:** a palette of at most 256 bindings, each a joint and an inverse bind matrix. Skinned primitives keep their
+  bind-space vertices and ignore their node's transform, as glTF says. Every other part of a skinned or animated model is
+  baked as it rests and follows the nearest joint above it rigidly, or the model itself. All `JOINTS_n`/`WEIGHTS_n` sets
+  are read, repeated joints merged and the 4 strongest kept and renormalized, with a warning; bones exist only for kept
+  influences. A vertex with no weight stays where it was bound. More than 256 bones, a joint index outside its skin, or a
+  non-finite weight refuses the model. `mesh_scale` scales joint, key and inverse bind translations with the vertices.
+- **Clips (D4):** each glTF animation becomes a clip of per-joint translation, rotation and scale keys at linear
+  interpolation. STEP keys are held until 1 ms (or a quarter of the gap) before the next key; CUBICSPLINE is sampled at
+  30 Hz or finer, keeping the keys. Rotations are normalized. A channel without keys holds the rest value. Unnamed clips are
+  "Animation N", repeated names are numbered, and a clip with times that do not increase is skipped with a warning.
+  Morph weight channels and skins no mesh uses are ignored with a warning.
+- **`Engine/Assets/skeleton.h`:** compose, invert, rest and model poses, skinning palette, skinned positions, and a box for
+  any pose from each bone's own box (every vertex is a weighted mean of its bones' transforms of it). Bounds of a mesh are
+  its rest pose.
+- **Renderer:** frames carry an optional `Pose` per object: model-space joint matrices behind a shared pointer, so a frame
+  copies a pointer (D1). Extraction refuses a non-finite or oversized pose. Skinned meshes get a second vertex buffer of
+  bone indices and weights; renderables are built with the rest palette and take `setBones` and a new box only when the
+  pose changes. A pose that does not fit the skeleton draws the rest pose. `RendererStats` counts skinned and posed
+  objects. Thumbnails are drawn skinned at rest.
+- **Editor:** `EditorSession::set_pose`/`pose` hold poses by entity, outside the scene, its history and its file; new
+  scenes, loads and projects clear them. Picking and vertex snapping use the pose's box and skinned vertices. The Asset
+  Browser tooltip lists a model's joints and animations.
+- **Tests:** 457 of 457 CTest entries (new: `asset_tests` +9 in `skin_tests.cpp` on GLBs built in memory, and Fox from the
+  dependency tree; `editor_viewport_tests` +2). `--render-test` 59 of 59 with 11 skinning checks: a skinned bar at rest
+  matches its unskinned twin pixel for pixel, posing moves exactly the predicted pixels, a pose outside the rest box is not
+  culled, a pose of the wrong size draws the rest pose, deleting frees the renderable, and Fox draws at rest and in a frame of
+  its Run clip.
+- **Found by testing:** the render test showed imported models drawing from an unfilled index buffer after the vertex
+  buffer change; the line that fills it was restored. The old "PBR model is visible" check could not have caught it (the
+  empty background passed it), so it now compares with the same view without the model. Vertex snapping skipped posed
+  models whose rest box was away from the cursor; it now uses the pose's box, as picking does.
+- **Not done here:** clips are imported but nothing plays them yet; that is slice 3's Animator. Real input was not needed:
+  the only UI change is the tooltip text.
