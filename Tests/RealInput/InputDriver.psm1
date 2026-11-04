@@ -24,6 +24,7 @@ public static class Win32Input {
     [DllImport("user32.dll")] public static extern bool ClientToScreen(IntPtr h, ref POINT p);
     [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
     [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
     [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int cmd);
     [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
     [DllImport("user32.dll")] public static extern uint MapVirtualKey(uint code, uint map);
@@ -62,11 +63,23 @@ $script:origin = $null
 $script:width = 0
 $script:height = 0
 
-# Waits until nobody has touched the mouse or keyboard for a while; a person at the machine keeps it waiting.
+# A locked machine shows its lock screen in front of everything, and no window can take focus.
+function Test-DesktopLocked {
+    $owner = [uint32]0
+    [void][Win32Input]::GetWindowThreadProcessId([Win32Input]::GetForegroundWindow(), [ref]$owner)
+    $process = Get-Process -Id $owner -ErrorAction SilentlyContinue
+    return $process -and $process.ProcessName -eq 'LockApp'
+}
+
+# Waits until nobody has touched the mouse or keyboard for a while, on an unlocked desktop; a person at the machine, or
+# its lock screen, keeps it waiting.
 function Wait-ForIdleDesktop { param([int]$IdleSeconds = 45, [int]$TimeoutSeconds = 1800)
     $clock = [Diagnostics.Stopwatch]::StartNew()
-    while ([Win32Input]::IdleMilliseconds() -lt $IdleSeconds * 1000) {
-        if ($clock.Elapsed.TotalSeconds -gt $TimeoutSeconds) { throw "The desktop was in use for $TimeoutSeconds s; not starting a real-input run." }
+    while ((Test-DesktopLocked) -or [Win32Input]::IdleMilliseconds() -lt $IdleSeconds * 1000) {
+        if ($clock.Elapsed.TotalSeconds -gt $TimeoutSeconds) {
+            if (Test-DesktopLocked) { throw "The desktop was locked for $TimeoutSeconds s; not starting a real-input run." }
+            throw "The desktop was in use for $TimeoutSeconds s; not starting a real-input run."
+        }
         Start-Sleep -Seconds 2
     }
 }
@@ -88,8 +101,14 @@ function Start-Editor {
     }
     if ($script:editor.MainWindowHandle -eq [IntPtr]::Zero) { throw 'The editor showed no window' }
     $script:window = $script:editor.MainWindowHandle
-    Update-Window
-    Focus-Editor
+    # The callers start the editor before their own try/finally: one that cannot take focus is closed here, not left open.
+    try {
+        Update-Window
+        Focus-Editor
+    } catch {
+        Kill-Editor
+        throw
+    }
     return $script:editor
 }
 

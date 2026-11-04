@@ -173,6 +173,21 @@
       "license": "CC0-1.0",
       "bytes": 8966700,
       "sha256": "b337e526fd6a162013c2984aeec163f5fbb4f717252724dfc3f3458bd51df94b"
+    },
+    {
+      "file": "Assets/models/Mannequin.glb",
+      "source": "https://opengameart.org/sites/default/files/universal_animation_librarystandard.zip",
+      "archive_file": "Animation Library[Standard]/Godot/AnimationLibrary_Godot_Standard.glb",
+      "archive_bytes": 14541205,
+      "archive_sha256": "18ff1a7215f4852b320203e8aaf02a1578b5c8eef9027fbaedfcedc7b85a3ac2",
+      "page": "https://opengameart.org/node/174563",
+      "asset": "Universal Animation Library (Standard)",
+      "authors": [
+        "Quaternius"
+      ],
+      "license": "CC0-1.0",
+      "bytes": 6671104,
+      "sha256": "1b7bf67866360665426bb99e4c71bd619f19b408453c24e30f0c3071601eee5c"
     }
   ]
 }

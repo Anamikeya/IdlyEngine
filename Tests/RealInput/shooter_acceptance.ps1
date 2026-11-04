@@ -1,10 +1,13 @@
 <#
 .SYNOPSIS
-  Plays Physics Shooter with real mouse and keyboard input on the Release editor and checks the brief's 16 steps.
+  Plays Physics Shooter with real mouse and keyboard input on the Release editor and checks the brief's 16 steps, and
+  Milestone 5's enemies and effects (steps 17 to 22).
 
 .DESCRIPTION
   Runs against a temporary copy of the sample, so the repository's scene is never saved over. Each check reads the
   editor's --game-log, which reports true state; captures are saved as evidence. Keep hands off the mouse while it runs.
+  Milestone 5: enemies walk with footstep dust, flinch when shot and fall as ragdolls; shots flash at the muzzle; glass
+  breaks into shards; crates raise dust when they hit hard. Enemies are targets, so winning takes them too.
 
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File Tests/RealInput/shooter_acceptance.ps1 -Editor build-ux-windows-msvc-release\bin\engine_editor.exe -Output real-input-run
@@ -147,12 +150,19 @@ try {
     if ($clicks -gt 1) { Write-Host "Note: the Play click took $clicks attempts" }
     Save-Capture (Join-Path $Output '02_ready_overlay.jpg')
     Step 2 'Play shows the arena, ready to start' ($state.state -eq 'playing' -and $state.phase -eq 'ready') "phase $($state.phase), $($state.targets) targets"
+    $totalTargets = [int]$state.targets
     Click-Widget 'Panel.3D Viewport' 0.5 0.8
     Start-Sleep -Milliseconds 500
     Reset-Aim
     $state = Get-State
     Save-Capture (Join-Path $Output '02_arena_playing.jpg')
     Step 2 'A click starts the game and takes the mouse' ($state.phase -eq 'playing') "phase $($state.phase), time $($state.time)"
+    # 19. Enemies walk the arena, and their steps raise dust.
+    $stepsBefore = [int]$state.footsteps
+    Start-Sleep -Milliseconds 2500
+    $state = Get-State
+    Save-Capture (Join-Path $Output '19_enemies_walking.jpg')
+    Step 19 'Enemies walk, and their footsteps raise dust' ([int]$state.footsteps -ge $stepsBefore + 4 -and [int]$state.animators -ge 3) "footsteps $stepsBefore to $($state.footsteps), animators $($state.animators)"
 
     # 3. WASD.
     $moves = @{}
@@ -202,9 +212,14 @@ try {
     $after = Get-State
     Save-Capture (Join-Path $Output '07_shot_impact.jpg')
     Step 7 'Shooting consumes ammunition and marks the impact' ([int]$after.ammo -lt $ammo) "ammo $ammo to $($after.ammo)"
-    Shoot 3 # Two hits break the glass.
-    Start-Sleep -Milliseconds 200
-    $glassGone = [int](Get-State).entities
+    Step 18 'Each shot flashes at the muzzle' ([int]$after.flashes -ge 1) "flashes $($after.flashes), particles $($after.particles)"
+    Shoot 2 # Two hits break the glass.
+    Start-Sleep -Milliseconds 120
+    Save-Capture (Join-Path $Output '17_glass_breaking.jpg')
+    $state = Get-State
+    $glassGone = [int]$state.entities
+    Step 17 'Glass breaks into shards and slivers' ([int]$state.shards -eq 14 -and [int]$state.debris -ge 1) "shards $($state.shards), debris $($state.debris), particles $($state.particles)"
+    Start-Sleep -Milliseconds 300
     Save-Capture (Join-Path $Output '07_glass_broken.jpg')
 
     # 8. A dynamic crate moves when shot.
@@ -254,6 +269,14 @@ try {
     Save-Capture (Join-Path $Output '11_bonus_zone.jpg')
     Step 11 'A crate falling into the bonus zone scores through a sensor event' ($scoreAfter -ge $scoreBefore + 50) "score $scoreBefore to $scoreAfter"
 
+    # 20. An enemy flinches when shot and falls as a ragdoll; it counts, and stays where it fell.
+    $before = Get-State
+    $killed = Destroy-Target 'Enemy_2' 16
+    Start-Sleep -Milliseconds 1200
+    $state = Get-State
+    Save-Capture (Join-Path $Output '20_enemy_fallen.jpg')
+    Step 20 'A shot enemy flinches, then falls as a ragdoll' ($killed -and [int]$state.flinches -ge [int]$before.flinches + 1 -and [int]$state.fallen -eq [int]$before.fallen + 1 -and [int]$state.ragdolled -ge 1 -and [int]$state.targets -eq [int]$before.targets - 1) "flinches $($before.flinches) to $($state.flinches), fallen $($state.fallen), ragdolled $($state.ragdolled), targets $($before.targets) to $($state.targets)"
+
     # 12. Win: every remaining target, from where it can be seen.
     $results2 = @{}
     foreach ($name in 'Static_Target_2', 'Water_Bottle_Target', 'Dynamic_Target_1') { $results2[$name] = Destroy-Target $name }
@@ -275,8 +298,9 @@ try {
     # The pillar's target faces +Z, so it has to be shot from that side.
     $results2['Static_Target_3'] = Destroy-Target 'Static_Target_3'
     Walk-To 3 -1
-    foreach ($name in 'Chain_Target', 'Dynamic_Target_2') { $results2[$name] = Destroy-Target $name }
+    foreach ($name in 'Chain_Target', 'Dynamic_Target_2', 'Enemy_3') { $results2[$name] = Destroy-Target $name 16 }
     Walk-To 0 -3
+    $results2['Enemy_1'] = Destroy-Target 'Enemy_1' 16
     $results2['Moving_Target_1'] = Ambush-Target 'Moving_Target_1' @(0, 2.4, -7.8)
     Walk-To 9 4
     $results2['Moving_Target_2'] = Ambush-Target 'Moving_Target_2' @(14, 1.6, 4)
@@ -285,6 +309,7 @@ try {
     Save-Capture (Join-Path $Output '12_game_won.jpg')
     $state = Get-State
     Step 12 'The game can be won' ($state.phase -eq 'won') "phase $($state.phase), score $($state.score), targets $($state.targets), $([int][double]$state.time) s left"
+    Step 21 'Every enemy fell as a ragdoll, and crates raised dust as they hit' ([int]$state.fallen -eq 3 -and [int]$state.ragdolled -eq 3 -and [int]$state.dust -ge 1) "fallen $($state.fallen), ragdolled $($state.ragdolled), dust $($state.dust)"
 
     # 14. Restart from the win screen, with the key the screen offers.
     Press-Key 'R'
@@ -292,7 +317,7 @@ try {
     $state = Get-State
     Reset-Aim
     Save-Capture (Join-Path $Output '14_restarted.jpg')
-    Step 14 'Restart resets the scene' ($state.phase -eq 'playing' -and [int]$state.targets -eq 9 -and [int]$state.score -eq 0 -and [int]$state.ammo -eq 15) "phase $($state.phase), targets $($state.targets), score $($state.score), ammo $($state.ammo), time $($state.time)"
+    Step 14 'Restart resets the scene' ($state.phase -eq 'playing' -and [int]$state.targets -eq $totalTargets -and [int]$state.score -eq 0 -and [int]$state.ammo -eq 15 -and [int]$state.ragdolled -eq 0 -and [int]$state.debris -eq 0) "phase $($state.phase), targets $($state.targets), score $($state.score), ammo $($state.ammo), time $($state.time), ragdolled $($state.ragdolled)"
 
     # Esc releases the mouse and pauses; a click on the view takes it again.
     Press-Key 'Esc'
@@ -322,6 +347,7 @@ try {
     Key-Down 'Ctrl'; Press-Key 'S'; Key-Up 'Ctrl'; Start-Sleep -Milliseconds 500
     $again = (Get-FileHash $scene -Algorithm SHA256).Hash
     Step 15 'Stop restores the editor scene' ($state.state -eq 'editing' -and $state.dirty -eq '0' -and $again -eq $saved) "state $($state.state), dirty $($state.dirty), saved file identical: $($again -eq $saved)"
+    Step 22 'Stop leaves no ragdoll, debris or particle behind' ([int]$state.ragdolled -eq 0 -and [int]$state.debris -eq 0 -and $state.ragdoll_parts -eq '0') "ragdolled $($state.ragdolled), debris $($state.debris), parts $($state.ragdoll_parts)"
 
     # 16. The editor still works.
     $count = [int](Get-State).entities

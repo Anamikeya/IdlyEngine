@@ -542,6 +542,8 @@ public:
     Result<std::uint64_t> spawn_debris(EntityId look, const Vec3 &position, const Quaternion &rotation, const Vec3 &velocity,
                                        const Vec3 &spin = {}, double lifetime = 10);
     std::vector<physics::DebrisState> debris() const;
+    // What the run's game asked for that could not be done, such as a ragdoll for a model without a skeleton.
+    const std::vector<std::string> &game_issues() const;
 
     // ---- Lighting ----
     // The environment in force for the shown scene: the first by entity ID, or the defaults.
@@ -585,6 +587,11 @@ private:
     std::optional<RagdollBuild> ragdoll_build(EntityId, std::string &problem) const;
     // Poses the run's ragdolls from their bodies; tick() calls it after physics.
     void pose_ragdolls();
+    // The lowest joint of the entity as drawn, in the world: where a foot lands. Its origin when it has no pose.
+    physics::Vec3 lowest_joint(EntityId) const;
+    // Plays what the game asked for on the run's animator: Walk is the Animator's clip, Idle a clip named "idle", Flinch
+    // one named "hit", layered on top. A name that starts with the word wins over one that only has it.
+    void play_cue(EntityId, gameplay::AnimationCue);
 };
 // Keeps a transaction open for a scope. Nested guards join the outer one.
 class ScopedTransaction {

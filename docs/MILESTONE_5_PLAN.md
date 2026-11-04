@@ -1,7 +1,7 @@
 # Milestone 5 plan: characters and effects
 
 Branch `milestone-5`, worktree `D:\AI\GameEngine-Integration`, created from `main` at `14c6642`.
-**Status: approved 2026-11-03. Slices 0 to 4 done; slice 5 (the shooter) next.** Do not merge into `main` without the user's approval.
+**Status: approved 2026-11-03. Slices 0 to 4 done; slice 5 (the shooter) done but for its real-input run; slice 6 next.** Do not merge into `main` without the user's approval.
 
 Decisions (2026-11-03): the plan is approved as written. ozz-animation 0.17.0 goes into `resources` at its pinned commit.
 The enemy is Quaternius' Universal Animation Library (CC0), downloaded in glTF. Edit-mode preview is on by default.
@@ -406,3 +406,55 @@ Cut order if time runs short: foot IK, then debris bodies (particles only), then
     now go beside the last one only when they fit. The script checks that an item is wholly inside its panel: clipped items
     keep their place in the UI map. Earlier runs also picked combo rows without opening the combo, a fault in the script.
   - `small` is a Windows macro.
+
+### Slice 5: the shooter (done 2026-11-04)
+
+- **The enemy character (decision 2):** Quaternius' Universal Animation Library, Standard version (CC0), from OpenGameArt.
+  Its Godot GLB is `Samples/PhysicsShooter/Assets/models/Mannequin.glb`, unchanged: a 1.83 m mannequin, 53 joints and 46
+  clips, among them `Walk_Loop`, `Idle_Loop`, `Hit_Chest` and `Death01`. The license, source and both checksums are in
+  `ASSET_LICENSES.md` and `asset_manifest.json`. Its `.meta` adds two footstep events to `Walk_Loop`, at the frames where
+  each foot plants, worked out by sampling the clip.
+- **Gameplay** (`Engine/Gameplay`), still with no animation or editor dependency:
+  - **`enemy`:** patrols between two points, faces the way it walks, stands at each end, and turns at a rate. A shot
+    staggers it for a moment.
+  - **Requests to the host:** the game asks for animations by role (walk is the Animator's clip, idle and flinch are found
+    by name, the flinch layered on top). It asks for ragdolls with the killing shot's push and point.
+  - **Death:** an entity whose Ragdoll falls on death stays in the scene as a fallen target, and takes no more damage.
+    `standing_targets()` lists the targets still up.
+  - **`hear()`:** the host passes clip events with the entity's lowest joint, and footsteps fire the `footstep_effect`
+    template there.
+  - **`muzzle_effect`:** a template under the gun fires at its world position along the aim, every shot.
+  - **`dust_effect`:** hit events above a speed fire dust at the contact, once a cooldown for each body.
+  - **`breakable` and `shard`:** destroyed, an entity breaks into debris like the shard template, spread through its box,
+    thrown along the shot from a seeded stream, and fires the template's slivers.
+  - **`GameCounters`:** running totals for tests and logs.
+- **Session:** each tick it hears the run's clip events (not for ragdolls), plays what the game cued, and starts the
+  ragdolls it asked for. Problems go to `game_issues()`.
+- **The game log:** lists only standing targets, at their first collider's middle (an enemy's chest), and the game's counters.
+- **The sample**, regenerated, now in format 7:
+  - Effects in `Assets/effects/`: sparks, muzzle flash, crate dust, footstep dust and glass slivers. Their templates sit
+    below the floor.
+  - The impact template fires sparks instead of copying a mesh. A Muzzle sits at the barrel's tip, and the glass barrier
+    breaks into 14 shards.
+  - Three enemies patrol open lanes with 75 health, worth 200 each. There are 12 targets now.
+- **Tests:** 533 of 533 CTest entries in Release and in the CI configuration; `--render-test` 71 of 71 and `--smoke` pass.
+  - New: `gameplay_tests` +9, `asset_tests` +1, and `editor_shooter_tests` 4, which play the real sample with the session.
+  - The sample's own tests now count 12 targets. Winning goes by standing targets, and the glass test stops firing once it
+    breaks, because an enemy walks behind it.
+  - **Real input: not run yet.** `Tests/RealInput/shooter_acceptance.ps1` gains steps 17 to 22 and kills the enemies to
+    win. Both attempts stopped before step 1 because the machine was locked; nothing was played. The run is still owed.
+- **Deviations from the plan:**
+  - Foot IK does not probe the ground: it is first in the cut order, the arena's floor is flat, and the runtime's two-bone IK
+    from slice 3 is there.
+  - Enemies do not attack. The plan asks for patrolling, flinching and dying; losing is still the clock.
+  - Clips are found by convention (Walk is the Animator's clip; Idle and Flinch the first with "idle" and "hit" in the name),
+    because behaviors hold numbers only.
+- **Found by testing and review:**
+  - The sample's glass test kept firing after the glass broke and killed the enemy walking behind it.
+  - Idle went to the first clip with "idle" in its name, the mannequin's `Crouch_Idle_Loop`. A name that starts with the
+    word now wins; a test checks that an enemy stands in `Idle_Loop`.
+  - Enemies sent a transform every tick, even standing; only a change is sent now.
+  - A real-input run that could not take focus at the start left its editor open, because every script starts the editor
+    before its own `finally`. `Start-Editor` now closes it. A locked desktop passed the idle wait and failed as "someone is
+    using the desktop"; the wait now also waits out the lock screen.
+  - Running test executables from the repository's folder left their scratch folders there; they were removed.

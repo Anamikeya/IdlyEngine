@@ -3,6 +3,7 @@
 #include <engine/assets/skeleton.h>
 #include <engine/editor/EditorPrefs.hpp>
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <fstream>
 #include <limits>
@@ -160,6 +161,7 @@ struct EditorSession::Runtime {
         renderer::Pose pose;
     };
     std::map<EntityId, RagdollRun> ragdolls;
+    std::vector<std::string> game_issues; // Requests of the game that could not be carried out, newest last.
     bool paused = false;
     std::uint64_t ticks = 0;
     std::chrono::nanoseconds accumulated{0};
@@ -1304,10 +1306,26 @@ void EditorSession::tick() {
     const auto after_physics = std::chrono::steady_clock::now();
     // Poses advance with the tick, so a run's animation is the same however the frames fall.
     r.animation.update(std::chrono::duration<double>(fixed_step).count());
-    keep_events(r.animation.take_events());
+    auto heard = r.animation.take_events();
+    if (r.game) {
+        // The game hears clip events where the entity's foot is: its lowest joint. A ragdoll's animator is not its pose.
+        std::vector<gameplay::AnimationNotice> notices;
+        for (const auto &event : heard)
+            if (!r.ragdolls.contains(event.entity)) notices.push_back({event.entity, event.name, lowest_joint(event.entity)});
+        r.game->hear(notices);
+    }
+    keep_events(std::move(heard));
     pose_ragdolls();
     if (r.game) {
         r.game->post_physics();
+        // What the game asked of the animations and ragdolls.
+        for (const auto &request : r.game->animation_requests()) play_cue(request.entity, request.cue);
+        for (const auto &request : r.game->ragdoll_requests()) {
+            const auto push = request.pushed ? std::optional<std::pair<Vec3, Vec3>>(std::pair<Vec3, Vec3>{
+                                                   {request.impulse.x, request.impulse.y, request.impulse.z}, {request.point.x, request.point.y, request.point.z}})
+                                             : std::nullopt;
+            if (auto fell = start_ragdoll(request.entity, push); !fell) r.game_issues.push_back(fell.error().message);
+        }
         // One-shot effects the game asked for, from the emitter on their source entity. Visual only.
         for (const auto &event : r.game->effect_events()) {
             const auto source = r.scene.inspect(event.source);
@@ -2315,5 +2333,45 @@ Result<std::uint64_t> EditorSession::spawn_debris(EntityId look, const Vec3 &pos
 }
 std::vector<physics::DebrisState> EditorSession::debris() const {
     return runtime_ ? runtime_->physics->debris() : std::vector<physics::DebrisState>{};
+}
+physics::Vec3 EditorSession::lowest_joint(EntityId id) const {
+    const auto world = drawn_world(id);
+    if (!world) return {};
+    const glm::dmat4 m = glm::make_mat4(world->matrix.data());
+    glm::dvec3 lowest(m[3]);
+    if (const auto posed = shown_pose(id); posed && !posed->empty()) {
+        lowest.y = std::numeric_limits<double>::max();
+        for (const auto &joint : *posed) {
+            const glm::dvec3 p(m * glm::dvec4(joint[12], joint[13], joint[14], 1));
+            if (p.y < lowest.y) lowest = p;
+        }
+    }
+    return {float(lowest.x), float(lowest.y), float(lowest.z)};
+}
+namespace {
+bool names(std::string_view clip, std::string_view part) {
+    return !std::ranges::search(clip, part, [](char a, char b) { return std::tolower(static_cast<unsigned char>(a)) == std::tolower(static_cast<unsigned char>(b)); }).empty();
+}
+}
+void EditorSession::play_cue(EntityId id, gameplay::AnimationCue cue) {
+    if (!runtime_ || runtime_->ragdolls.contains(id)) return;
+    const auto record = scene().inspect(id);
+    const auto clips = clip_set(id);
+    if (!record || !record->components.animator || !clips) return;
+    // Walk is what the Animator plays; the others are found by name.
+    std::string clip = cue == gameplay::AnimationCue::Walk ? record->components.animator->clip : std::string{};
+    const std::string_view part = cue == gameplay::AnimationCue::Idle ? "idle" : "hit";
+    // A clip whose name starts with the word first ("Idle_Loop" over "Crouch_Idle_Loop"), then any that has it.
+    for (std::size_t i = 0; i < clips->size() && clip.empty(); ++i)
+        if (names(std::string_view(clips->name(i)).substr(0, part.size()), part)) clip = clips->name(i);
+    for (std::size_t i = 0; i < clips->size() && clip.empty(); ++i)
+        if (names(clips->name(i), part)) clip = clips->name(i);
+    if (clip.empty()) return;
+    if (cue == gameplay::AnimationCue::Flinch) (void)runtime_->animation.play_layered(id, clip, 1.0, 0.08);
+    else (void)runtime_->animation.play(id, clip, 0.25, true);
+}
+const std::vector<std::string> &EditorSession::game_issues() const {
+    static const std::vector<std::string> none;
+    return runtime_ ? runtime_->game_issues : none;
 }
 } // namespace engine::editor

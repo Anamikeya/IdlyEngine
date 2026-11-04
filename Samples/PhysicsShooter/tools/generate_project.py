@@ -21,8 +21,9 @@ def ref(path):
     return f'{asset_id(path)} "{path}"' if path else "-"
 
 
-def write_meta(path):
-    (ASSETS / (path + ".meta")).write_text(f"version = 1\nid = {asset_id(path)}\n", newline="\n")
+def write_meta(path, extra=()):
+    lines = [f"version = 1", f"id = {asset_id(path)}", *extra]
+    (ASSETS / (path + ".meta")).write_text("\n".join(lines) + "\n", newline="\n")
 
 
 def number(v):
@@ -70,9 +71,41 @@ BONUS = material("bonus_zone", base=(0.25, 0.95, 0.4, 0.16), roughness=0.6, emis
 PICKUP_TIME = material("pickup_time", base=(0.2, 0.9, 1, 1), roughness=0.2, emissive=(0.2, 0.9, 1), strength=2.5)
 PICKUP_AMMO = material("pickup_ammo", base=(1, 0.9, 0.2, 1), roughness=0.2, emissive=(1, 0.85, 0.15), strength=2.5)
 BOTTLE = "models/WaterBottle.glb"
+MANNEQUIN = "models/Mannequin.glb"
 SKY = "environments/sky_1k.hdr"
 for file in ([f"textures/{p}_{r}.jpg" for p in ("floor", "wall", "metal", "wood") for r in ("base", "normal", "arm")] + [BOTTLE, SKY]):
     write_meta(file)
+# The enemy's walk plants its left foot as the loop starts and its right two thirds of a second in: footstep dust.
+write_meta(MANNEQUIN, ['event = 0.02 footstep "Walk_Loop"', 'event = 0.667 footstep "Walk_Loop"'])
+
+
+def effect(name, **values):
+    """A particle effect file; values not given keep the engine's defaults."""
+    path = f"effects/{name}.effect"
+    lines = ["ENGINE_EFFECT 1"]
+    for key, value in values.items():
+        lines.append(f"{key} " + (" ".join(map(number, value)) if isinstance(value, (tuple, list)) else value if isinstance(value, str) else number(value)))
+    target = ASSETS / path
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("\n".join(lines) + "\n", newline="\n")
+    write_meta(path)
+    return path
+
+
+# One-shot effects gameplay fires: each a burst at the start of a short cycle.
+SPARKS = effect("sparks", duration=0.5, rate=0, burst=18, lifetime=(0.15, 0.4), speed=(3, 7), cone=45, drag=1, stretch=0.03,
+                size=(0, 0.03, 1, 0.012), color=(0, 1, 0.85, 0.5, 1, 0.6, 1, 0.55, 0.2, 0.85, 1, 0.85, 0.25, 0.05, 0),
+                emissive_strength=6, blend="additive", collide_floor=1, bounce=0.3, max_particles=400)
+MUZZLE = effect("muzzle_flash", duration=0.2, rate=0, burst=12, lifetime=(0.03, 0.08), speed=(0.5, 3), cone=22, acceleration=(0, 0, 0),
+                size=(0, 0.05, 0.3, 0.11, 1, 0.02), color=(0, 1, 0.9, 0.55, 1, 1, 1, 0.45, 0.1, 0), emissive_strength=9, blend="additive",
+                max_particles=200)
+DUST = effect("crate_dust", duration=1, rate=0, burst=14, lifetime=(0.6, 1.3), speed=(0.3, 1.3), cone=75, acceleration=(0, 0.2, 0), drag=2.5,
+              size=(0, 0.08, 1, 0.5), color=(0, 0.62, 0.56, 0.48, 0.45, 1, 0.62, 0.56, 0.48, 0), blend="alpha", max_particles=400)
+STEP_DUST = effect("footstep_dust", duration=0.6, rate=0, burst=7, lifetime=(0.35, 0.8), speed=(0.2, 0.7), cone=85, acceleration=(0, 0.1, 0),
+                   drag=3, size=(0, 0.04, 1, 0.22), color=(0, 0.58, 0.55, 0.5, 0.35, 1, 0.58, 0.55, 0.5, 0), blend="alpha", max_particles=300)
+SLIVERS = effect("glass_slivers", duration=1, rate=0, burst=45, lifetime=(0.4, 1.1), speed=(1.5, 4.5), cone=55, drag=0.4, spin=(-400, 400),
+                 size=(0, 0.035, 1, 0.015), color=(0, 0.85, 0.95, 1, 0.9, 1, 0.85, 0.95, 1, 0), emissive_strength=1.5, blend="additive",
+                 collide_floor=1, bounce=0.2, max_particles=600)
 
 
 def euler(pitch=0.0, yaw=0.0):
@@ -120,16 +153,26 @@ class Scene:
         fields = " ".join(f"{k} {number(v)}" for k, v in values.items())
         self.components.append(f"BEHAVIOR {id} {kind} {len(values)}" + (f" {fields}" if fields else ""))
 
+    def emitter(self, id, effect_path, auto_play=0, loop=0, rate_scale=1):
+        self.components.append(f"EMITTER {id} {ref(effect_path)} {auto_play} {loop} {number(rate_scale)}")
+
+    def animator(self, id, clip, speed=1, loop=1, start=0, preview=1):
+        self.components.append(f'ANIMATOR {id} - "{clip}" {number(speed)} {loop} {number(start)} {preview}')
+
+    def ragdoll(self, id, trigger=0, density=1000, swing=40, twist=20, friction=0.5):
+        self.components.append(f"RAGDOLL {id} {trigger} {number(density)} {number(swing)} {number(twist)} {number(friction)}")
+
     def environment(self, id, image, sky, horizon, ground, intensity, ev100, quality="medium", distance=50):
         source = "image" if image else "procedural"
         colors = " ".join(number(c) for color in (sky, horizon, ground) for c in color)
         self.components.append(f"ENVIRONMENT {id} {source} {ref(image)} {colors} {number(intensity)} 0 1 {number(ev100)} aces {quality} {number(distance)} 1 1")
 
     def write(self, path):
-        order = {"MESH": 0, "CAMERA": 1, "LIGHT": 2, "BODY": 3, "COLLIDER": 4, "ENVIRONMENT": 5, "BEHAVIOR": 6}
+        order = {"MESH": 0, "CAMERA": 1, "LIGHT": 2, "BODY": 3, "COLLIDER": 4, "ENVIRONMENT": 5, "BEHAVIOR": 6, "EMITTER": 7,
+                 "ANIMATOR": 8, "RAGDOLL": 9}
         # A stable sort keeps colliders and behaviors in the order they were added.
         records = sorted(self.components, key=lambda r: (int(r.split()[1]), order[r.split()[0]]))
-        text = [f"ENGINE_SCENE 6 {self.next} {len(self.entities)}"] + self.entities + [f"COMPONENTS {len(records)}"] + records
+        text = [f"ENGINE_SCENE 7 {self.next} {len(self.entities)}"] + self.entities + [f"COMPONENTS {len(records)}"] + records
         path.write_text("\n".join(text) + "\n", newline="\n")
 
 
@@ -156,9 +199,21 @@ def physics_shooter():
     s.environment(env, SKY, (0.32, 0.5, 0.82), (0.78, 0.84, 0.92), (0.3, 0.27, 0.24), intensity=22000, ev100=14.6)
     sun = s.add("Sun", (0, 20, 0), rotation=euler(-52, 38))
     s.light(sun, "directional", (1, 0.95, 0.86), 85000, shadows=1)
-    effect = s.add("Impact Effect Template", (0, -40, 0))
-    s.mesh(effect, "sphere", mat=SPARK)
-    s.behavior(effect, "impact_effect", lifetime=0.22, scale=0.14)
+    # Effect templates, out of sight below the floor. Gameplay fires their emitters' effects where things happen.
+    sparks = s.add("Impact Effect Template", (0, -40, 0))
+    s.emitter(sparks, SPARKS)
+    s.behavior(sparks, "impact_effect", lifetime=0.22, scale=0.14)
+    dust = s.add("Crate Dust Template", (2, -40, 0))
+    s.emitter(dust, DUST)
+    s.behavior(dust, "dust_effect", min_speed=3.5, cooldown=0.3)
+    steps = s.add("Footstep Dust Template", (4, -40, 0))
+    s.emitter(steps, STEP_DUST)
+    s.behavior(steps, "footstep_effect")
+    # What glass breaks into: pieces like this one, and slivers.
+    shard = s.add("Glass Shard Template", (6, -40, 0), (0.22, 0.16, 0.012))
+    s.mesh(shard, mat=GLASS)
+    s.emitter(shard, SLIVERS)
+    s.behavior(shard, "shard", lifetime=5, density=2500)
 
     # The arena: 32 m square, a floor and four walls.
     solid(s, "Floor", (0, -0.5, 0), (32, 1, 32), FLOOR, uv=(10, 10))
@@ -183,6 +238,10 @@ def physics_shooter():
     s.mesh(barrel, mat=GUN)
     grip = s.add("Gun Grip", (0, -0.75, 0.28), (0.8, 0.9, 0.3), parent=gun)
     s.mesh(grip, mat=GUN_ACCENT)
+    # Where shots leave the barrel: the flash fires here, along the aim.
+    muzzle = s.add("Muzzle", (0, 0, -0.56), parent=barrel)
+    s.emitter(muzzle, MUZZLE)
+    s.behavior(muzzle, "muzzle_effect")
 
     # Cover and obstacles.
     solid(s, "Low Wall Left", (-5.5, 0.6, 7), (5, 1.2, 0.7), METAL, uv=(3, 1))
@@ -194,6 +253,7 @@ def physics_shooter():
     s.mesh(glass, mat=GLASS)
     s.collider(glass)
     s.behavior(glass, "health", max=50)
+    s.behavior(glass, "breakable", shards=14, speed=2.5)
     solid(s, "Platform", (11, 0.6, -9), (7, 1.2, 7), METAL, uv=(4, 4))
     solid(s, "Step", (6.8, 0.25, -11), (1.4, 0.5, 3), METAL)
 
@@ -279,6 +339,18 @@ def physics_shooter():
     s.behavior(bottle, "health", max=50)
     s.behavior(bottle, "target", points=250)
     s.behavior(bottle, "impact_damage", min_speed=4, scale=30)
+
+    # Enemies: Quaternius' mannequin walking back and forth, each a target. Shot they flinch; killed they fall as ragdolls.
+    for i, (a, b) in enumerate((((-12, 4), (-7, 4)), ((0, -3), (0, -9)), ((8.5, 5.5), (12.5, 5.5)))):
+        enemy = s.add(f"Enemy {i + 1}", (a[0], 0, a[1]), rotation=euler(0, math.degrees(math.atan2(b[0] - a[0], b[1] - a[1]))))
+        s.mesh(enemy, model=MANNEQUIN)
+        s.body(enemy, "kinematic", sleep=0)
+        s.collider(enemy, "capsule", radius=0.32, half_height=0.6, center=(0, 0.92, 0))
+        s.behavior(enemy, "health", max=75)
+        s.behavior(enemy, "target", points=200)
+        s.behavior(enemy, "enemy", walk_speed=1.05, ax=a[0], az=a[1], bx=b[0], bz=b[1], pause=1.6, turn_rate=3, flinch_time=0.45)
+        s.animator(enemy, "Walk_Loop")
+        s.ragdoll(enemy)
 
     # Pickups: sensors that disappear when the player walks through them. Time is on the platform, ammo behind cover.
     time_pickup = s.add("Time Pickup", (13.2, 1.9, -11.2), (0.5, 0.5, 0.5))

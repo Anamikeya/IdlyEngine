@@ -119,13 +119,21 @@ struct StateLog {
             out << " phase=" << gameplay::to_string(hud.phase) << " score=" << hud.score << " targets=" << hud.targets_remaining << " time=" << hud.time_remaining
                 << " ammo=" << hud.ammo << " reserve=" << hud.reserve << " reloading=" << (hud.reloading ? 1 : 0) << " grounded=" << (game->grounded() ? 1 : 0) << " shots=" << game->shots().size();
             if (const auto w = session.scene().world_transform(game->camera())) out << " eye=" << w->matrix[12] << ',' << w->matrix[13] << ',' << w->matrix[14];
-            for (const auto &e : session.scene().snapshot().entities)
-                if (std::ranges::any_of(e.components.behaviors, [](const BehaviorComponent &b) { return b.type == "target"; }))
-                    if (const auto w = session.scene().world_transform(e.id)) {
-                        std::string name = e.name;
-                        std::ranges::replace(name, ' ', '_');
-                        out << " t:" << name << '=' << w->matrix[12] << ',' << w->matrix[13] << ',' << w->matrix[14];
-                    }
+            const auto counters = game->counters();
+            out << " flinches=" << counters.flinches << " fallen=" << counters.ragdolls << " footsteps=" << counters.footsteps << " shards=" << counters.shards
+                << " dust=" << counters.dust << " flashes=" << counters.muzzle_flashes;
+            // Targets still standing, at the middle of their first collider: an enemy's chest, not its feet.
+            for (const auto id : game->standing_targets()) {
+                const auto record = session.scene().inspect(id);
+                const auto w = session.scene().world_transform(id);
+                if (!record || !w) continue;
+                std::string name = record->name;
+                std::ranges::replace(name, ' ', '_');
+                const auto c = record->components.colliders.empty() ? Vec3{} : record->components.colliders.front().center;
+                const auto &m = w->matrix;
+                out << " t:" << name << '=' << m[0] * c.x + m[4] * c.y + m[8] * c.z + m[12] << ',' << m[1] * c.x + m[5] * c.y + m[9] * c.z + m[13] << ','
+                    << m[2] * c.x + m[6] * c.y + m[10] * c.z + m[14];
+            }
         }
         out << '\n';
         if (session.game() && now - last_bodies >= std::chrono::seconds(1)) {

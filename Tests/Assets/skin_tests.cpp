@@ -440,6 +440,35 @@ ENGINE_TEST(glb_real_skinned_model_brings_its_skeleton_and_clips)
 	}
 }
 
+// The shooter's enemy (Quaternius' Universal Animation Library, CC0): a humanoid in metres with its clips.
+ENGINE_TEST(glb_the_sample_enemy_brings_a_humanoid_skeleton_and_its_clips)
+{
+	if (!gltf_import_available()) {
+		return;
+	}
+	const fs::path model = fs::path(GAMEENGINE_TEST_SAMPLES_DIR) / "PhysicsShooter/Assets/models/Mannequin.glb";
+	ENGINE_REQUIRE(fs::exists(model));
+	std::ifstream in(model, std::ios::binary);
+	const std::vector<std::uint8_t> bytes{std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
+	const auto result = import_glb(bytes);
+	ENGINE_REQUIRE(static_cast<bool>(result));
+	const MeshData& mesh = result.value();
+	// The skin's 53 joints and the node above them.
+	ENGINE_CHECK_EQ(mesh.skin.joints.size(), std::size_t{54});
+	ENGINE_CHECK(std::any_of(mesh.skin.joints.begin(), mesh.skin.joints.end(), [](const Joint& j) { return j.name == "DEF-foot.L"; }));
+	ENGINE_CHECK_EQ(mesh.skin.influences.size(), mesh.vertices.size());
+	ENGINE_CHECK(!has_warning(mesh, "skin"));
+	const auto clip = [&](const std::string& name) {
+		return std::find_if(mesh.clips.begin(), mesh.clips.end(), [&](const AnimationClip& c) { return c.name == name; });
+	};
+	ENGINE_CHECK_EQ(mesh.clips.size(), std::size_t{46});
+	for (const char* name : {"Walk_Loop", "Idle_Loop", "Hit_Chest", "Death01"}) ENGINE_CHECK(clip(name) != mesh.clips.end());
+	ENGINE_CHECK_NEAR(clip("Walk_Loop")->duration, 1.3333333, 1e-5);
+	// It stands about 1.8 m tall on the origin.
+	ENGINE_CHECK_NEAR(mesh.bounds.max[1] - mesh.bounds.min[1], 1.83, 0.02);
+	ENGINE_CHECK(std::abs(mesh.bounds.min[1]) < 0.02f);
+}
+
 ENGINE_TEST(meta_files_keep_clip_events_sorted_and_checked)
 {
 	const auto parsed = parse_meta("version = 1\n"

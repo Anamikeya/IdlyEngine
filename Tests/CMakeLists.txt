@@ -95,6 +95,11 @@ if(TARGET engine_editor_session)
 		LIBRARIES engine_editor_session)
 	target_compile_definitions(editor_ragdoll_tests PRIVATE "GAMEENGINE_TEST_RESOURCES_DIR=\"${GAMEENGINE_RESOURCES_DIR}\"")
 	target_include_directories(editor_ragdoll_tests SYSTEM PRIVATE "${GAMEENGINE_RESOURCES_DIR}/glm")
+	gameengine_add_test_executable(editor_shooter_tests
+		LABELS editor gameplay unit
+		SOURCES Editor/editor_shooter_tests.cpp
+		LIBRARIES engine_editor_session)
+	target_compile_definitions(editor_shooter_tests PRIVATE "GAMEENGINE_TEST_SAMPLES_DIR=\"${CMAKE_SOURCE_DIR}/Samples\"")
 	target_compile_definitions(editor_panels_tests PRIVATE "GAMEENGINE_TEST_ASSETS_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/Assets\"")
 endif()
 

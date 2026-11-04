@@ -1,0 +1,4 @@
+version = 1
+id = 3587bebaf186dc15
+event = 0.02 footstep "Walk_Loop"
+event = 0.667 footstep "Walk_Loop"

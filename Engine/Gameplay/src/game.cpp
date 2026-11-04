@@ -91,6 +91,21 @@ struct Flash {
 struct Effect {
 	double remaining;
 };
+// Patrols between two points (D: slice 5). The pose is the host's; this moves the entity and asks for animations.
+struct EnemyComponent {
+	double walk_speed, pause, turn_rate, flinch_time;
+	Vec3 a, b;
+	double yaw = 0;
+	bool to_b = true;
+	double waiting = 0, flinching = 0;
+	AnimationCue playing = AnimationCue::Walk;
+};
+struct BreakableComponent {
+	int shards;
+	double speed;
+};
+// Killed into a ragdoll: still in the scene, no longer a living target.
+struct Fallen {};
 // The game's rules, as a Flecs singleton.
 struct GameState {
 	GamePhase phase = GamePhase::Ready;
@@ -114,6 +129,12 @@ const std::vector<BehaviorComponent>& behavior_templates()
 		{"bonus_zone", {{"points", 50}}},
 		{"pickup", {{"ammo", 0}, {"time", 0}}},
 		{"impact_effect", {{"lifetime", 0.25}, {"scale", 0.12}}},
+		{"enemy", {{"walk_speed", 1.05}, {"ax", 0}, {"az", 0}, {"bx", 0}, {"bz", 0}, {"pause", 1.5}, {"turn_rate", 4}, {"flinch_time", 0.45}}},
+		{"muzzle_effect", {}},
+		{"footstep_effect", {}},
+		{"dust_effect", {{"min_speed", 3}, {"cooldown", 0.25}}},
+		{"breakable", {{"shards", 10}, {"speed", 2.5}}},
+		{"shard", {{"lifetime", 6}, {"density", 2500}}},
 	};
 	return templates;
 }
@@ -192,6 +213,13 @@ struct Game::Impl {
 	flecs::world& world;
 	double dt;
 	EntityId player = 0, camera = 0, weapon_view = 0, effect_template = 0;
+	EntityId muzzle_template = 0, footstep_template = 0, dust_template = 0, shard_template = 0;
+	double dust_min_speed = 3, dust_cooldown = 0.25, shard_lifetime = 6, shard_density = 2500;
+	std::map<EntityId, double> dust_wait; // Seconds until a body may raise dust again.
+	std::vector<AnimationRequest> animations;
+	std::vector<RagdollRequest> ragdolls;
+	GameCounters counters;
+	std::uint64_t random_state = 0x5eed'1234'abcd'0001;
 	Transform player_start;
 	Transform camera_rest;
 	double yaw = 0, pitch = 0;
@@ -218,6 +246,16 @@ struct Game::Impl {
 	}
 
 	flecs::entity native(EntityId id) const { return world.entity(scene.native(id)); }
+	// splitmix64, the same stream every run: what breaks scatters the same way given the same shots.
+	double random01()
+	{
+		std::uint64_t z = (random_state += 0x9e37'79b9'7f4a'7c15ull);
+		z = (z ^ (z >> 30)) * 0xbf58'476d'1ce4'e5b9ull;
+		z = (z ^ (z >> 27)) * 0x94d0'49bb'1331'11ebull;
+		z ^= z >> 31;
+		return static_cast<double>(z >> 11) * (1.0 / 9007199254740992.0);
+	}
+	double random(double low, double high) { return low + (high - low) * random01(); }
 	bool alive(EntityId id) const { return scene.native(id) != 0 && !removing.contains(id); }
 	GameState& state() { return *world.try_get_mut<GameState>(); }
 	const GameState& state() const { return *world.try_get_mut<GameState>(); }
@@ -247,6 +285,9 @@ struct Game::Impl {
 		world.component<Pickup>();
 		world.component<Flash>();
 		world.component<Effect>();
+		world.component<EnemyComponent>();
+		world.component<BreakableComponent>();
+		world.component<Fallen>();
 		world.component<GameState>();
 		GameState rules;
 		for (const EntityRecord& record : snapshot.entities) {
@@ -299,6 +340,31 @@ struct Game::Impl {
 					effect_template = record.id;
 					effect_lifetime = std::max(number("lifetime", 0.25), dt);
 					effect_scale = std::max(number("scale", 0.12), 0.001);
+				} else if (b.type == "enemy") {
+					if (!record.components.body || record.components.body->kind != BodyKind::Kinematic || record.parent != 0) {
+						issues.push_back("Enemy '" + record.name + "' needs a kinematic body and no parent");
+						continue;
+					}
+					const auto& p = record.transform.position;
+					const auto& q = record.transform.rotation;
+					EnemyComponent enemy{std::max(number("walk_speed", 1.05), 0.0), std::max(number("pause", 1.5), 0.0), std::max(number("turn_rate", 4), 0.01),
+						std::max(number("flinch_time", 0.45), 0.0), Vec3{number("ax", p.x), p.y, number("az", p.z)}, Vec3{number("bx", p.x), p.y, number("bz", p.z)}};
+					enemy.yaw = std::atan2(2 * (q.w * q.y + q.x * q.z), 1 - 2 * (q.x * q.x + q.y * q.y));
+					e.set<EnemyComponent>(enemy);
+				} else if (b.type == "muzzle_effect") {
+					muzzle_template = record.id;
+				} else if (b.type == "footstep_effect") {
+					footstep_template = record.id;
+				} else if (b.type == "dust_effect") {
+					dust_template = record.id;
+					dust_min_speed = std::max(number("min_speed", 3), 0.0);
+					dust_cooldown = std::max(number("cooldown", 0.25), 0.0);
+				} else if (b.type == "breakable") {
+					e.set<BreakableComponent>({std::clamp(static_cast<int>(number("shards", 10)), 0, 64), std::max(number("speed", 2.5), 0.0)});
+				} else if (b.type == "shard") {
+					shard_template = record.id;
+					shard_lifetime = std::clamp(number("lifetime", 6), 0.1, 600.0);
+					shard_density = std::max(number("density", 2500), 1.0);
 				} else {
 					issues.push_back("Unknown behavior '" + b.type + "' on '" + record.name + "'");
 				}
@@ -447,11 +513,125 @@ struct Game::Impl {
 			shot.pushed = physics.apply_impulse(hit->entity, impulse, hit->point);
 			if (hit->entity && scene.native(hit->entity) && native(hit->entity).has<HealthComponent>()) {
 				shot.damaged = true;
-				damage.push_back({hit->entity, weapon.damage, DamageCause::Weapon});
+				damage.push_back({hit->entity, weapon.damage, DamageCause::Weapon, impulse, hit->point});
 			}
 			spawn_effect(hit->point, hit->normal);
 		}
 		shots.push_back(shot);
+		// The flash at the barrel, along the aim, as the gun is this tick.
+		if (muzzle_template && alive(muzzle_template)) {
+			if (const auto w = scene.world_transform(muzzle_template)) {
+				effects.push_back({muzzle_template, {float(w->matrix[12]), float(w->matrix[13]), float(w->matrix[14])}, direction, 1.0});
+				++counters.muzzle_flashes;
+			}
+		}
+	}
+
+	void cue(EntityId id, AnimationCue wanted)
+	{
+		animations.push_back({id, wanted});
+	}
+
+	void update_enemies()
+	{
+		std::vector<std::pair<EntityId, EnemyComponent*>> enemies;
+		world.each([&](flecs::entity e, const StableId& id, EnemyComponent& enemy) {
+			if (!e.has<Fallen>()) {
+				enemies.emplace_back(id.value, &enemy);
+			}
+		});
+		std::sort(enemies.begin(), enemies.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+		for (const auto& [id, enemy] : enemies) {
+			if (!alive(id)) {
+				continue;
+			}
+			auto record = scene.inspect(id);
+			Vec3 p = record->transform.position;
+			AnimationCue wanted = enemy->playing;
+			if (enemy->flinching > 0) {
+				// Staggered: it stands where it was hit.
+				enemy->flinching = std::max(enemy->flinching - dt, 0.0);
+			} else if (enemy->waiting > 0) {
+				enemy->waiting = std::max(enemy->waiting - dt, 0.0);
+				wanted = enemy->waiting > 0 ? AnimationCue::Idle : AnimationCue::Walk;
+			} else {
+				const Vec3& goal = enemy->to_b ? enemy->b : enemy->a;
+				const double dx = goal.x - p.x, dz = goal.z - p.z, far = std::hypot(dx, dz);
+				if (far < 0.02) {
+					// An end of the patrol: stand a while, then go back.
+					enemy->to_b = !enemy->to_b;
+					enemy->waiting = enemy->pause;
+					wanted = enemy->pause > 0 ? AnimationCue::Idle : AnimationCue::Walk;
+				} else {
+					const double turn = std::remainder(std::atan2(dx, dz) - enemy->yaw, 2 * std::numbers::pi);
+					const double step = enemy->turn_rate * dt;
+					enemy->yaw = std::remainder(enemy->yaw + std::clamp(turn, -step, step), 2 * std::numbers::pi);
+					// It walks once it roughly faces the way, and stays on its line.
+					if (std::abs(turn) < 0.8) {
+						const double go = std::min(enemy->walk_speed * dt, far);
+						p.x += dx / far * go;
+						p.z += dz / far * go;
+					}
+					wanted = AnimationCue::Walk;
+				}
+			}
+			if (wanted != enemy->playing) {
+				enemy->playing = wanted;
+				cue(id, wanted);
+			}
+			// Standing or staggered, nothing changes: no command, so the scene is not copied for it.
+			const Quaternion facing{0, std::sin(enemy->yaw / 2), 0, std::cos(enemy->yaw / 2)};
+			if (p != record->transform.position || facing != record->transform.rotation) {
+				record->transform.position = p;
+				record->transform.rotation = facing;
+				batch.push_back(commands::SetTransform{id, record->transform});
+			}
+		}
+	}
+
+	// Pieces of debris like the shard template, through the entity's box and along the shot, and the template's particles.
+	void break_apart(EntityId id, const BreakableComponent& breakable, const DamageEvent& cause)
+	{
+		const auto w = scene.world_transform(id);
+		const auto look = shard_template ? scene.inspect(shard_template) : std::nullopt;
+		const auto look_world = shard_template ? scene.world_transform(shard_template) : std::nullopt;
+		if (!w || !look || !look->components.mesh || !look_world) {
+			return;
+		}
+		const auto& m = w->matrix;
+		const auto column = [](const std::array<double, 16>& matrix, int c) { return Vec3{matrix[c * 4], matrix[c * 4 + 1], matrix[c * 4 + 2]}; };
+		const Vec3 x = column(m, 0), y = column(m, 1), z = column(m, 2);
+		const auto length = [](const Vec3& v) { return std::sqrt(v.x * v.x + v.y * v.y + v.z * v.z); };
+		const Vec3 piece{length(column(look_world->matrix, 0)), length(column(look_world->matrix, 1)), length(column(look_world->matrix, 2))};
+		const double push = length(Vec3{cause.impulse.x, cause.impulse.y, cause.impulse.z});
+		const Vec3 along = push > 0 ? Vec3{cause.impulse.x / push, cause.impulse.y / push, cause.impulse.z / push} : Vec3{};
+		for (int i = 0; i < breakable.shards; ++i) {
+			const double u = random(-0.5, 0.5), v = random(-0.5, 0.5), s = random(-0.5, 0.5);
+			physics::Debris debris;
+			debris.look = shard_template;
+			debris.pose.position = {float(m[12] + x.x * u + y.x * v + z.x * s), float(m[13] + x.y * u + y.y * v + z.y * s),
+				float(m[14] + x.z * u + y.z * v + z.z * s)};
+			const double angle = random(0, 2 * std::numbers::pi), ax = random(-1, 1), ay = random(-1, 1), az = random(-1, 1);
+			const double axis = std::max(std::sqrt(ax * ax + ay * ay + az * az), 1e-6), half = std::sin(angle / 2) / axis;
+			debris.pose.rotation = {float(ax * half), float(ay * half), float(az * half), float(std::cos(angle / 2))};
+			const double speed = breakable.speed * random(0.6, 1.4);
+			debris.linear_velocity = {float(along.x * speed + random(-0.8, 0.8)), float(along.y * speed + random(0, 1.2)),
+				float(along.z * speed + random(-0.8, 0.8))};
+			debris.angular_velocity = {float(random(-8, 8)), float(random(-8, 8)), float(random(-8, 8))};
+			debris.collider.shape = physics::BoxShape{{float(piece.x / 2), float(piece.y / 2), float(piece.z / 2)}, {}};
+			debris.collider.density = float(shard_density);
+			debris.collider.friction = 0.5f;
+			debris.collider.restitution = 0.2f;
+			debris.lifetime = shard_lifetime;
+			if (physics.spawn_debris(debris)) {
+				++counters.shards;
+			}
+		}
+		if (look->components.emitter) {
+			const bool shot = cause.cause == DamageCause::Weapon;
+			effects.push_back({shard_template, shot ? cause.point : PVec3{float(m[12]), float(m[13]), float(m[14])},
+				push > 0 ? PVec3{float(along.x), float(along.y), float(along.z)} : PVec3{0, 1, 0}, 1.0});
+		}
 	}
 
 	void update_weapon()
@@ -570,7 +750,7 @@ struct Game::Impl {
 			}
 			const auto e = native(event.target);
 			auto* health = e.try_get_mut<HealthComponent>();
-			if (!health) {
+			if (!health || e.has<Fallen>()) {
 				continue;
 			}
 			health->current -= event.amount;
@@ -578,8 +758,14 @@ struct Game::Impl {
 				hit_marker = 1;
 			}
 			if (health->current <= 0) {
-				destroyed(event.target);
+				destroyed(event.target, event);
 				continue;
+			}
+			// A shot staggers an enemy, which flinches on top of what it was doing.
+			if (auto* enemy = e.try_get_mut<EnemyComponent>(); enemy && event.cause == DamageCause::Weapon) {
+				enemy->flinching = enemy->flinch_time;
+				cue(event.target, AnimationCue::Flinch);
+				++counters.flinches;
 			}
 			// A short red tint on the runtime copy.
 			auto mesh = scene.inspect(event.target)->components.mesh;
@@ -591,15 +777,27 @@ struct Game::Impl {
 		}
 	}
 
-	void destroyed(EntityId id)
+	void destroyed(EntityId id, const DamageEvent& cause)
 	{
 		const auto e = native(id);
 		auto& rules = state();
+		const auto record = scene.inspect(id);
 		if (const auto* target = e.try_get<TargetComponent>()) {
 			rules.score += target->points;
 			--rules.targets_remaining;
-			const auto record = scene.inspect(id);
 			announce("+" + std::to_string(target->points) + "  " + (record ? record->name : std::string("Target")) + " destroyed");
+		}
+		// A model whose Ragdoll falls on death stays, and falls from its pose with the killing shot's push.
+		if (record && record->components.ragdoll && record->components.ragdoll->trigger == RagdollTrigger::OnDeath && record->components.mesh &&
+			!record->components.mesh->mesh_asset.empty()) {
+			e.add<Fallen>();
+			e.remove<HealthComponent>();
+			ragdolls.push_back({id, cause.cause == DamageCause::Weapon, cause.impulse, cause.point});
+			++counters.ragdolls;
+			return;
+		}
+		if (const auto* breakable = e.try_get<BreakableComponent>()) {
+			break_apart(id, *breakable, cause);
 		}
 		remove(id);
 	}
@@ -615,7 +813,23 @@ struct Game::Impl {
 					}
 					const auto* impact = native(id).try_get<ImpactDamage>();
 					if (impact && event.approach_speed > impact->min_speed) {
-						damage.push_back({id, (event.approach_speed - impact->min_speed) * impact->scale, DamageCause::Impact});
+						damage.push_back({id, (event.approach_speed - impact->min_speed) * impact->scale, DamageCause::Impact, {}, event.point});
+					}
+				}
+				// Dust where something hit hard: once a cooldown for each moving body, never for the player.
+				if (dust_template && event.approach_speed > dust_min_speed) {
+					for (const EntityId id : {event.a, event.b}) {
+						if (!id || id == player || !scene.native(id) || dust_wait.contains(id)) {
+							continue;
+						}
+						const auto moving = physics.body_state(id);
+						if (!moving || moving->type != physics::BodyType::Dynamic) {
+							continue;
+						}
+						dust_wait[id] = dust_cooldown;
+						effects.push_back({dust_template, event.point, event.normal, std::clamp(event.approach_speed / std::max(dust_min_speed, 0.1), 1.0, 3.0)});
+						++counters.dust;
+						break;
 					}
 				}
 			} else if (event.kind == physics::CollisionEvent::Kind::SensorBegin && event.a && event.b && scene.native(event.a) && scene.native(event.b)) {
@@ -734,8 +948,14 @@ void Game::pre_physics()
 	g.damage.clear();
 	g.shots.clear();
 	g.effects.clear();
+	g.animations.clear();
+	g.ragdolls.clear();
 	g.removing.clear();
 	g.fall_notice.clear();
+	for (auto it = g.dust_wait.begin(); it != g.dust_wait.end();) {
+		it->second -= g.dt;
+		it = it->second <= 0 ? g.dust_wait.erase(it) : std::next(it);
+	}
 	auto& rules = g.state();
 	if (rules.phase == GamePhase::Playing) {
 		rules.elapsed += g.dt;
@@ -747,9 +967,24 @@ void Game::pre_physics()
 		g.update_weapon();
 	}
 	g.update_movers();
+	g.update_enemies();
 	g.update_effects();
 	g.submit();
 	g.input.pressed = {};
+}
+
+void Game::hear(std::span<const AnimationNotice> notices)
+{
+	auto& g = *impl_;
+	for (const AnimationNotice& notice : notices) {
+		if (!g.alive(notice.entity) || g.native(notice.entity).has<Fallen>() || notice.name.find("footstep") == std::string::npos) {
+			continue;
+		}
+		++g.counters.footsteps;
+		if (g.footstep_template && g.alive(g.footstep_template)) {
+			g.effects.push_back({g.footstep_template, notice.point, {0, 1, 0}, 1.0});
+		}
+	}
 }
 
 void Game::post_physics()
@@ -808,6 +1043,22 @@ std::uint64_t Game::ticks() const noexcept { return impl_->ticks; }
 const std::vector<DamageEvent>& Game::damage_events() const noexcept { return impl_->damage; }
 const std::vector<ShotResult>& Game::shots() const noexcept { return impl_->shots; }
 const std::vector<EffectEvent>& Game::effect_events() const noexcept { return impl_->effects; }
+const std::vector<AnimationRequest>& Game::animation_requests() const noexcept { return impl_->animations; }
+const std::vector<RagdollRequest>& Game::ragdoll_requests() const noexcept { return impl_->ragdolls; }
+GameCounters Game::counters() const noexcept { return impl_->counters; }
+
+std::vector<EntityId> Game::standing_targets() const
+{
+	const auto& g = *impl_;
+	std::vector<EntityId> ids;
+	g.world.each([&](flecs::entity e, const StableId& id, const TargetComponent&) {
+		if (!e.has<Fallen>() && g.alive(id.value)) {
+			ids.push_back(id.value);
+		}
+	});
+	std::sort(ids.begin(), ids.end());
+	return ids;
+}
 const std::vector<std::string>& Game::setup_issues() const noexcept { return impl_->issues; }
 
 } // namespace engine::gameplay

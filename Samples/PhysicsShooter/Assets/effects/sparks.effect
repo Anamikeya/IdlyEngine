@@ -1,0 +1,16 @@
+ENGINE_EFFECT 1
+duration 0.5
+rate 0
+burst 18
+lifetime 0.15 0.4
+speed 3 7
+cone 45
+drag 1
+stretch 0.03
+size 0 0.03 1 0.012
+color 0 1 0.85 0.5 1 0.6 1 0.55 0.2 0.85 1 0.85 0.25 0.05 0
+emissive_strength 6
+blend additive
+collide_floor 1
+bounce 0.3
+max_particles 400
