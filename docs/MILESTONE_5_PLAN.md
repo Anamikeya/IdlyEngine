@@ -1,7 +1,7 @@
 # Milestone 5 plan: characters and effects
 
 Branch `milestone-5`, worktree `D:\AI\GameEngine-Integration`, created from `main` at `14c6642`.
-**Status: approved 2026-11-03. All slices done 2026-11-05; see the [report](MILESTONE_5_REPORT.md).** Do not merge into `main` without the user's approval.
+**Status: approved 2026-11-03. Slices 0 to 7 done 2026-11-05 (slice 7 added at the user's request before pushing); see the [report](MILESTONE_5_REPORT.md).** Do not merge into `main` without the user's approval.
 
 Decisions (2026-11-03): the plan is approved as written. ozz-animation 0.17.0 goes into `resources` at its pinned commit.
 The enemy is Quaternius' Universal Animation Library (CC0), downloaded in glTF. Edit-mode preview is on by default.
@@ -497,3 +497,72 @@ Cut order if time runs short: foot IK, then debris bodies (particles only), then
     `bin` folder the sample's scene went from 0 textures and 0 models drawn to 12 and 2.
   - The first performance run of the stress scene was disturbed by the PC being in use; it was run again.
 - **Report:** [`MILESTONE_5_REPORT.md`](MILESTONE_5_REPORT.md).
+
+### Slice 7: Unreal-style asset paths, redirectors and the selection outline (asked 2026-11-05, before pushing)
+
+Asked for after the report: a virtual file system with long package names, asset redirectors with Fix Up Redirectors,
+and a selection highlight that wraps only the outer silhouette. Decided with the user on 2026-11-05:
+
+- **Files keep their references** (a stable id and a relative path); package names are how the editor, its tools and,
+  later, scripts name assets. No scene or material format change.
+- **Names have no extension**, as in Unreal: `/Game/Textures/Brick`. Two assets in one folder whose names differ only by
+  extension or case are a conflict, reported; `/Game/Textures/Brick.png` still names one of them exactly.
+- **The outline shows the whole silhouette**, on top of whatever hides part of it, as Unreal does.
+- **Proven in the engine** with tests, a render test and real input; no separate mock program.
+
+Design:
+
+- **`engine::assets::VirtualFileSystem`** (`Engine/Assets`), thread safe behind a shared mutex. Mount points such as
+  `/Game` map to roots. Each mount holds an index, rebuilt from the asset catalogue after a scan, of names folded to ASCII
+  lower case. `resolve(name)` returns the asset's path, file, id and type, and the redirectors it went through.
+- **Redirectors:** moving an asset in the editor leaves `<old path>.redirect` where it was, a text file naming the new
+  path and the asset's id. Scans catalogue redirectors instead of calling them unsupported. Resolving follows them,
+  recursively, up to 32 deep, and refuses a loop by naming it. Moving an asset onto a redirector's name replaces it.
+  A reference whose id has no asset any more (a deleted `.meta`) resolves its path through redirectors.
+- **Fix Up Redirectors** (a command, and a button in the Asset Browser when there are any): every reference that still
+  names an old path is rewritten to the final one. That covers scene files on disk, the open scene (one undoable step),
+  materials and effects. Then the redirectors go. Nothing that cannot be resolved is removed.
+- **Selection:** `SelectionSet` stays the source of truth (it keeps order and the primary entity). Each frame the session
+  mirrors it onto the shown scene's Flecs entities as `SelectedTag` and `PrimarySelectedTag`. Tags are not components the
+  scene saves or undoes. The frame builder reads the tags to mark each mesh to outline. A selected entity's descendants
+  are marked too, so a group outlines its members.
+- **Outline** (`Engine/Renderer`): marked objects are drawn again, in a mask view with the same camera, as flat values
+  into an offscreen target, sharing their meshes and bones. A full-screen pass then draws, over the viewport's image,
+  every pixel outside the mask within a few pixels of it, in orange for the primary entity and lighter for the others.
+  Pixels inside the mask are left alone. The result is one outer border, with no box, no inner edges and nothing seen
+  through the model. It replaces the bounding-box lines drawn by ImGui.
+- **UI:** the Asset Browser and the Details panel's asset fields show package names. A Details field resolves a typed
+  `/Game/...` name, through redirectors. The console gets `asset.resolve <name>`.
+
+Done when: `asset_tests` and editor tests cover names, case, conflicts, redirector chains and loops, moves, and Fix Up
+Redirectors on disk and in the open scene; `--render-test` shows an outline outside a selected model and none inside it,
+including where another object hides it; real input selects in the viewport, renames an asset and fixes up; and both
+presets pass from fresh folders.
+
+Progress (done 2026-11-05, `cabee69`):
+
+- **Built as designed**:
+  - `virtual_paths.h` holds the file system and the redirector file format.
+  - `AssetDatabase` catalogues redirectors and leaves one on `move(..., true)`.
+  - `EditorSession` has `packages()`, `resolve_package()`, `fix_up_redirectors()` and the redirector fallback in reference
+    resolution.
+  - `apply_selection_tags()` keeps the selection tags.
+  - The renderer has the mask view and the outline pass (`selection_mask.mat`, `selection_outline.mat`).
+  - The design note is `docs/architecture/009-package-names-and-outline.md`.
+- **Tests:** 555 CTest entries, 21 more:
+  - `asset_tests` has 13 new cases, among them four threads resolving while the index is replaced 400 times or more.
+  - `editor_asset_path_tests` has 8.
+  - The snapshot test now checks outline marks.
+  - `--render-test` is 75 of 75 with four outline checks. A selected cube has a ring of about 2,440 pixels, with none
+    changed inside its silhouette and none away from it, and the same ring shows over a wall that hides the cube.
+- **Real input:** `Tests/RealInput/milestone5_asset_paths.ps1` passed 10 of 10 on the development build. The run at
+  `cabee69` is in the report.
+- **Found by testing:**
+  - The render test's window has a few edge pixels that nothing draws and that change from frame to frame, so the outline
+    checks leave a 4-pixel margin.
+  - `far`, like `small`, is a `windows.h` macro.
+  - A test of resolving from other threads first finished its 400 re-indexes before any reader ran. It now waits for the
+    readers.
+- **Not changed:** the **Colliders** toggle, on by default, still draws every collider's wireframe through the geometry.
+  It is a separate display from the selection outline; whether to depth-test it or turn it off by default is left to the
+  user.

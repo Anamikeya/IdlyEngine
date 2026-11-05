@@ -1,4 +1,4 @@
-FEngine (64 bits) created at 00000231330A2DE0 (threading is enabled)
+FEngine (64 bits) created at 000001A2A57F2C20 (threading is enabled)
 FEngine resolved backend: OpenGL
 [NVIDIA Corporation], [NVIDIA GeForce RTX 3080/PCIe/SSE2], [4.5.0 NVIDIA 576.28], [4.50 NVIDIA]
 Feature level: 3
@@ -6,5 +6,5 @@ Active workarounds:
 allow_read_only_ancillary_feedback_loop
 Backend feature level: 3
 FEngine feature level: 1
-GPU smoke passed: 100 frames; transform, undo/redo, save/load, play/stop isolation, resize, surface color (145,16,16), scene light (0,0,201), imported texture (top 210,28,74; bottom 75,28,209) and capture.
+GPU smoke passed: 100 frames; transform, undo/redo, save/load, play/stop isolation, resize, surface color (144,15,15), scene light (0,0,201), imported texture (top 209,27,73; bottom 76,29,210) and capture.
 Editor stopped cleanly.

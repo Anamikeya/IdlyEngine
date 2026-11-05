@@ -1,7 +1,7 @@
 # Milestone 5 report: characters and effects
 
 Branch `milestone-5`, worktree `D:\AI\GameEngine-Integration`. Plan: [`MILESTONE_5_PLAN.md`](MILESTONE_5_PLAN.md).
-Every result below was produced at commit `03fde0b` (code, tests, sample), except the earlier slices' own real-input runs,
+Every result below was produced at commit `cabee69` (code, tests, sample), except the earlier slices' own real-input runs,
 which were made on their slices' commits. The commit holding this report adds only documents and evidence. **Not merged into
 `main`, and not pushed.** It awaits your approval.
 
@@ -9,15 +9,24 @@ which were made on their slices' commits. The commit holding this report adds on
 
 The engine now has skeletal animation, ragdolls and particles, all editable in the editor. The Physics Shooter has three
 enemies that walk, flinch and fall as ragdolls, with sparks, dust and breaking glass:
-- **Builds and tests:** both presets build from empty folders and pass all 534 tests, 125 more than `main`.
+- **Builds and tests:** both presets build from empty folders and pass all 555 tests, 146 more than `main`.
 - **Real input:** the game was won and lost with the real mouse and keyboard.
 - **Performance:** the stress scene, with 10 animated enemies and 5,000 particles, holds 60 fps.
 
-Two things are open:
+Slice 7, which you asked for before pushing, adds three Unreal-style features:
+- **Package names:** assets can be named `/Game/...`.
+- **Redirectors:** a move leaves one, and **Fix Up Redirectors** clears them.
+- **Selection outline:** the renderer draws it around the outer silhouette only.
+
+All of slice 7 is covered by tests, a render test and a real-input run.
+
+Three things are open:
 - **One slow frame in the sample.** About 25 to 31 seconds after the editor starts, one frame often takes 220 to 316 ms.
   Its cause is not found. It doesn't happen in the stress scene.
 - **The headroom above 60 fps is unknown.** Vsync on this 59 Hz display caps the frame rate, so the margin is not
   measured.
+- **The Colliders display still draws wireframes through models** when it is on, which it is by default. It is not the
+  selection highlight, and is left for you to decide ([slice 7](#slice-7-package-names-redirectors-and-the-selection-outline)).
 
 You found one defect while trying the sample: Open Scene kept the editor's current project, so every surface drew magenta.
 It is fixed in `c4268c3`, and every result in this report was produced after the fix.
@@ -33,6 +42,7 @@ It is fixed in `c4268c3`, and every result in this report was produced after the
 | 4 | Ragdolls and debris: joints in `PhysicsWorld`, a ragdoll builder from the skin, handoff from the pose, bone hits, the Ragdoll component, debris capped at 64 | [`evidence/m5-ragdoll`](evidence/m5-ragdoll) |
 | 5 | The shooter: three enemies that patrol, flinch and fall as ragdolls; muzzle flash, sparks, footstep and crate dust, glass shards and slivers | [`evidence/m5-shooter`](evidence/m5-shooter) |
 | 6 | Performance: `--perf-run`, a stress scene, finer timings; fresh builds; Open Scene opens the scene's own project; this report | [`evidence/m5-performance`](evidence/m5-performance) |
+| 7 | Package names (`/Game/...`) and a thread-safe virtual file system, redirectors and Fix Up Redirectors, the selection as Flecs tags, and a silhouette selection outline | [`evidence/m5-asset-paths`](evidence/m5-asset-paths) |
 
 The progress notes for each slice, with what testing found, are in section 8 of the plan.
 
@@ -41,7 +51,7 @@ The progress notes for each slice, with what testing found, are in section 8 of 
 | Criterion (plan section 7) | Result | Evidence |
 |---|---|---|
 | Both MSVC presets build from fresh folders | Met | [Build and test results](#build-and-test-results) |
-| Every existing test passes, and none is removed or weakened | Met | 534 of 534; [changed tests](#existing-tests-changed) |
+| Every existing test passes, and none is removed or weakened | Met | 555 of 555; [changed tests](#existing-tests-changed) |
 | A skinned, animated GLB imports, draws in its bind pose and plays its clips in the editor and in Play | Met | `--render-test` skinning and animation checks; real input in slices 3 and 4 |
 | Crossfades, a hit flinch, a clip event and a bone attachment work, and can be seen in Play | Met | `animation_tests`, `editor_animation_tests`, `editor_shooter_tests`; real input slice 3 and shooter steps 19 and 20 |
 | A character turns into a ragdoll on death, from its pose, moving the way the shot pushed it | Met | `editor_shooter_tests`, `editor_ragdoll_tests`, `--render-test`; shooter step 20 |
@@ -52,27 +62,28 @@ The progress notes for each slice, with what testing found, are in section 8 of 
 
 ## Build and test results
 
-Both MSVC presets were configured and built in empty folders at `03fde0b` on 2026-11-05, then tested. The machine is a
+Both MSVC presets were configured and built in empty folders at `cabee69` on 2026-11-05, then tested. The machine is a
 Ryzen 7 5800X with 128 GB and an RTX 3080, on Windows 10 Pro, with MSVC 19.44 and Ninja.
 
 | Preset | Folder | Configure | Build | CTest | `--smoke` | `--render-test` |
 |---|---|---|---|---|---|---|
-| `windows-msvc-release` | `build-m5-windows-msvc-release` | 9 s | 92 s, 1,036 steps | 534 of 534 | Passed, 100 frames | 71 of 71 |
-| `windows-msvc-ci` | `build-m5-windows-msvc-ci` | 9 s | 89 s, 1,036 steps | 534 of 534 | Passed, 100 frames | 71 of 71 |
+| `windows-msvc-release` | `build-m5-windows-msvc-release` | 8 s | 106 s, 1,042 steps | 555 of 555 | Passed, 100 frames | 75 of 75 |
+| `windows-msvc-ci` | `build-m5-windows-msvc-ci` | 8 s | 102 s, 1,042 steps | 555 of 555 | Passed, 93 frames | 75 of 75 |
 
 - **Warnings:** the CI preset treats warnings in engine code as errors, and it built clean. The 381 warnings in its log
-  are all in third-party code, the same count as in the previous day's fresh build.
-- **CTest:** 534 entries, each test case its own process. That is 125 more than `main`'s 409; none was removed.
+  are all in third-party code, the same count as in the earlier fresh builds.
+- **CTest:** 555 entries, each test case its own process. That is 146 more than `main`'s 409; none was removed.
 - **Line endings:** every source file changed from `main` is stored with LF, as `main` stores them. Seventeen files had
   been saved with CRLF during the milestone: 11 that `main` has (restored in `2fdbec3`), the testing README (in the commit
   with this report), and 5 new source files (`03fde0b`).
 
-Fresh builds made on 2026-11-04, before the Open Scene fix, passed alike, as did `--smoke` and `--render-test` on them.
+Fresh builds at `03fde0b` (before slice 7: 534 of 534, 71 of 71) and on 2026-11-04 (before the Open Scene fix) passed
+alike, as did `--smoke` and `--render-test` on them.
 
 ## Real-input gameplay
 
-`Tests/RealInput/shooter_acceptance.ps1` played the shooter on the fresh Release build at `03fde0b`, with the real mouse and
-keyboard: **26 of 26, on the first attempt.** It won with all 12 targets down, 2,000 points and 6 s left, every enemy fallen
+`Tests/RealInput/shooter_acceptance.ps1` played the shooter on the fresh Release build at `cabee69`, with the real mouse and
+keyboard: **26 of 26, on the first attempt.** It won with all 12 targets down, 2,000 points and 10 s left, every enemy fallen
 as a ragdoll. After Restart it lost on time, and Stop gave back the editor scene with its saved file unchanged. Evidence,
 with screenshots: [`evidence/m5-shooter`](evidence/m5-shooter).
 
@@ -85,8 +96,9 @@ with screenshots: [`evidence/m5-shooter`](evidence/m5-shooter).
 | 15, 16 | Stop restores the scene; the editor stays usable and exits cleanly | Passed |
 | 17 to 22 (new) | Glass shards and slivers, muzzle flashes, enemies walking with footstep dust, a shot enemy flinching and then falling as a ragdoll, every enemy fallen at the win, nothing left behind after Stop | Passed |
 
-The day before's build passed 26 of 26 too, after three attempts the guards stopped because the PC was in use; no input
-reached another application.
+The builds at `03fde0b` and `621c2a7` passed 26 of 26 too. At `621c2a7` that came after three attempts the guards
+stopped because the PC was in use; no input reached another application. Slice 7's own real-input run is in
+[its section](#slice-7-package-names-redirectors-and-the-selection-outline).
 
 The earlier slices' real-input runs were made on their own commits and are not repeated here: effects (slice 1, 19 of 19),
 animation (slice 3, 22 of 22) and ragdolls (slice 4, 18 of 18), in their evidence folders.
@@ -98,24 +110,48 @@ throughout (`Tests/Performance/milestone5_performance.ps1`). Evidence: [`evidenc
 
 | Scene | Mean | Slowest 1% | CPU per frame | What it held |
 |---|---|---|---|---|
-| The sample, `physics_shooter` | 60.0 fps | 30.2 fps | 1.22 ms | 3 enemies, 114 particles at most |
-| **The stress scene**, `stress_test` | **60.0 fps** | 46.1 fps | 3.28 ms | **10 animated enemies, 4,957 particles on average, 5,154 at most** |
+| The sample, `physics_shooter` | 60.0 fps | 29.5 fps | 1.18 ms | 3 enemies, 114 particles at most |
+| **The stress scene**, `stress_test` | **60.0 fps** | 44.3 fps | 3.20 ms | **10 animated enemies, 4,957 particles on average, 5,154 at most** |
 
 - **The target is met:** 60 fps with 10 animated enemies and 5,000 particles.
 - **Vsync caps both scenes.** The display runs at 59 Hz, so these numbers can't show how far above 60 fps the engine
-  could go. The CPU's 3.3 ms a frame in the stress scene suggests a good margin, but the GPU's share is not measured on its
+  could go. The CPU's 3.2 ms a frame in the stress scene suggests a good margin, but the GPU's share is not measured on its
   own: Filament's frame time includes waiting for the display.
-- **In the stress scene,** a fixed tick takes 0.42 ms of physics, 0.55 ms of gameplay and 0.05 ms of animation. The
+- **In the stress scene,** a fixed tick takes 0.41 ms of physics, 0.51 ms of gameplay and 0.05 ms of animation. The
   particles take 0.03 ms a frame to update. The UI and frame snapshot take 1.9 ms against the sample's 0.7, and the render
-  call 1.1 ms against 0.4: the cost of drawing seven more enemies and 5,000 particles.
+  call 1.0 ms against 0.4: the cost of drawing seven more enemies and 5,000 particles.
 - **The slowest 1% varies with the machine, not the code.** The sample's p99 frame was 19 ms in the morning and 33 to 34 ms
   from 11:53 on. The change came between two runs of the same old build, with the CPU's share unchanged. A 33 ms frame is one
-  missed refresh. The stress scene's p99 stayed at about 21 ms.
-- **One slow frame, not explained.** In four of the sample's nine 60 s runs, and in both complete real-input runs, one frame
-  took 220 to 316 ms, about 25 to 31 s after the editor started. Physics, animation, particles and gameplay are each timed,
-  and none took over 3.2 ms. The one frame caught with the new breakdown spent 131 ms in the UI and frame snapshot, and
-  147 ms outside the update, the UI and the render call. It never happened in the stress scene. The perf log now records
-  when such frames happen and splits the slowest one, for the next look.
+  missed refresh. The stress scene's p99 stayed at 21 to 23 ms.
+- **One slow frame, not explained.** In four of the sample's ten 60 s runs, and in all three complete real-input runs of the
+  shooter, one frame took 220 to 316 ms, about 25 to 31 s after the editor started. Physics, animation, particles and
+  gameplay are each timed, and none took over 3.2 ms. The two frames caught with the new breakdown spent 131 and 108 ms in the
+  UI and frame snapshot, and 147 and 135 ms outside the update, the UI and the render call. It never happened in the stress
+  scene. The perf log now records when such frames happen and splits the slowest one, for the next look.
+- Nothing is selected in these runs, so slice 7's outline views are not drawn; selected, they add a pass of the selected
+  models and one full-screen pass.
+
+## Slice 7: package names, redirectors and the selection outline
+
+Asked for after the first version of this report, before pushing: three Unreal-style editor features. You chose to keep
+the file formats, name assets without extensions, outline the whole silhouette even where it is hidden, and prove it in the
+engine rather than with a mock program. Design: [`architecture/009-package-names-and-outline.md`](architecture/009-package-names-and-outline.md).
+
+| Part | What it does | How it is verified |
+|---|---|---|
+| Package names (`VirtualFileSystem`) | `/Game/Textures/Brick` names `Assets/Textures/Brick.png`, in any case, from any thread; a bare name two assets share is a conflict the extension resolves | `asset_tests` (13 new cases, among them four threads resolving while the index is replaced), `editor_asset_path_tests` |
+| Redirectors | A rename or move leaves `<old path>.redirect`; old names, and references whose ID is gone, follow them recursively; loops are refused by name | The same, and real input: the old name typed in a Details field resolves through the redirector |
+| Fix Up Redirectors | Rewrites scene files on disk, the open scene (one undo step) and materials, then removes the redirectors; keeps those that lead nowhere | `editor_asset_path_tests`; real input: `stress_test.scene` rewritten on disk and the redirector deleted |
+| Selection as Flecs tags | `SelectedTag` and `PrimarySelectedTag` mirror the selection on the shown scene, never saved or undone | `editor_asset_path_tests`; real input reads the tag count after a viewport click and a Ctrl+click |
+| Silhouette outline | Drawn by the renderer around the outer edge only, over whatever hides the model; the old bounding-box lines are gone | `--render-test` (four checks: about 2,440 pixels change, none inside the silhouette, none away from it, the same behind a wall); real input screenshots |
+
+Real input (`Tests/RealInput/milestone5_asset_paths.ps1`) passed 10 of 10 on the fresh Release build at `cabee69`. Evidence:
+[`evidence/m5-asset-paths`](evidence/m5-asset-paths).
+
+**Not changed:** the toolbar's **Colliders** toggle, which is on by default, still draws every collider's wireframe through
+the geometry. That is the collision display, not the selection highlight, but it looks like the cage you described. In the
+slice 7 screenshots those lines are there before and after selecting. Whether to draw them depth-tested, only for the
+selection, or off by default is yours to decide.
 
 ## The enemy character
 
@@ -193,8 +229,12 @@ None was removed. These were changed because what they check changed on purpose:
 - **Other models.** Skinning, animation and ragdolls were tested with Fox, the mannequin and models generated in tests,
   not with a wider set of characters.
 - **The earlier slices' real input at this commit.** The effects, animation and ragdoll scripts ran on their own slices'
-  commits, not again at `03fde0b`. Since then, CTest and the shooter's run cover the editor, and the Open Scene change only
-  alters which project a loaded scene opens.
+  commits, not again at `cabee69`. Since then, CTest, the shooter's run and slice 7's run cover the editor. The changes
+  affecting those panels are which project a loaded scene opens, and the outline replacing the bounding-box lines in the
+  viewport, which none of those scripts reads.
+- **Redirectors under version control and in a team.** Fix Up Redirectors rewrites scene files on disk; it was tested on
+  one machine with no other copy of the project open.
+- **The outline on other GPUs**, and at UI scales other than this PC's; its width is 2 pixels times the UI scale.
 
 ## Known limitations
 
@@ -209,3 +249,11 @@ None was removed. These were changed because what they check changed on purpose:
 - **One slow frame early in the sample,** often, as described under Performance.
 - **Undoing a load that opened another project** brings back the old scene in the new project, whose assets it may not
   find. Opening the sample from the menu has always done the same.
+- **Package names cover one mount,** `/Game`. The file system takes more (an `/Engine` or plugin mount), but nothing else is
+  mounted yet, and a redirector cannot point into another mount.
+- **Fix Up Redirectors rewrites old scene files in the current format,** as saving them would, and only finds `.scene`
+  files under the project folder, up to 8 folders deep.
+- **Entities without a model have no outline,** since they have no silhouette: lights, cameras and empty entities show only
+  their gizmo and marker.
+- **The Colliders display** still draws every collider's wireframe through the geometry while it is on, which it is by
+  default.
