@@ -74,6 +74,9 @@ void EditorUI::viewport() {
     if (game && game_input.captured) session.select(0); // The view belongs to the player: no gizmo, no picking.
     update_camera(hovered, size.y);
     session.view_flags.grid = show_grid && !game_view;
+    // The renderer outlines what is selected around its silhouette (slice 7); the game's own view shows none.
+    session.view_flags.outlines = !game && !game_view;
+    renderer.set_outline_width(px(2) * io.DisplayFramebufferScale.x);
     session.grid_spacing = snap.grid_size;
     auto snapshot = session.frame(double(size.x) / size.y);
     if (!snapshot) { log(snapshot.error().message); ImGui::End(); return; }
@@ -84,7 +87,6 @@ void EditorUI::viewport() {
     if (show_colliders && !game && !game_view) collider_outlines(origin, size);
     if (session.view_flags.bones && !game && !game_view) bone_overlay(origin, size);
     if (session.view_flags.ragdolls && !game && !game_view) ragdoll_overlay(origin, size);
-    if (!game && !game_view) selection_outlines(origin, size);
     report_physics();
     report_assets();
     if (const auto problem = session.take_view_state_problem(); !problem.empty()) log_error(problem);
@@ -423,23 +425,6 @@ void EditorUI::gizmo(ImVec2 origin, ImVec2 size) {
     if (!using_now) { gizmo_following = false; gizmo_entry.clear(); }
     if (gizmo_active && !using_now) ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     gizmo_active = using_now;
-}
-void EditorUI::selection_outlines(ImVec2 origin, ImVec2 size) {
-    auto *draw = ImGui::GetWindowDrawList();
-    for (const auto id : session.selected().items()) {
-        const auto bounds = session.local_bounds(id);
-        const auto world = session.drawn_world(id);
-        if (!bounds || !world) continue;
-        const auto m = glm::make_mat4(world->matrix.data());
-        const auto &[low, high] = *bounds;
-        std::array<std::optional<ImVec2>, 8> corners;
-        for (int i = 0; i < 8; ++i)
-            corners[std::size_t(i)] = project(glm::dvec3(m * glm::dvec4(i & 1 ? high.x : low.x, i & 2 ? high.y : low.y, i & 4 ? high.z : low.z, 1)), origin, size);
-        const ImU32 color = id == session.selection() ? IM_COL32(255, 170, 40, 255) : IM_COL32(255, 210, 120, 200);
-        for (int a = 0; a < 8; ++a)
-            for (const int bit : {1, 2, 4})
-                if (!(a & bit) && corners[std::size_t(a)] && corners[std::size_t(a | bit)]) draw->AddLine(*corners[std::size_t(a)], *corners[std::size_t(a | bit)], color, px(1.5f));
-    }
 }
 void EditorUI::game_overlay(gameplay::Game &game, ImVec2 origin, ImVec2 size, bool hovered) {
     const auto hud = game.hud();

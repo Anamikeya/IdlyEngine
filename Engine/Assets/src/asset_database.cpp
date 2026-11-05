@@ -1,6 +1,7 @@
 #include "engine/assets/asset_database.h"
 
 #include "engine/assets/importers.h"
+#include "engine/assets/virtual_paths.h"
 
 #include <algorithm>
 #include <fstream>
@@ -36,6 +37,12 @@ std::string lowercase(std::string text)
 bool ends_with_meta(const std::string& path)
 {
 	return path.size() > 5 && lowercase(path.substr(path.size() - 5)) == ".meta";
+}
+
+bool ends_with_redirect(const std::string& path)
+{
+	const std::size_t n = redirector_extension.size();
+	return path.size() > n && lowercase(path.substr(path.size() - n)) == redirector_extension;
 }
 
 bool inside(const fs::path& root, const fs::path& candidate)
@@ -95,8 +102,11 @@ struct AssetDatabase::Impl {
 	std::map<AssetId, Entry> by_id;
 	std::map<std::string, AssetId> by_path;
 	std::vector<AssetIssue> issues;
+	std::vector<Redirector> redirectors; // Ascending by path.
+	std::uint64_t scans = 0;
 
 	fs::path source_of(const AssetMetadata& meta) const { return root / from_utf8(meta.path); }
+	fs::path redirector_file(const std::string& path) const { return root / from_utf8(path + std::string(redirector_extension)); }
 
 	// All reads go through here: the canonical target must stay under the canonical root (no symlink escapes).
 	Result<std::vector<std::uint8_t>> read(const fs::path& path, std::uint64_t max_bytes) const
@@ -341,6 +351,7 @@ Result<std::size_t> AssetDatabase::scan()
 	std::vector<AssetIssue> issues;
 	std::set<std::string> metas;      // Relative paths of sidecars, without ".meta".
 	std::vector<AssetMetadata> found; // Supported assets with a valid path.
+	std::vector<Redirector> redirectors;
 
 	std::error_code ec;
 	fs::recursive_directory_iterator it(db.root, fs::directory_options::skip_permission_denied, ec);
@@ -357,6 +368,22 @@ Result<std::size_t> AssetDatabase::scan()
 		const std::string relative = utf8(it->path().lexically_relative(db.root));
 		if (ends_with_meta(relative)) {
 			metas.insert(relative.substr(0, relative.size() - 5));
+			continue;
+		}
+		if (ends_with_redirect(relative)) {
+			auto text = db.read(it->path(), 64 * 1024);
+			if (!text) {
+				issues.push_back({relative, text.error().message});
+				continue;
+			}
+			const auto& b = text.value();
+			auto parsed = parse_redirector(std::string_view(reinterpret_cast<const char*>(b.data()), b.size()),
+				relative.substr(0, relative.size() - redirector_extension.size()));
+			if (!parsed) {
+				issues.push_back({relative, parsed.error().message});
+				continue;
+			}
+			redirectors.push_back(std::move(parsed.value()));
 			continue;
 		}
 		auto path = normalize_asset_path(relative);
@@ -441,9 +468,12 @@ Result<std::size_t> AssetDatabase::scan()
 	}
 
 	std::sort(issues.begin(), issues.end(), [](const AssetIssue& a, const AssetIssue& b) { return a.path < b.path; });
+	std::sort(redirectors.begin(), redirectors.end(), [](const Redirector& a, const Redirector& b) { return a.path < b.path; });
 	db.by_id = std::move(entries);
 	db.by_path = std::move(paths);
 	db.issues = std::move(issues);
+	db.redirectors = std::move(redirectors);
+	++db.scans;
 	return db.by_id.size();
 }
 
@@ -515,7 +545,7 @@ std::uint32_t AssetDatabase::revision(AssetId id) const
 	return it == impl_->by_id.end() ? 0 : it->second.revision;
 }
 
-Result<void> AssetDatabase::move(AssetId id, std::string_view new_path)
+Result<void> AssetDatabase::move(AssetId id, std::string_view new_path, bool leave_redirector)
 {
 	const auto it = impl_->by_id.find(id);
 	if (it == impl_->by_id.end()) {
@@ -555,10 +585,57 @@ Result<void> AssetDatabase::move(AssetId id, std::string_view new_path)
 		return fail(ErrorCode::InvalidState, "cannot move " + meta.path + ": " + ec.message());
 	}
 	fs::remove(source_meta, ec);
+	// The asset takes its new name back from any redirector standing there, which would only be hidden by it.
+	fs::remove(impl_->redirector_file(normalized.value()), ec);
+	std::string unwritten;
+	if (leave_redirector) {
+		const Redirector left{meta.path, normalized.value(), id};
+		if (auto written = impl_->write_atomic(impl_->redirector_file(meta.path), write_redirector(left)); !written) {
+			unwritten = written.error().message;
+		}
+	}
 	if (auto scanned = scan(); !scanned) {
 		return scanned.error();
 	}
+	if (!unwritten.empty()) {
+		return fail(ErrorCode::InvalidState, meta.path + " moved, but no redirector could be left there: " + unwritten);
+	}
 	return {};
+}
+
+std::span<const Redirector> AssetDatabase::redirectors() const noexcept
+{
+	return impl_->redirectors;
+}
+
+std::uint64_t AssetDatabase::scans() const noexcept
+{
+	return impl_->scans;
+}
+
+Result<std::size_t> AssetDatabase::remove_redirectors(std::span<const std::string> paths)
+{
+	std::size_t removed = 0;
+	std::string failed;
+	for (const std::string& path : paths) {
+		const auto known = std::find_if(impl_->redirectors.begin(), impl_->redirectors.end(), [&](const Redirector& r) { return r.path == path; });
+		if (known == impl_->redirectors.end()) {
+			continue;
+		}
+		std::error_code ec;
+		if (fs::remove(impl_->redirector_file(path), ec)) {
+			++removed;
+		} else if (ec) {
+			failed += (failed.empty() ? "" : ", ") + path;
+		}
+	}
+	if (auto scanned = scan(); !scanned) {
+		return scanned.error();
+	}
+	if (!failed.empty()) {
+		return fail(ErrorCode::InvalidState, "cannot remove the redirectors " + failed);
+	}
+	return removed;
 }
 
 Result<AssetId> AssetDatabase::create_material(std::string_view path, const MaterialData& material)

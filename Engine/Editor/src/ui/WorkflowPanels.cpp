@@ -233,6 +233,14 @@ void EditorUI::bind_console() {
         save_settings();
         return std::string("Collider outlines ") + (show_colliders ? "on" : "off");
     });
+    console.add_action("asset.resolve", "Find the asset a /Game/... name means, through redirectors.", [this](std::string_view name) {
+        const auto found = session.resolve_package(name);
+        if (!found) return found.error().message;
+        const auto &r = found.value();
+        std::string text = std::string(name) + " is " + session.package_name_of(r.id) + ", " + r.asset_path + " (" + assets::to_string(r.type) + ")";
+        for (const auto &step : r.redirects) text += "\n  through the redirector " + step;
+        return text;
+    });
     console.add_action("clear", "Empty the Console.", [this](std::string_view) { messages.clear(); return std::string{}; });
     console.add_action("help", "List everything the console knows, or what matches a word.", [this](std::string_view word) {
         std::string text;

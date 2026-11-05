@@ -77,7 +77,7 @@ set_tests_properties(engine.editor.acceptance PROPERTIES TIMEOUT 60)
 set(RENDERER_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../Renderer")
 set(MATERIAL_DIR "${CMAKE_CURRENT_BINARY_DIR}/materials")
 file(MAKE_DIRECTORY "${MATERIAL_DIR}")
-foreach(name ui grid)
+foreach(name ui grid selection_mask selection_outline)
     add_custom_command(OUTPUT "${MATERIAL_DIR}/${name}.filamat"
         COMMAND matc -p desktop -a opengl -o "${MATERIAL_DIR}/${name}.filamat" "${RENDERER_ROOT}/materials/${name}.mat"
         DEPENDS matc "${RENDERER_ROOT}/materials/${name}.mat" VERBATIM)

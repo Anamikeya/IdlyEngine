@@ -133,7 +133,10 @@ void EditorUI::draw_asset_picture(const assets::AssetMetadata &meta, ImVec2 at, 
 }
 void EditorUI::asset_tooltip(const assets::AssetMetadata &meta) {
     if (!ImGui::BeginItemTooltip()) return;
-    ImGui::TextUnformatted(meta.path.c_str());
+    // Its package name first, as Unreal shows it, then where the file is.
+    const auto package = session.package_name_of(meta.id);
+    ImGui::TextUnformatted(package.empty() ? meta.path.c_str() : package.c_str());
+    if (!package.empty()) ImGui::TextDisabled("%s", meta.path.c_str());
     ImGui::TextDisabled("%s, %s, %s", assets::to_string(meta.type), readable_size(meta.source_bytes).c_str(), assets::to_string(session.asset_state(meta.id)));
     const auto found = thumbnails.find(meta.id);
     if (found != thumbnails.end()) {
@@ -201,16 +204,40 @@ bool EditorUI::asset_field(std::string_view type_name, AssetRef &ref, bool mixed
     if (ImGui::BeginCombo("##pick", preview.c_str(), ImGuiComboFlags_HeightLarge)) {
         if (ImGui::IsWindowAppearing()) { asset_field_search[0] = 0; ImGui::SetKeyboardFocusHere(); }
         ImGui::SetNextItemWidth(-FLT_MIN);
-        ImGui::InputTextWithHint("##search", "Search", asset_field_search.data(), asset_field_search.size());
+        const bool entered = ImGui::InputTextWithHint("##search", "Search, or type a /Game/... name", asset_field_search.data(), asset_field_search.size(),
+                                                      ImGuiInputTextFlags_EnterReturnsTrue);
         mark("Field.Search");
-        if (ImGui::Selectable("(none)", ref.empty() && !mixed)) { ref = {}; changed = true; }
         const std::string_view wanted(asset_field_search.data());
+        // A package name typed in full, followed through redirectors (slice 7). Enter takes it.
+        if (wanted.starts_with('/')) {
+            const auto found = session.resolve_package(wanted);
+            if (!found) ImGui::TextDisabled("%s", found.error().message.c_str());
+            else if (found.value().type != type) ImGui::TextDisabled("%s is a %s", std::string(wanted).c_str(), assets::to_string(found.value().type));
+            else {
+                std::string label = session.package_name_of(found.value().id);
+                if (const auto hops = found.value().redirects.size()) label += "  (through " + std::to_string(hops) + (hops == 1 ? " redirector)" : " redirectors)");
+                if (ImGui::Selectable(label.c_str()) || entered) {
+                    ref = {found.value().id.value, found.value().asset_path};
+                    changed = true;
+                    ImGui::CloseCurrentPopup();
+                }
+                mark("Field.Resolved");
+            }
+        }
+        if (ImGui::Selectable("(none)", ref.empty() && !mixed)) { ref = {}; changed = true; }
         for (const auto &meta : catalogue) {
-            if (meta.type != type || !has_text(meta.path, wanted)) continue;
-            if (ImGui::Selectable(meta.path.c_str(), !mixed && ref.id == meta.id.value)) { ref = {meta.id.value, meta.path}; changed = true; }
+            if (meta.type != type) continue;
+            const auto package = session.package_name_of(meta.id);
+            if (!has_text(meta.path, wanted) && !has_text(package, wanted)) continue;
+            if (ImGui::Selectable((package.empty() ? meta.path : package).c_str(), !mixed && ref.id == meta.id.value)) { ref = {meta.id.value, meta.path}; changed = true; }
+            ImGui::SetItemTooltip("%s", meta.path.c_str());
             mark("Field.Item." + meta.path);
         }
         ImGui::EndCombo();
+    }
+    if (!mixed && !ref.empty()) {
+        const auto package = session.package_name_of(assets::AssetId{ref.id});
+        ImGui::SetItemTooltip("%s", (package.empty() ? ref.path : package).c_str());
     }
     mark("Field.Combo");
     if (ImGui::BeginDragDropTarget()) {
@@ -309,6 +336,13 @@ void EditorUI::asset_browser_contents() {
     mark("Asset.AddToScene");
     flow(button_width("Reload"));
     command_button("Asset.Reload", "Reload");
+    // Moves leave redirectors behind; while there are any, a button offers to fix up what still names them.
+    if (const auto redirectors = session.redirectors().size()) {
+        const std::string label = "Fix Up Redirectors (" + std::to_string(redirectors) + ")";
+        flow(button_width(label.c_str()));
+        command_button("Assets.FixUpRedirectors", label.c_str());
+        mark("Asset.FixUpRedirectors");
+    }
     ImGui::SetNextItemWidth(px(140));
     ImGui::InputTextWithHint("##asset-search", "Search assets", asset_search.data(), asset_search.size());
     mark("Asset.Search");
@@ -444,7 +478,8 @@ void EditorUI::asset_browser_contents() {
 void EditorUI::rename_asset_dialog() {
     if (std::exchange(rename_asset_prompt, false)) ImGui::OpenPopup("Rename asset");
     if (!ImGui::BeginPopupModal("Rename asset", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) return;
-    ImGui::TextUnformatted("New path inside the asset folder. Slashes move it to another folder.");
+    ImGui::TextUnformatted("New path inside the asset folder, or a name such as /Game/Textures/Walls/Brick. Slashes move it\n"
+                           "to another folder. A redirector is left at the old path until Fix Up Redirectors.");
     if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
     ImGui::SetNextItemWidth(px(420));
     const bool entered = ImGui::InputText("##path", rename_asset_path.data(), rename_asset_path.size(), ImGuiInputTextFlags_EnterReturnsTrue);

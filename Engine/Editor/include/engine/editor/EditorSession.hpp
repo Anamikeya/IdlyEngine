@@ -67,6 +67,7 @@ struct ViewFlags {
     bool animations = true; // Animators whose preview is on play while editing; the same promise.
     bool bones = false;     // Skeletons are drawn over the view.
     bool ragdolls = false;  // Ragdolls' capsules are drawn over the view: where they would be, or are.
+    bool outlines = true;   // Selected models are outlined. Off in the game's own view.
 };
 
 enum class PlayState { Editing, Playing, Paused };
@@ -133,6 +134,12 @@ class EditorSession {
     mutable std::optional<assets::AssetDatabase> assets_;
     mutable renderer::ResourceRegistry resources_;
     mutable std::map<std::tuple<std::uint64_t, std::string, assets::AssetType>, Resolved> resolved_;
+    // "/Game" and its index, rebuilt when the catalogue's scan count moves on (slice 7).
+    mutable assets::VirtualFileSystem packages_;
+    mutable std::optional<std::uint64_t> packages_scans_;
+    mutable std::vector<std::string> package_conflicts_;
+    // The scene edits that make every asset reference `fix` changes the way `fix` leaves it.
+    std::vector<commands::Command> reference_edits(const std::function<bool(AssetRef &)> &fix) const;
     std::vector<std::string> asset_problems_;
     std::map<EntityId, renderer::Pose> poses_;
     // Material edits in progress, not saved yet (a drag in the Material Editor); these win over the file.
@@ -389,8 +396,37 @@ public:
     // Re-imports from disk; everything drawing the asset picks up the new revision on the next frame.
     Result<void> reload_asset(assets::AssetId);
     // Moves or renames the file, keeping its ID, and updates the paths stored in the scene (one undo step) and in
-    // materials (saved at once). References find assets by ID first, so a stale path would still resolve.
+    // materials (saved at once). References find assets by ID first, so a stale path would still resolve. A redirector
+    // is left at the old path for everything else that names it (assets/virtual_paths.h). `new_path` is a path in the
+    // asset folder or a package name, "/Game/Textures/Walls/Brick"; without an extension it keeps the old one.
     Result<void> rename_asset(assets::AssetId, const std::string &new_path);
+
+    // ---- Package names and redirectors (Milestone 5, slice 7; assets/virtual_paths.h) ----
+    // The mount point of the project's asset folder.
+    static constexpr std::string_view game_mount = "/Game";
+    // Mounted on open_project and indexed again whenever the catalogue has been scanned since. Safe to resolve with from
+    // any thread; the index is rebuilt here, on the session's.
+    const assets::VirtualFileSystem &packages() const;
+    // "/Game/Textures/Brick", in any case, followed through redirectors to the catalogued asset.
+    Result<assets::PackageResolution> resolve_package(std::string_view name) const;
+    // What people see for an asset: its package name ("/Game/Textures/Brick"), or "" when it is not catalogued.
+    std::string package_name_of(assets::AssetId) const;
+    // The redirectors in the asset folder, and what indexing them found wrong (assets/virtual_paths.h).
+    std::vector<assets::Redirector> redirectors() const;
+    std::vector<std::string> package_conflicts() const;
+    struct FixUpReport {
+        std::size_t redirectors = 0;                // Removed.
+        std::size_t references = 0;                 // Rewritten, in scene files and the open scene.
+        std::vector<std::filesystem::path> scenes;  // Scene files rewritten on disk.
+        bool open_scene = false;                    // The open scene changed, as one undo step; it is not saved.
+        std::size_t assets = 0;                     // Materials and effects saved.
+        std::vector<std::string> kept;              // Redirectors left in place, and why.
+    };
+    // Rewrites every reference that still names a redirector's path, or names the asset it stood for by ID, to where the
+    // asset is now. That covers the project's scene files (written in place), the open scene (one undo step, left
+    // unsaved), and materials and effects (saved). Then the redirectors it resolved are deleted. One that leads nowhere,
+    // or round in a loop, is kept and listed. Edit mode only.
+    Result<FixUpReport> fix_up_redirectors();
     // What a thumbnail needs, from a worker. A mesh is ready to draw; a texture comes reduced to at most `thumbnail_size`.
     static constexpr std::uint32_t thumbnail_size = 128;
     struct ThumbnailData {

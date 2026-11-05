@@ -115,6 +115,14 @@ struct StateLog {
             << " selected=" << session.selected().size() << " history=" << session.history_position() << '/' << session.history_names().size() << ui_fields
             << " camera=" << session.camera.target.x << ',' << session.camera.target.y << ',' << session.camera.target.z;
         if (const auto w = session.drawn_world(session.selection())) out << " primary=" << w->matrix[12] << ',' << w->matrix[13] << ',' << w->matrix[14];
+        // Slice 7: who is selected, the Flecs tags mirroring it, and the redirectors in the asset folder.
+        if (const auto record = session.scene().inspect(session.selection())) {
+            std::string name = record->name;
+            std::ranges::replace(name, ' ', '_');
+            out << " primary_name=" << name;
+            if (record->components.mesh && !record->components.mesh->material.empty()) out << " primary_material=" << record->components.mesh->material.path;
+        }
+        out << " tags=" << session.scene().ecs().native().count<editor::SelectedTag>() << " redirectors=" << session.redirectors().size();
         if (auto *game = session.game()) {
             const auto hud = game->hud();
             out << " phase=" << gameplay::to_string(hud.phase) << " score=" << hud.score << " targets=" << hud.targets_remaining << " time=" << hud.time_remaining

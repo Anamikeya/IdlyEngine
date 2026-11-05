@@ -127,6 +127,10 @@ A plane handle needs an axis letter first, and the whole typed drag is one undo 
 **Undo:** `Ctrl+Z` and `Ctrl+Y`. **Window > Undo History** shows every step, and clicking one jumps there. Selecting, hiding and bookmarks
 aren't undo steps.
 
+**What's selected** has an orange line around its outer edge, lighter orange for the others when several are selected. The line follows
+the model's silhouette only. No box is drawn, and no edge inside it. It shows even where something else hides the model, and selecting a
+group outlines its members. The game's own view shows no outline.
+
 ## Arrange the scene
 
 In the Scene Hierarchy:
@@ -168,7 +172,19 @@ If you add files to `Assets` yourself, press **Rescan**.
 | Find the asset an object uses | Press `Ctrl+B` |
 | Find anything by name | Press `Ctrl+P` |
 | Rename or move an asset | Press `F2`, or right-click it. Slashes move it to another folder, and references follow |
+| Use an asset by its name | Type its package name, such as `/Game/Textures/Brick`, in a field's list and press Enter |
 | See the browser over everything | Press `Ctrl+Space`, and `Esc` to close it |
+
+**Package names.** Every asset also has a name in Unreal's style: `/Game`, then its folder and file name without the extension, so
+`Assets/Textures/Brick.png` is `/Game/Textures/Brick`. Hold the mouse over an asset to see its name. Names ignore upper and lower case, so
+`/game/textures/brick` finds the same asset. If two assets in one folder share a name apart from the extension, add the extension
+(`/Game/Textures/Brick.png`) to say which. Scenes still store each reference by the asset's ID, so names are for finding and typing.
+
+**Redirectors.** Moving or renaming an asset leaves a small `.redirect` file at its old path saying where it went, so anything that
+still uses the old name, such as a scene you don't have open, still finds it. **Fix Up Redirectors (N)** appears in the Asset Browser
+while there are any (also in the command palette). It rewrites every scene file in the project, the open scene (one undo step; save it
+afterwards), and the materials and effects that use an old path, then deletes the redirectors. A redirector that leads nowhere, or
+round in a loop, is kept and reported.
 
 **Materials:** type a name beside **New material** and press it. Double-click a material to open it in the Material Editor, or press
 `Ctrl+E` to open the selected object's material. Material changes save themselves when you release a control, and they can be undone.
@@ -304,6 +320,7 @@ Press the backtick key to open the Console. Suggestions appear as you type, `Tab
 | `help` | List everything, or add a word to search |
 | `stat fps`, `stat timings`, `stat none` | Show or hide performance numbers |
 | `show collision` | Toggle collider outlines |
+| `asset.resolve /Game/Textures/Brick` | Show the asset a package name finds, and any redirectors on the way |
 | `camera.speed 5` | Set a value. A name alone shows the current value |
 | `r.shadows off` | Turn a view setting off. `r.bloom`, `r.ambient_occlusion` and `r.skybox` work the same way |
 | `Viewport.FocusSelected` | Run any command by its ID, as listed in `EDITOR_SHORTCUTS.md` |

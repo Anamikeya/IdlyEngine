@@ -5,7 +5,7 @@ the **Physics Shooter**, made entirely from data on top of the engine's reusable
 
 ![The Physics Shooter running inside the editor](docs/evidence/m4/02_arena_playing.jpg)
 
-**Status:** Windows x64 with MSVC is the built and tested platform. Linux GCC has a preset but is not verified. 534 CTest entries
+**Status:** Windows x64 with MSVC is the built and tested platform. Linux GCC has a preset but is not verified. 555 CTest entries
 pass, along with GPU smoke tests and scripted runs that use real mouse and keyboard input. Hosted CI is set up in
 `.github/workflows/ci.yml` and runs for the first time with this repository.
 
@@ -33,7 +33,7 @@ pass, along with GPU smoke tests and scripted runs that use real mouse and keybo
 | Physics | `Engine/Physics` | Box3D rigid bodies, colliders, joints, raycasts, impulses, contact, hit and sensor events, ragdolls built from a skinned model, and the bridge that keeps scene and physics in step |
 | Animation | `Engine/Animation` | Skeletons and clips on ozz-animation: sampling, crossfades, an additive layer, clip events and two-bone IK |
 | Effects | `Engine/Effects` | Particle effects: `.effect` assets and a CPU simulation with bursts, looping, gravity, drag and floor bounces |
-| Assets | `Engine/Assets` | Asset database with stable IDs and `.meta` files. Importers for `.glb` (with skins and clips), `.obj`, `.png`, `.jpg`, `.tga`, `.ppm` and `.hdr`, run in the background |
+| Assets | `Engine/Assets` | Asset database with stable IDs and `.meta` files. Importers for `.glb` (with skins and clips), `.obj`, `.png`, `.jpg`, `.tga`, `.ppm` and `.hdr`, run in the background. Unreal-style package names (`/Game/Textures/Brick`) and redirectors, resolved by a thread-safe virtual file system |
 | Gameplay | `Engine/Gameplay` | Input actions, first-person movement, weapons, damage, targets, enemies that patrol and flinch, score, pickups, win and loss rules |
 | Networking | `Engine/Networking` | Serialization, connection manager and a loopback transport. The GameNetworkingSockets backend is compile-checked only (see [Known limits](#known-limits)) |
 | Online services | `Engine/OnlineServices` | Online service interface and a null implementation |
@@ -52,10 +52,11 @@ The editor's controls are modelled on Unreal Engine's:
 - **Viewport.** Fly with the right mouse button and `W` `A` `S` `D`, orbit with Alt, pan, dolly and zoom. There are perspective and
   orthographic views, lit, unlit and wireframe modes, a game view and camera bookmarks.
 - **Gizmos.** Move, rotate and scale in world or local axes. Snap to the grid, the floor or a vertex. Alt+drag makes a copy. You can
-  type exact amounts mid-drag, such as `x3` or `y90`.
+  type exact amounts mid-drag, such as `x3` or `y90`. What is selected is outlined around its silhouette, as in Unreal: no box, no
+  inner edges, and the outline shows even where something hides it.
 - **Panels.** The Details panel (labelled Inspector) is generated from property metadata, and editing several objects at once shows
   differing values as "Multiple Values". The Outliner (labelled Scene Hierarchy) has folders, lock, hide and filters. The Asset
-  Browser has thumbnails, rename and move with references kept. There is also a Material Editor, a Lighting panel, a drawer and named
+  Browser has thumbnails, and rename and move with references kept; a move leaves a redirector until **Fix Up Redirectors**, and assets can be named and typed as `/Game/...`. There is also a Material Editor, a Lighting panel, a drawer and named
   layouts.
 - **Workflow.** Play, simulate, leave the player and take it back. There is a command palette (`Ctrl+Shift+P`), quick open (`Ctrl+P`)
   and a console with console variables and suggestions.
@@ -235,7 +236,7 @@ folder and open the copy with `--project <copy> --scene <copy>\physics_shooter.s
 ./cmake/scripts/dev-shell.ps1 ctest --preset windows-msvc-debug -L smoke     # headless smoke tests
 ```
 
-There are **534 CTest entries**, covering physics and ragdolls, the scene bridge, animation, particles, gameplay, assets, networking,
+There are **555 CTest entries**, covering physics and ragdolls, the scene bridge, animation, particles, gameplay, assets and package names, networking,
 online services, the core, the renderer snapshot and the editor. The editor tests run without a window: the commands, the viewport camera, the panels, the workflow
 and the feedback. Each test case runs in its own process. The test framework in `Tests/Framework` has no third-party dependencies.
 
@@ -264,7 +265,7 @@ The engine was built in milestones. Each one has a plan, a report and saved evid
 | Milestone 3 | A working 3D editor: hierarchy, inspector, gizmos, Play mode with physics, assets, a scene format, DPI scaling. 146 tests | [`MILESTONE_3_REPORT.md`](docs/MILESTONE_3_REPORT.md) |
 | Milestone 4 | PBR materials, lighting, shadows, IBL, a Material Editor, gameplay systems and the Physics Shooter sample. 207 tests | [`MILESTONE_4_REPORT.md`](docs/MILESTONE_4_REPORT.md) |
 | Editor UX, phases 1 to 5 | The Unreal-style editor: command registry, rebinding, undo history, viewport feel, generated panels, Play, Simulate and Eject, palette and console, toasts, log and background tasks. 409 tests | [`EDITOR_UX_PLAN.md`](docs/EDITOR_UX_PLAN.md) |
-| Milestone 5 | Characters and effects: ozz-animation, skinned models, animators, clip events, bone attachments, ragdolls and debris, particles and the Effect Editor, enemies in the sample, performance runs. 534 tests | [`MILESTONE_5_REPORT.md`](docs/MILESTONE_5_REPORT.md) |
+| Milestone 5 | Characters and effects: ozz-animation, skinned models, animators, clip events, bone attachments, ragdolls and debris, particles and the Effect Editor, enemies in the sample, performance runs; then package names, redirectors and a silhouette selection outline. 555 tests | [`MILESTONE_5_REPORT.md`](docs/MILESTONE_5_REPORT.md) |
 
 Design notes are in [`docs/architecture`](docs/architecture). For example, `006-scene-format.md` describes the scene file, and
 `008-editor-ux.md` explains how to add a command or an inspectable property.

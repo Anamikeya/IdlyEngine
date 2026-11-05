@@ -217,6 +217,18 @@ void EditorUI::bind_commands() {
         std::snprintf(rename_asset_path.data(), rename_asset_path.size(), "%s", selected_asset_meta()->path.c_str());
         rename_asset_prompt = true;
     }, [this, selected_asset_meta] { return !playing() && selected_asset_meta().has_value(); });
+    bind("Assets.FixUpRedirectors", [this] {
+        const auto fixed = session.fix_up_redirectors();
+        if (!fixed) { log_error(fixed.error().message); return; }
+        const auto &r = fixed.value();
+        const auto count = [](std::size_t n, const char *one, const char *many) { return std::to_string(n) + " " + (n == 1 ? one : many); };
+        std::string text = "Fixed up " + count(r.redirectors, "redirector", "redirectors") + ": " + count(r.references, "reference", "references") +
+                           " in " + count(r.scenes.size(), "scene file", "scene files");
+        if (r.open_scene) text += " and the open scene (save it to keep the change)";
+        if (r.assets) text += ", and " + count(r.assets, "material or effect", "materials or effects");
+        notify(Severity::Success, text);
+        for (const auto &kept : r.kept) notify(Severity::Warning, "Redirector kept: " + kept);
+    }, [this] { return !playing() && !session.redirectors().empty(); });
     bind("Asset.ToggleFavorite", [this] {
         settings.set("asset.favorite." + assets::to_string(selected_asset), !asset_is_favorite(selected_asset));
         save_settings();

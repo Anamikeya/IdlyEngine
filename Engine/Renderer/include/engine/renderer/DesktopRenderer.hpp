@@ -28,7 +28,10 @@ public:
     DesktopRenderer(const DesktopRenderer &) = delete;
     DesktopRenderer &operator=(const DesktopRenderer &) = delete;
     void resize_viewport(unsigned width, unsigned height);
+    // The viewport's image, with the selection outline (RenderObject::outline) drawn over it.
     std::uint64_t viewport_texture() const;
+    // How far the selection outline reaches beyond a silhouette, in framebuffer pixels: 1 to 8, 2 at first.
+    void set_outline_width(float pixels);
     // Uploads the frame's assets from the registry on first use, and frees those no object uses any more.
     // An object whose handle has gone stale (a frame older than a reload) is skipped for that frame.
     bool render(const FrameSnapshot &, const ResourceRegistry &, ImDrawData *, unsigned width, unsigned height);

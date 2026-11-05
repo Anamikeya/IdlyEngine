@@ -827,6 +827,95 @@ void lighting_scene(Harness &h, const fs::path &sample) {
     h.check(metal != plain, "metalness changes the surface", "metal " + text(metal) + ", plain " + text(plain));
 }
 }
+// The selection outline (slice 7): a ring around the selected model's silhouette, drawn over whatever hides the model,
+// and nothing at all inside the silhouette, so none of the model's own edges is drawn across it.
+void selection_outline(Harness &h) {
+    using Image = std::vector<std::uint8_t>;
+    using RGB = std::array<int, 3>;
+    const auto grab = [&] { h.settle(); return h.renderer.readback(unsigned(h.width), unsigned(h.height)); };
+    const auto rgb = [&](const Image &image, int x, int y) {
+        const auto *p = image.data() + (std::size_t(y) * std::size_t(h.width) + std::size_t(x)) * 4;
+        return RGB{p[0], p[1], p[2]};
+    };
+    const auto differ = [](const RGB &a, const RGB &b) { return std::abs(a[0] - b[0]) > 12 || std::abs(a[1] - b[1]) > 12 || std::abs(a[2] - b[2]) > 12; };
+    h.reset(); h.sun({-35, 25});
+    h.session.view_flags.grid = false; // A plain background.
+    // Turned so three faces show, with the edges between them in sight, as the old bounding box drew them.
+    Transform t = aimed({0, 0, 0}, 25, 35); t.scale = {1.3, 1.3, 1.3};
+    // First out of sight, for the same view without it, then in place.
+    Transform away = t; away.position = {0, 500, 0};
+    const auto cube = h.add("Selected Cube", away, {MeshComponent{BuiltinMesh::Cube, {0.2, 0.5, 0.9}, 0.8, 0}, {}, {}});
+    const auto empty = grab();
+    if (!h.session.execute(commands::SetTransform{cube, t})) throw std::runtime_error("Move failed");
+    const auto plain = grab();
+    h.session.select(cube);
+    const auto outlined = grab();
+    h.capture("selection_outline");
+    const int width = h.width, height = h.height;
+    // A few pixels round the window's edge are never drawn and hold whatever the swap chain held, so they are left out.
+    constexpr int margin = 4;
+    // The model's silhouette, and its inside: silhouette pixels with the silhouette all round them, clear of the edge's
+    // antialiasing.
+    std::vector<char> silhouette(std::size_t(width) * height, 0);
+    for (int y = 0; y < height; ++y) for (int x = 0; x < width; ++x) silhouette[std::size_t(y) * width + x] = differ(rgb(plain, x, y), rgb(empty, x, y));
+    const auto in = [&](int x, int y) { return x >= margin && y >= margin && x < width - margin && y < height - margin && silhouette[std::size_t(y) * width + x]; };
+    const auto inside = [&](int x, int y) {
+        for (int dy = -2; dy <= 2; ++dy) for (int dx = -2; dx <= 2; ++dx) if (!in(x + dx, y + dy)) return false;
+        return true;
+    };
+    const auto near_silhouette = [&](int x, int y, int reach) {
+        for (int dy = -reach; dy <= reach; ++dy) for (int dx = -reach; dx <= reach; ++dx) if (in(x + dx, y + dy)) return true;
+        return false;
+    };
+    // What selecting changed, against the image without it.
+    std::string box;
+    const auto ring = [&](const Image &before, const Image &after, std::size_t &changed, std::size_t &within, std::size_t &distant, RGB &mean, std::array<bool, 4> &sides) {
+        changed = within = distant = 0; mean = {0, 0, 0}; sides = {};
+        int left = width, right = -1, top = height, bottom = -1;
+        for (int y = margin; y < height - margin; ++y) for (int x = margin; x < width - margin; ++x) if (in(x, y)) { left = std::min(left, x); right = std::max(right, x); top = std::min(top, y); bottom = std::max(bottom, y); }
+        for (int y = margin; y < height - margin; ++y) for (int x = margin; x < width - margin; ++x) {
+            if (!differ(rgb(before, x, y), rgb(after, x, y))) continue;
+            ++changed;
+            if (inside(x, y)) ++within;
+            else if (!near_silhouette(x, y, 6)) ++distant;
+            if (!in(x, y)) { const auto c = rgb(after, x, y); for (int i = 0; i < 3; ++i) mean[std::size_t(i)] += c[std::size_t(i)]; }
+            if (x < left) sides[0] = true;
+            if (x > right) sides[1] = true;
+            if (y < top) sides[2] = true;
+            if (y > bottom) sides[3] = true;
+        }
+        box = std::to_string(left) + ".." + std::to_string(right) + " x " + std::to_string(top) + ".." + std::to_string(bottom);
+        std::size_t outside = 0;
+        for (int y = margin; y < height - margin; ++y) for (int x = margin; x < width - margin; ++x) if (!in(x, y) && differ(rgb(before, x, y), rgb(after, x, y))) ++outside;
+        if (outside) for (auto &c : mean) c = int(c / int(outside));
+    };
+    std::size_t changed = 0, within = 0, distant = 0;
+    RGB mean{};
+    std::array<bool, 4> sides{};
+    ring(plain, outlined, changed, within, distant, mean, sides);
+    const auto counts = std::to_string(changed) + " pixels changed, " + std::to_string(within) + " inside the silhouette, " + std::to_string(distant) + " away from it, box " + box + ", sides " + std::to_string(sides[0]) + std::to_string(sides[1]) + std::to_string(sides[2]) + std::to_string(sides[3]);
+    h.check(changed > 200 && sides[0] && sides[1] && sides[2] && sides[3], "a selected model is outlined all round", counts);
+    h.check(within == 0, "nothing inside the silhouette is drawn: no box, no inner edges", counts);
+    h.check(distant == 0 && mean[0] > 170 && mean[0] > mean[1] + 30 && mean[1] > mean[2] + 40, "the outline hugs the silhouette, in orange", counts + ", mean " + text(mean));
+
+    // Behind a wall that hides it all, its whole outline still shows, drawn over the wall, and the wall inside it is untouched.
+    const auto camera_z = h.session.frame(1.0).value()->camera.world.matrix[14];
+    Transform wall_place; wall_place.position = {0, 0, camera_z > 0 ? 1.8 : -1.8}; wall_place.scale = {4, 4, 0.1};
+    h.add("Wall", wall_place, {MeshComponent{BuiltinMesh::Cube, {0.8, 0.8, 0.8}, 0.9, 0}, {}, {}});
+    h.session.select(0);
+    const auto hidden = grab();
+    h.session.select(cube);
+    const auto hidden_outlined = grab();
+    h.capture("selection_outline_hidden");
+    std::size_t hidden_changed = 0, hidden_within = 0, hidden_distant = 0;
+    ring(hidden, hidden_outlined, hidden_changed, hidden_within, hidden_distant, mean, sides);
+    const auto hidden_counts = std::to_string(hidden_changed) + " pixels changed, " + std::to_string(hidden_within) + " inside the silhouette, " +
+                               std::to_string(hidden_distant) + " away from it";
+    h.check(hidden_changed > 200 && hidden_within == 0 && hidden_distant == 0 && sides[0] && sides[1] && sides[2] && sides[3],
+            "a hidden model's whole outline shows over what hides it, and nothing inside it", hidden_counts);
+    h.session.select(0);
+    h.session.view_flags.grid = true;
+}
 int run_render_test(GLFWwindow *window, const fs::path &materials, const fs::path &output) {
     try {
         fs::remove_all(output);
@@ -848,6 +937,7 @@ int run_render_test(GLFWwindow *window, const fs::path &materials, const fs::pat
         editor_lights_follow_exposure(h);
         punctual_lights(h);
         resource_lifecycle(h);
+        selection_outline(h);
         particles(h);
         skinning(h);
         skinned_model(h, fs::path(ENGINE_RESOURCES_DIR) / "filament/third_party/models/Fox/Fox.glb");

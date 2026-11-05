@@ -178,7 +178,29 @@ std::unique_ptr<physics::ScenePhysics> make_physics(bool simulate) {
 }
 const commands::Context physics_context{"physics", 3};
 }
-EditorSession::EditorSession() : edit_physics_(make_physics(false)) {}
+std::size_t apply_selection_tags(Scene &scene, const SelectionSet &selection) {
+    auto &world = scene.ecs().native();
+    // Found first and changed after: adding or removing a tag moves an entity to another table under a running query.
+    std::vector<flecs::entity> unselected, unprimary;
+    world.query_builder<const StableId>().with<SelectedTag>().build().each([&](flecs::entity e, const StableId &id) {
+        if (!selection.contains(id.value)) unselected.push_back(e);
+    });
+    world.query_builder<const StableId>().with<PrimarySelectedTag>().build().each([&](flecs::entity e, const StableId &id) {
+        if (id.value != selection.primary()) unprimary.push_back(e);
+    });
+    std::size_t changed = 0;
+    for (auto e : unselected) { e.remove<SelectedTag>(); ++changed; }
+    for (auto e : unprimary) { e.remove<PrimarySelectedTag>(); ++changed; }
+    for (const auto id : selection.items()) {
+        const auto native = scene.native(id);
+        if (!native) continue;
+        const flecs::entity e(world, native);
+        if (!e.has<SelectedTag>()) { e.add<SelectedTag>(); ++changed; }
+        if (id == selection.primary() && !e.has<PrimarySelectedTag>()) { e.add<PrimarySelectedTag>(); ++changed; }
+    }
+    return changed;
+}
+EditorSession::EditorSession() : edit_physics_(make_physics(false)) { (void)packages_.mount(game_mount, asset_folder()); }
 EditorSession::~EditorSession() = default;
 const Scene &EditorSession::scene() const { return runtime_ ? runtime_->scene : scene_; }
 void EditorSession::reconcile() { selection_.retain([this](EntityId id) { return scene().inspect(id).has_value(); }); }
@@ -850,18 +872,7 @@ Result<EntityId> EditorSession::group_selection() {
     selection_.set(id);
     return id;
 }
-Result<void> EditorSession::rename_asset(assets::AssetId id, const std::string &new_path) {
-    if (auto allowed = editing_only("Renaming an asset"); !allowed) return allowed;
-    if (!assets_) return fail(ErrorCode::NotFound, "No asset folder");
-    if (auto moved = assets_->move(id, new_path); !moved) return moved;
-    const auto meta = assets_->find(id);
-    if (!meta) return fail(ErrorCode::NotFound, "The asset could not be found after moving it");
-    resolved_.clear();
-    const auto fix = [&](AssetRef &ref) {
-        if (ref.id != id.value || ref.path == meta->path) return false;
-        ref.path = meta->path;
-        return true;
-    };
+std::vector<commands::Command> EditorSession::reference_edits(const std::function<bool(AssetRef &)> &fix) const {
     std::vector<commands::Command> edits;
     for (const auto &e : scene_.snapshot().entities) {
         if (auto mesh = e.components.mesh) {
@@ -875,6 +886,34 @@ Result<void> EditorSession::rename_asset(assets::AssetId id, const std::string &
         if (auto emitter = e.components.emitter; emitter && fix(emitter->effect)) edits.emplace_back(commands::SetParticleEmitter{e.id, std::move(emitter)});
         if (auto animator = e.components.animator; animator && fix(animator->clips)) edits.emplace_back(commands::SetAnimator{e.id, std::move(animator)});
     }
+    return edits;
+}
+Result<void> EditorSession::rename_asset(assets::AssetId id, const std::string &new_path) {
+    if (auto allowed = editing_only("Renaming an asset"); !allowed) return allowed;
+    if (!assets_) return fail(ErrorCode::NotFound, "No asset folder");
+    const auto before = assets_->find(id);
+    if (!before) return fail(ErrorCode::NotFound, "unknown asset id " + assets::to_string(id));
+    // A package name: "/Game/Textures/Walls/Brick", in any case, keeping the file's extension when it gives none.
+    std::string target = new_path;
+    if (const std::string prefix = std::string(game_mount) + "/"; assets::fold_case(target).starts_with(assets::fold_case(prefix))) {
+        target = target.substr(prefix.size());
+        if (assets::asset_type_for(target) == assets::AssetType::Unknown) {
+            const auto dot = before->path.rfind('.');
+            if (dot != std::string::npos) target += before->path.substr(dot);
+        }
+    } else if (!target.empty() && (target.front() == '/' || target.front() == '\\')) {
+        return fail(ErrorCode::InvalidArgument, "Package names start with " + std::string(game_mount) + "/: " + new_path);
+    }
+    if (auto moved = assets_->move(id, target, true); !moved) return moved;
+    const auto meta = assets_->find(id);
+    if (!meta) return fail(ErrorCode::NotFound, "The asset could not be found after moving it");
+    resolved_.clear();
+    const auto fix = [&](AssetRef &ref) {
+        if (ref.id != id.value || ref.path == meta->path) return false;
+        ref.path = meta->path;
+        return true;
+    };
+    const auto edits = reference_edits(fix);
     ScopedTransaction transaction(*this, "Update References to " + meta->path);
     for (std::size_t at = 0; at < edits.size(); at += commands::CommandBus::max_transaction) {
         const auto count = std::min(edits.size() - at, commands::CommandBus::max_transaction);
@@ -900,6 +939,144 @@ Result<void> EditorSession::rename_asset(assets::AssetId id, const std::string &
     }
     forget_materials();
     return {};
+}
+const assets::VirtualFileSystem &EditorSession::packages() const {
+    const std::uint64_t scans = assets_ ? assets_->scans() : 0;
+    if (packages_scans_ != scans) {
+        const auto catalogue = assets_ ? assets_->assets() : std::vector<assets::AssetMetadata>{};
+        const std::vector<assets::Redirector> none;
+        const auto indexed = packages_.index(game_mount, catalogue, assets_ ? assets_->redirectors() : std::span<const assets::Redirector>(none));
+        package_conflicts_ = indexed ? indexed.value() : std::vector<std::string>{indexed.error().message};
+        packages_scans_ = scans;
+    }
+    return packages_;
+}
+Result<assets::PackageResolution> EditorSession::resolve_package(std::string_view name) const { return packages().resolve(name); }
+std::string EditorSession::package_name_of(assets::AssetId id) const { return packages().name_of(id).value_or(std::string{}); }
+std::vector<assets::Redirector> EditorSession::redirectors() const {
+    if (!assets_) return {};
+    const auto found = assets_->redirectors();
+    return {found.begin(), found.end()};
+}
+std::vector<std::string> EditorSession::package_conflicts() const { packages(); return package_conflicts_; }
+Result<EditorSession::FixUpReport> EditorSession::fix_up_redirectors() {
+    if (auto allowed = editing_only("Fixing up redirectors"); !allowed) return allowed.error();
+    if (!assets_) return fail(ErrorCode::NotFound, "No asset folder");
+    FixUpReport report;
+    // Where each redirector leads now. Its own name may be taken by another asset since, so it is followed from its target.
+    struct Move { std::string old_path; assets::AssetId id; assets::AssetMetadata now; };
+    std::vector<Move> moves;
+    std::vector<std::string> resolved_paths;
+    for (const auto &r : redirectors()) {
+        const auto found = resolve_package(std::string(game_mount) + "/" + r.target);
+        if (!found) { report.kept.push_back(r.path + ": " + found.error().message); continue; }
+        const auto now = assets_->find(found.value().id);
+        if (!now) { report.kept.push_back(r.path + ": its asset is not catalogued"); continue; }
+        moves.push_back({r.path, r.id, *now});
+        resolved_paths.push_back(r.path);
+    }
+    if (moves.empty()) return report;
+    // A reference is stale when it names an old path, or when its ID is the moved asset's and its path is not where it is.
+    const auto fix = [&](AssetRef &ref) {
+        if (ref.empty()) return false;
+        for (const auto &m : moves) {
+            const bool by_path = assets::fold_case(ref.path) == assets::fold_case(m.old_path);
+            const bool by_id = !m.id.is_null() && ref.id == m.id.value;
+            if (!by_path && !by_id) continue;
+            if (ref.path == m.now.path && ref.id == m.now.id.value) return false;
+            // An ID with no asset behind it any more (a deleted .meta) takes the asset's ID too.
+            if (!assets_->find(assets::AssetId{ref.id})) ref.id = m.now.id.value;
+            if (ref.id != m.now.id.value) continue; // Another asset, which only shares the old name.
+            ref.path = m.now.path;
+            return true;
+        }
+        return false;
+    };
+    // Scene files on disk, apart from the open one: rewritten in place, through a temporary file.
+    std::error_code ec;
+    std::vector<std::filesystem::path> files;
+    const auto utf8 = [](const std::filesystem::path &p) { const auto u = p.u8string(); return std::string(reinterpret_cast<const char *>(u.data()), u.size()); };
+    for (std::filesystem::recursive_directory_iterator it(project_, std::filesystem::directory_options::skip_permission_denied, ec), end; !ec && it != end; it.increment(ec)) {
+        std::error_code probe;
+        if (it->is_directory(probe) && (it.depth() >= 8 || utf8(it->path().filename()).starts_with("."))) { it.disable_recursion_pending(); continue; }
+        if (!it->is_regular_file(probe) || assets::fold_case(utf8(it->path().extension())) != ".scene") continue;
+        if (!document_.empty() && std::filesystem::equivalent(it->path(), document_, probe)) continue;
+        files.push_back(it->path());
+    }
+    for (const auto &file : files) {
+        std::ifstream in(file, std::ios::binary);
+        auto snapshot = read_scene(in);
+        in.close();
+        if (!snapshot) { report.kept.push_back(file.generic_string() + " could not be read: " + snapshot.error().message); continue; }
+        std::size_t changed = 0;
+        for (auto &e : snapshot.value().entities) {
+            auto &c = e.components;
+            if (c.mesh) {
+                changed += fix(c.mesh->mesh_asset) + fix(c.mesh->texture) + fix(c.mesh->material);
+                for (auto &slot : c.mesh->material_slots) changed += fix(slot.material);
+            }
+            if (c.environment) changed += fix(c.environment->image);
+            if (c.emitter) changed += fix(c.emitter->effect);
+            if (c.animator) changed += fix(c.animator->clips);
+        }
+        if (!changed) continue;
+        auto temporary = file; temporary += ".tmp";
+        {
+            std::ofstream out(temporary, std::ios::binary | std::ios::trunc);
+            if (!out || !write_scene(out, snapshot.value()) || !out.flush()) {
+                std::filesystem::remove(temporary, ec);
+                return fail(ErrorCode::InvalidState, "Cannot write " + file.generic_string() + "; no redirector was removed");
+            }
+        }
+        std::filesystem::rename(temporary, file, ec);
+        if (ec) { std::filesystem::remove(temporary, ec); return fail(ErrorCode::InvalidState, "Cannot replace " + file.generic_string() + "; no redirector was removed"); }
+        report.scenes.push_back(file);
+        report.references += changed;
+    }
+    // The open scene: one undo step, left for its owner to save.
+    std::size_t in_scene = 0;
+    const auto counted = [&](AssetRef &ref) { const bool done = fix(ref); in_scene += done; return done; };
+    const auto edits = reference_edits(counted);
+    if (!edits.empty()) {
+        ScopedTransaction transaction(*this, "Fix Up Redirectors");
+        for (std::size_t at = 0; at < edits.size(); at += commands::CommandBus::max_transaction) {
+            const auto count = std::min(edits.size() - at, commands::CommandBus::max_transaction);
+            if (auto done = execute(std::span<const commands::Command>(edits).subspan(at, count), {}); !done) return done.error();
+        }
+        report.open_scene = true;
+        report.references += in_scene;
+    }
+    // Materials name their maps, and effects their images. These are saved at once, as a rename saves them.
+    const auto fix_map = [&](assets::MaterialTexture &map) {
+        if (map.id.is_null()) return false;
+        AssetRef ref{map.id.value, map.path};
+        if (!fix(ref)) return false;
+        map.id = assets::AssetId{ref.id}; map.path = ref.path;
+        return true;
+    };
+    for (const auto &other : assets_->assets()) {
+        if (other.type == assets::AssetType::Material) {
+            auto data = material(other.id);
+            if (!data) continue;
+            bool changed = false;
+            for (auto *map : {&data->base_color_map, &data->metallic_roughness_map, &data->normal_map, &data->occlusion_map, &data->emissive_map}) changed |= fix_map(*map);
+            if (!changed) continue;
+            if (auto saved = assets_->save_material(other.id, *data); !saved) return saved.error();
+            ++report.assets;
+        } else if (other.type == assets::AssetType::Effect) {
+            auto data = effect(other.id);
+            if (!data || !fix_map(data->texture)) continue;
+            if (auto saved = assets_->save_effect(other.id, *data); !saved) return saved.error();
+            effect_drafts_.erase(other.id);
+            ++report.assets;
+        }
+    }
+    forget_materials();
+    auto removed = assets_->remove_redirectors(resolved_paths);
+    resolved_.clear();
+    if (!removed) return removed.error();
+    report.redirectors = removed.value();
+    return report;
 }
 void EditorSession::request_thumbnail_data(assets::AssetId id) {
     const auto meta = assets_ ? assets_->find(id) : std::nullopt;
@@ -1000,6 +1177,9 @@ void EditorSession::focus() {
 Result<renderer::Frame> EditorSession::frame(double aspect) {
     sync_physics();
     const auto &shown = scene();
+    // The selection as Flecs tags on what is shown; the outlines below are read back from them (slice 7).
+    Scene &tagged = runtime_ ? runtime_->scene : scene_;
+    apply_selection_tags(tagged, selection_);
     const auto entities = shown.snapshot().entities;
     std::vector<renderer::MeshBinding> meshes;
     std::vector<renderer::LightBinding> lights;
@@ -1058,12 +1238,28 @@ Result<renderer::Frame> EditorSession::frame(double aspect) {
         if (!world) return std::nullopt;
         return copy(glm::make_mat4(correction.data()) * glm::make_mat4(world->matrix.data()));
     };
+    // The nearest tagged entity at or above a model decides its outline, so a selected group outlines its members.
+    auto &tags = tagged.ecs().native();
+    const auto outline_of = [&](EntityId id) {
+        if (!view_flags.outlines || selection_.empty()) return renderer::Outline::None;
+        for (int depth = 0; id && depth < 256; ++depth) {
+            if (const auto native = shown.native(id)) {
+                const flecs::entity e(tags, native);
+                if (e.has<PrimarySelectedTag>()) return renderer::Outline::Primary;
+                if (e.has<SelectedTag>()) return renderer::Outline::Selected;
+            }
+            const auto found = by_id.find(id);
+            id = found == by_id.end() ? 0 : found->second->parent;
+        }
+        return renderer::Outline::None;
+    };
     for (const auto &e : entities) {
         if (const auto &m = e.components.mesh) {
             auto binding = look_of(*m, e.id);
             binding.visible = runtime_ || !hidden(e.id);
             binding.pose = shown_pose(e.id);
             binding.world = placed_on_joint(e.id);
+            binding.outline = outline_of(e.id);
             meshes.push_back(std::move(binding));
         }
         if (const auto &l = e.components.light; l && (runtime_ || !hidden(e.id))) {
@@ -1375,6 +1571,12 @@ const EditorSession::Resolved &EditorSession::resolve(const AssetRef &ref, asset
         if (!assets_) return "there is no asset folder at " + asset_folder().generic_string();
         auto meta = assets_->find(assets::AssetId{ref.id});
         if (!meta) meta = assets_->find(std::string_view(ref.path));
+        // An ID with nothing behind it and a path that has moved: the redirector left there knows where it went. A path
+        // written as a package name ("/Game/...") is resolved the same way.
+        if (!meta) {
+            const std::string name = ref.path.starts_with('/') ? ref.path : std::string(game_mount) + "/" + ref.path;
+            if (const auto found = resolve_package(name)) meta = assets_->find(found.value().id);
+        }
         if (!meta) return "it is not in the asset folder";
         if (type == assets::AssetType::Mesh) {
             auto loaded = assets_->load_mesh(meta->id);
@@ -1745,6 +1947,9 @@ Result<void> EditorSession::open_project(const std::filesystem::path &root) {
     if (!std::filesystem::is_directory(root, ec)) return fail(ErrorCode::NotFound, "Project folder not found: " + root.generic_string());
     project_ = root;
     assets_.reset(); resolved_.clear();
+    // Mounting replaces the old project's index; the next packages() indexes this one's catalogue.
+    if (auto mounted = packages_.mount(game_mount, asset_folder()); !mounted) return mounted;
+    packages_scans_.reset();
     poses_.clear(); // Joint orders belong to the old project's models.
     // Material and effect edits belong to the old project's files.
     material_drafts_.clear();

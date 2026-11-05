@@ -95,6 +95,10 @@ if(TARGET engine_editor_session)
 		LIBRARIES engine_editor_session)
 	target_compile_definitions(editor_ragdoll_tests PRIVATE "GAMEENGINE_TEST_RESOURCES_DIR=\"${GAMEENGINE_RESOURCES_DIR}\"")
 	target_include_directories(editor_ragdoll_tests SYSTEM PRIVATE "${GAMEENGINE_RESOURCES_DIR}/glm")
+	gameengine_add_test_executable(editor_asset_path_tests
+		LABELS editor assets unit
+		SOURCES Editor/editor_asset_path_tests.cpp
+		LIBRARIES engine_editor_session)
 	gameengine_add_test_executable(editor_shooter_tests
 		LABELS editor gameplay unit
 		SOURCES Editor/editor_shooter_tests.cpp
@@ -113,7 +117,7 @@ endif()
 if(TARGET engine::assets)
 	gameengine_add_test_executable(asset_tests
 		LABELS assets unit
-		SOURCES Assets/asset_tests.cpp Assets/skin_tests.cpp
+		SOURCES Assets/asset_tests.cpp Assets/skin_tests.cpp Assets/virtual_path_tests.cpp
 		LIBRARIES engine::assets)
 	# Fixtures are read in place from the source tree; mutating cases copy them to the working directory.
 	target_compile_definitions(asset_tests PRIVATE "GAMEENGINE_TEST_ASSETS_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/Assets\""

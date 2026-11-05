@@ -144,7 +144,7 @@ Result<Frame> extract_frame(const Scene &scene, FrameStamp stamp, const Perspect
         if (!finite(*transform))
             return fail(ErrorCode::InvalidArgument, "Non-finite mesh world transform");
         if (binding.visible)
-            frame.objects.push_back({binding.entity, binding.mesh, binding.material, *transform, binding.surface, binding.parts, binding.pose});
+            frame.objects.push_back({binding.entity, binding.mesh, binding.material, *transform, binding.surface, binding.parts, binding.pose, binding.outline});
     }
     seen.clear();
     for (const auto &binding : lights) {

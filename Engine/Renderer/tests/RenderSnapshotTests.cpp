@@ -101,6 +101,13 @@ void hierarchy_sort_and_visibility() {
     check(objects[1].mesh == bindings[0].mesh && objects[1].material == bindings[0].material,
           "Asset generations not preserved");
     check(f.scene.snapshot() == before && f.bus.revision() == revision, "Extraction mutated scene");
+    // The selection outline goes through as the host marked it (slice 7).
+    bindings[0].outline = Outline::Primary; bindings[2].outline = Outline::Selected;
+    auto marked = f.extract(bindings);
+    ok(marked);
+    check(marked.value()->objects[0].outline == Outline::Selected && marked.value()->objects[1].outline == Outline::Primary,
+          "Outline marks not preserved");
+    check(result.value()->objects[1].outline == Outline::None, "An earlier frame changed");
 }
 void snapshot_lifetime() {
     Frame retained;

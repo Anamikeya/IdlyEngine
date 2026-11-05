@@ -5,6 +5,7 @@
 // Not thread safe; use from one thread.
 
 #include "engine/assets/asset_types.h"
+#include "engine/assets/virtual_paths.h"
 
 #include <engine/core/Result.hpp>
 
@@ -120,8 +121,17 @@ public:
 	// What renderers compare to see a reload; 0 for an unknown id.
 	[[nodiscard]] std::uint32_t revision(AssetId id) const;
 	// Moves or renames the file and its .meta inside the root, keeping the id, so references by id keep working.
-	// Fails without touching anything when the target exists or would be another asset type.
-	Result<void> move(AssetId id, std::string_view new_path);
+	// Fails without touching anything when the target exists or would be another asset type. With
+	// `leave_redirector`, a redirector (virtual_paths.h) is left at the old path, naming the new one, as the editor
+	// does; a redirector already at the new path is removed either way, since the asset takes that name.
+	Result<void> move(AssetId id, std::string_view new_path, bool leave_redirector = false);
+	// The redirectors found by the last scan, ascending by path. Files that are not valid redirectors are issues().
+	[[nodiscard]] std::span<const Redirector> redirectors() const noexcept;
+	// Deletes the redirector files at these paths (Redirector::path), then rescans. Returns how many went; paths that
+	// are not redirectors are skipped.
+	Result<std::size_t> remove_redirectors(std::span<const std::string> paths);
+	// Counts scans, so a caller that keeps something built from the catalogue knows when to rebuild it.
+	[[nodiscard]] std::uint64_t scans() const noexcept;
 	// Checks every catalogued source file still exists; marks and returns the missing ones.
 	std::vector<AssetId> find_missing();
 	// Drops the cached data and bumps the revision; the next load re-imports.

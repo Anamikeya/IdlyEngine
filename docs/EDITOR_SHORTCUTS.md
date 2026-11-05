@@ -54,6 +54,7 @@ While a text field has the keyboard, only Ctrl+P and Ctrl+Shift+P fire.
 | Reload |  | AssetBrowser | `Asset.Reload` |
 | Rename or Move | `F2` | AssetBrowser | `Asset.Rename` |
 | Favorite |  | AssetBrowser | `Asset.ToggleFavorite` |
+| Fix Up Redirectors |  | Global | `Assets.FixUpRedirectors` |
 
 ## Create
 

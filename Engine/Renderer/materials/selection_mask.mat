@@ -1,0 +1,17 @@
+// The selection outline's mask (Milestone 5, slice 7). Outlined models are drawn again, flat, into an offscreen target:
+// red 1 for the primary selection and 0.5 for the rest, no lighting, nothing else. Both faces count, so a model that is
+// open on one side still fills its whole silhouette.
+material {
+    name: EditorSelectionMask,
+    shadingModel: unlit,
+    culling: none,
+    parameters: [
+        {type: float, name: value}
+    ]
+}
+fragment {
+    void material(inout MaterialInputs material) {
+        prepareMaterial(material);
+        material.baseColor = vec4(materialParams.value, 0.0, 0.0, 1.0);
+    }
+}

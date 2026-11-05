@@ -353,7 +353,6 @@ struct EditorUI {
     // Lights and cameras have no mesh, so they get clickable screen-space markers. Returns the hovered one.
     EntityId markers(ImVec2 origin, ImVec2 size);
     // A box around each selected entity, so a multi-selection shows without a gizmo on each.
-    void selection_outlines(ImVec2 origin, ImVec2 size);
     void gizmo(ImVec2 origin, ImVec2 size);
     // ---- Asset Browser ----
     enum class AssetSource { All, Favorites, Folder, Builtin, Scenes };

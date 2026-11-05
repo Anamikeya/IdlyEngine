@@ -264,6 +264,7 @@ std::vector<CommandInfo> default_command_table() {
         {"Asset.Reload", "Reload", "Read the selected asset from disk again.", "Assets", std::string(context::asset_browser), {}},
         {"Asset.Rename", "Rename or Move", "Change the selected asset's path, keeping its references.", "Assets", std::string(context::asset_browser), {chord(Key::F2)}},
         {"Asset.ToggleFavorite", "Favorite", "Keep the selected asset in Favorites.", "Assets", std::string(context::asset_browser), {}},
+        {"Assets.FixUpRedirectors", "Fix Up Redirectors", "Point everything that still names a moved asset's old path at where it is now, then remove the redirectors.", "Assets", global, {}},
 
         {"Create.Cube", "Cube", "Add a cube.", "Create", global, {}},
         {"Create.Sphere", "Sphere", "Add a sphere.", "Create", global, {}},

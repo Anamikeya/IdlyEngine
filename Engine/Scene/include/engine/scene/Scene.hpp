@@ -245,6 +245,9 @@ class Scene final {
     ecs::World &ecs() noexcept {
         return world_;
     } // Trusted engine systems only.
+    const ecs::World &ecs() const noexcept {
+        return world_;
+    }
     // The Flecs entity of a stable ID, for trusted systems attaching runtime components; 0 when there is none.
     flecs::entity_t native(EntityId id) const noexcept {
         const auto it = entities_.find(id);

@@ -4,7 +4,9 @@ add_library(engine_assets STATIC
 	include/engine/assets/importers.h
 	include/engine/assets/asset_database.h
 	include/engine/assets/skeleton.h
+	include/engine/assets/virtual_paths.h
 	src/importers.cpp
+	src/virtual_paths.cpp
 	src/skeleton.cpp
 	src/gltf_importer.cpp
 	src/asset_database.cpp
