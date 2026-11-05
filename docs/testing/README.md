@@ -58,7 +58,7 @@ LIBRARIES ...)` (`cmake/GameEngineTesting.cmake`). After each build the executab
 runs in a fresh process, which isolates process-global state such as Box3D's world table.
 Case names must be unique within an executable.
 
-## Current suites (533 CTest entries)
+## Current suites (534 CTest entries)
 
 | Executable | Labels | Cases | Covers |
 |---|---|---|---|
@@ -76,14 +76,14 @@ Case names must be unique within an executable.
 | `editor_effects_tests` | editor, effects, unit | 11 | Particle effects in the editor, without a window: making and placing an effect, the edit-mode preview and its switch, hidden emitters, live drafts that keep living particles, saving as one undo step, assigning, renaming, a missing effect, Play mode's own particles, restart, an effect's image and its lifetime, the Details table, and how frames clean particle batches |
 | `editor_animation_tests` | editor, animation, unit | 7 | Animators in the editor, without a window (GLBs built in memory): placing an animated model gives it an animator that plays while editing and adds nothing to the scene or its history, the preview switches, scrubbing, posed bounds, choosing a clip with undo; Play ticks with the fixed step, crossfades, pause and step, Stop; an entity attached to a joint is drawn, picked, moved by `set_world` and a drag on it, and stays on its parent for an unknown joint; clip events in the `.meta` with undo, firing as the clip plays, read by a new session; clips from another model by joint name and the problems reported; bone lines; the skeleton and clips of a model nothing uses are freed |
 | `editor_ragdoll_tests` | editor, physics, unit | 8 | Ragdolls and debris in the editor, without a window, with Fox from the dependency tree: Fox's plan sized as it stands, bone settings and the problems reported, falling in Play from its walk where the pose was and never reaching the scene, moving on as the pose was moving, a shot pushing the part hit, standing up and Restart, going with its entity, the Show Ragdolls outlines, debris drawn like its template, never picked, gone once settled, capped and taken by Stop |
-| `editor_shooter_tests` | editor, gameplay, unit | 4 | The Physics Shooter sample in Play without a window, the session carrying out what the game asks: enemies walk, flinch on top of their walk and fall as ragdolls that stay down, and stand in their idle clip at the ends of their patrols; footsteps raise dust and shots flash at the muzzle; glass breaks into debris drawn like its shard, gone once settled; Stop leaves the editor scene as it was |
+| `editor_shooter_tests` | editor, gameplay, unit | 5 | The Physics Shooter sample in Play without a window, the session carrying out what the game asks: enemies walk, flinch on top of their walk and fall as ragdolls that stay down, and stand in their idle clip at the ends of their patrols; footsteps raise dust and shots flash at the muzzle; glass breaks into debris drawn like its shard, gone once settled; Stop leaves the editor scene as it was. The stress scene holds what its performance numbers claim: ten enemies walking and 5,000 particles alive, with animation and particle time counted apart from gameplay |
 | `animation_tests` | animation, unit | 19 | ozz-animation as the engine builds it (5 cases): a skeleton and clip built in code, sampled, blended, archived, an invalid clip refused. `Engine/Animation` (14): a rig keeps the model's joint order whatever ozz's, broken skeletons refused, clips at known times, looping, speed and playing backwards, crossfades, layered clips as differences, events crossed across loops and backwards, the joint world query, clips from another model by joint name, two-bone IK reaching, out of reach and at weight 0, restarts only on authored changes, bit-for-bit determinism, and every Fox clip. Poses compare at ozz's key precision, about 0.5 mm per metre |
 | `effects_tests` | effects, unit | 15 | The particle system: rate and bursts per cycle, stopping without a loop, motion and death, gravity and drag, the cone and speed range, a rotated emitter, local space, floor bounces, size and color curves in linear light, the particle cap, one-shots and their limit, waiting emitters, following the emitter list and restarting on an edited effect, seeded determinism, bad input |
 | `networking_tests` | networking, unit | 41 | Serialization, loopback transport, connection manager |
 | `online_services_tests` | online, unit | 7 | NullOnlineService |
 | `engine_core_tests` | none | 1 entry, 27 scenarios | `engine.core.acceptance`: scene, commands, undo, components, serialization of all format versions (version 7's EMITTER, ANIMATOR, ATTACH, RAGDOLL and RAGBONE), malformed input |
 | `engine_renderer_tests` | none | 1 entry, 9 scenarios | `engine.renderer.snapshot`: frame extraction, cameras, lights, handle validation, owner thread |
-| `engine_editor_tests` | none | 1 entry, 17 groups | `engine.editor.acceptance`: session behavior without a window, including the 13-step acceptance workflow, Play mode, physics, assets, materials, lighting, background import, resource release and the shooter in Play mode |
+| `engine_editor_tests` | none | 1 entry, 18 groups | `engine.editor.acceptance`: session behavior without a window, including the 13-step acceptance workflow, Play mode, physics, assets, materials, lighting, background import, resource release, the project a scene file belongs to, and the shooter in Play mode |
 
 The GPU smoke (`engine_editor --smoke`) opens a real window and checks by readback: surface color, scene lights
 replacing editor lights, Play and Stop isolation, resize, and the orientation of an imported texture.
@@ -104,14 +104,22 @@ model and the sample's lighting test scene. Captures go to the folder for inspec
 and Drop Debris (see `docs/evidence/m5-ragdoll/`). `Tests/RealInput/shooter_acceptance.ps1` plays the shooter: its steps
 17 to 22 check Milestone 5's enemies and effects, and winning takes the enemies too.
 
+`Tests/Performance/milestone5_performance.ps1` measures the Release editor playing the sample and its stress scene
+(`stress_test.scene`: ten enemies in view and ten fountains of 500 particles). Each run is `engine_editor --scene <file>
+--perf-run <seconds> --perf-log <file>`, which plays the scene with nobody at the controls, then quits and writes the log. It
+sends no input, but waits for an idle desktop and records whether it stayed idle, because someone using the machine
+changes the numbers. The log holds frame times (mean, p50, p99, maximum, and when frames over 100 ms happened), the CPU's
+share of a frame, physics, gameplay, animation and particle times, and what was drawn.
+
 Fixtures: `Tests/Assets/editor/` (valid editor test content), `Tests/Assets/invalid/` (negative cases) and
 `Tests/Assets/images/` (a JPEG), read in place through `GAMEENGINE_TEST_ASSETS_DIR`. Binary textures are regenerated
 with `python -I Tests/Assets/tools/generate_textures.py`. Cases that modify files copy fixtures to
 `<build>/Tests/asset_tests_tmp/<case>`. GLB and PNG data are built in memory by the tests.
 
-Results for the current milestone are in `docs/MILESTONE_4_REPORT.md`.
+Results for the current milestone are in `docs/MILESTONE_5_REPORT.md`.
 
-Hosted CI has never run, because the repository has no remote.
+`main` is on the `origin` remote, which has `.github/workflows/ci.yml`, but no hosted CI result has been checked from
+this machine.
 
 Not covered:
 - Real mouse and keyboard runs are not part of CTest, since they need an idle desktop. Results and what they did not reach

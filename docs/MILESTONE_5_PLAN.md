@@ -1,7 +1,7 @@
 # Milestone 5 plan: characters and effects
 
 Branch `milestone-5`, worktree `D:\AI\GameEngine-Integration`, created from `main` at `14c6642`.
-**Status: approved 2026-11-03. Slices 0 to 4 done; slice 5 (the shooter) done but for its real-input run; slice 6 next.** Do not merge into `main` without the user's approval.
+**Status: approved 2026-11-03. All slices done 2026-11-05; see the [report](MILESTONE_5_REPORT.md).** Do not merge into `main` without the user's approval.
 
 Decisions (2026-11-03): the plan is approved as written. ozz-animation 0.17.0 goes into `resources` at its pinned commit.
 The enemy is Quaternius' Universal Animation Library (CC0), downloaded in glTF. Edit-mode preview is on by default.
@@ -410,7 +410,7 @@ Cut order if time runs short: foot IK, then debris bodies (particles only), then
 ### Slice 5: the shooter (done 2026-11-04)
 
 - **The enemy character (decision 2):** Quaternius' Universal Animation Library, Standard version (CC0), from OpenGameArt.
-  Its Godot GLB is `Samples/PhysicsShooter/Assets/models/Mannequin.glb`, unchanged: a 1.83 m mannequin, 53 joints and 46
+  Its Godot GLB is `Samples/PhysicsShooter/Assets/models/Mannequin.glb`, unchanged: a 1.83 m mannequin, 54 joints and 46
   clips, among them `Walk_Loop`, `Idle_Loop`, `Hit_Chest` and `Death01`. The license, source and both checksums are in
   `ASSET_LICENSES.md` and `asset_manifest.json`. Its `.meta` adds two footstep events to `Walk_Loop`, at the frames where
   each foot plants, worked out by sampling the clip.
@@ -441,8 +441,10 @@ Cut order if time runs short: foot IK, then debris bodies (particles only), then
   - New: `gameplay_tests` +9, `asset_tests` +1, and `editor_shooter_tests` 4, which play the real sample with the session.
   - The sample's own tests now count 12 targets. Winning goes by standing targets, and the glass test stops firing once it
     breaks, because an enemy walks behind it.
-  - **Real input: not run yet.** `Tests/RealInput/shooter_acceptance.ps1` gains steps 17 to 22 and kills the enemies to
-    win. Both attempts stopped before step 1 because the machine was locked; nothing was played. The run is still owed.
+  - **Real input:** `Tests/RealInput/shooter_acceptance.ps1` gains steps 17 to 22 and kills the enemies to win. Run on
+    2026-11-05 on the fresh Release build at `03fde0b`: 26 of 26 on the first attempt, won with 2,000 points and 6 s left,
+    every enemy fallen as a ragdoll, then lost on time. It had passed at `621c2a7` too, after three attempts that stopped
+    because the PC was in use. Evidence is in `docs/evidence/m5-shooter/`.
 - **Deviations from the plan:**
   - Foot IK does not probe the ground: it is first in the cut order, the arena's floor is flat, and the runtime's two-bone IK
     from slice 3 is there.
@@ -458,3 +460,40 @@ Cut order if time runs short: foot IK, then debris bodies (particles only), then
     before its own `finally`. `Start-Editor` now closes it. A locked desktop passed the idle wait and failed as "someone is
     using the desktop"; the wait now also waits out the lock screen.
   - Running test executables from the repository's folder left their scratch folders there; they were removed.
+
+### Slice 6: performance, fresh builds, report (done 2026-11-05)
+
+- **Measuring:**
+  - `engine_editor --perf-run <seconds>` plays a scene with nobody at the controls once 120 frames are drawn, then quits
+    and writes its `--perf-log`. It needs `--scene`, and leaves the user's settings alone.
+  - The log adds frame maximum, mean and p99 fps, frames over 100 ms and when they happened, the CPU's share of a frame,
+    animation and particle times apart from gameplay, particles drawn, and skinned and posed objects.
+  - The stat overlay shows animation and particle times, and skinned and particle counts.
+  - `Tests/Performance/milestone5_performance.ps1` runs the sample and the stress scene after an idle wait. It records the
+    machine and whether the desktop stayed idle and unlocked.
+- **The stress scene** (`stress_test.scene`, from the generator): the arena with seven more patrol lanes, so ten enemies
+  walk in view, and ten fountains that keep 5,000 particles alive. `editor_shooter_tests` checks it holds that.
+- **Results** at `03fde0b` on a Ryzen 7 5800X and an RTX 3080 driving a 59 Hz 4K display, Release, 60 s each, desktop
+  idle:
+  - Sample: 60.0 fps mean, 30.2 at p99, 1.22 ms of CPU a frame.
+  - Stress scene: 60.0 fps mean, 46.1 at p99, 3.28 ms of CPU a frame, 4,957 particles on average and 10 skinned enemies.
+  - Vsync on the 59 Hz display caps both, so these show the target is met, not the headroom.
+  - The sample's p99 moved from 19 ms to 33 to 34 ms between two runs of the same build, with the CPU's share unchanged:
+    the machine, not the code.
+  - **Not explained:** in about half the sample's runs, one frame takes 220 to 316 ms, 25 to 31 s after the editor
+    starts. It never happens in the stress scene. It is not physics, animation, particles or gameplay. The one caught
+    with the new breakdown spent 131 ms in the UI and frame snapshot, and 147 ms outside the update, UI and render.
+- **Fresh builds:** both presets from empty folders at `03fde0b`: 534 of 534 each, `--smoke` passed, `--render-test` 71
+  of 71. Fresh builds the day before passed alike.
+- **Real input:** the slice 5 shooter run, above.
+- **Found on the way:**
+  - Seventeen files had been saved with CRLF during the milestone, where `main` uses LF, so the diff showed twelve of them
+    changed throughout. They are LF again (`2fdbec3`, `03fde0b` and the report's commit), and the earlier "restore CRLF" fix
+    was wrong: compare with `main`.
+  - **Open Scene kept the current project** (found by the user). Started with no arguments, the editor's project is its
+    `bin` folder, so the sample's scene opened with Ctrl+O drew every surface magenta and listed every material and model
+    as missing. A scene saved in another project, the nearest folder above it with an `Assets` folder, now opens that
+    project with it; so does `--scene`, unless `--project` is given. `EditorSession::project_of` is tested, and from the
+    `bin` folder the sample's scene went from 0 textures and 0 models drawn to 12 and 2.
+  - The first performance run of the stress scene was disturbed by the PC being in use; it was run again.
+- **Report:** [`MILESTONE_5_REPORT.md`](MILESTONE_5_REPORT.md).

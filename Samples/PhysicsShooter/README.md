@@ -35,6 +35,7 @@ build-m4-windows-msvc-release\bin\engine_editor.exe --sample
 | Path | What |
 |---|---|
 | `physics_shooter.scene` | The arena, targets, player and rules, as behaviors on entities |
+| `stress_test.scene` | The arena with ten enemies in view and ten fountains keeping 5,000 particles alive, for performance runs |
 | `lighting_test.scene` | Metallic, rough, non-metal, textured and transparent surfaces, for checking lighting |
 | `Assets/materials/` | Material assets, editable in the Material Editor |
 | `Assets/effects/` | Particle effects gameplay fires (sparks, muzzle flash, crate and footstep dust, glass slivers), editable in the Effect Editor. Their templates sit below the floor |
