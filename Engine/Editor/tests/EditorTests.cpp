@@ -866,6 +866,26 @@ void resource_lifetime() {
     check(s.resources().find(f.value()->objects.at(0).mesh) != nullptr && s.asset_problems().empty(), "reloaded from disk on the next reference");
     check(f.value()->objects.at(0).mesh == handle, "with the same handle: the asset did not change");
 }
+// A scene belongs to the nearest folder at or above it with an Assets folder, so the editor can open the scene's own project
+// with it instead of looking for its assets in whatever project was open.
+void scene_projects() {
+    namespace fs = std::filesystem;
+    const fs::path sample = fs::path(ENGINE_TEST_SAMPLES_DIR) / "PhysicsShooter";
+    check(fs::equivalent(EditorSession::project_of(sample / "physics_shooter.scene"), sample), "the sample's scene belongs to the sample");
+    const auto base = fs::current_path() / "editor-scene-project-test-files";
+    fs::remove_all(base);
+    fs::create_directories(base / "game" / "Assets" / "scenes");
+    write_file(base / "game" / "levels" / "one.scene", "x");
+    write_file(base / "game" / "Assets" / "scenes" / "two.scene", "x");
+    write_file(base / "loose" / "three.scene", "x");
+    const auto game = (base / "game").lexically_normal();
+    check(EditorSession::project_of(base / "game" / "levels" / "one.scene") == game, "a scene in a subfolder belongs to the project above it");
+    check(EditorSession::project_of(base / "game" / "Assets" / "scenes" / "two.scene") == game, "so does a scene inside the asset folder");
+    check(EditorSession::project_of(base / "game" / "levels" / ".." / "levels" / "one.scene") == game, "a path with .. in it is followed");
+    const auto loose = EditorSession::project_of(base / "loose" / "three.scene");
+    check(loose != game && loose != (base / "loose").lexically_normal() && loose != base.lexically_normal(), "a scene outside every project gets none beside it");
+    fs::remove_all(base);
+}
 void shooter_game() {
     namespace fs = std::filesystem;
     const fs::path sample = fs::path(ENGINE_TEST_SAMPLES_DIR) / "PhysicsShooter";
@@ -933,7 +953,7 @@ void shooter_game() {
 int main() {
     try { editing(); persistence(); camera_and_picking(); world_edits(); documents(); play_mode(); components_and_rendering(); hierarchy_editing(); physics_play();
         acceptance_workflow(); external_camera_validation(); asset_workflow();
-        materials_workflow(); lighting_settings(); background_import(); resource_lifetime(); shooter_game();
-        std::cout << "17 editor acceptance groups passed\n"; return 0;
+        materials_workflow(); lighting_settings(); background_import(); resource_lifetime(); scene_projects(); shooter_game();
+        std::cout << "18 editor acceptance groups passed\n"; return 0;
     } catch (const std::exception &e) { std::cerr << e.what() << '\n'; return 1; }
 }

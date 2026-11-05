@@ -380,6 +380,9 @@ public:
     Result<void> open_project(const std::filesystem::path &root);
     const std::filesystem::path &project() const { return project_; }
     std::filesystem::path asset_folder() const { return project_ / "Assets"; }
+    // The project a scene file belongs to: the nearest folder holding it, or above that, with an `Assets` folder. Empty when
+    // there is none.
+    static std::filesystem::path project_of(const std::filesystem::path &scene_file);
     // Copies a file into the asset folder; see assets::AssetDatabase::import_file. References are not touched.
     Result<ImportedAsset> import_asset(const std::filesystem::path &file);
     Result<void> rescan_assets();

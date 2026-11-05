@@ -164,6 +164,14 @@ struct PerformanceLog {
     // What the drawn frames held: particles drawn, skinned objects and animators running.
     double particles_total = 0;
     std::size_t particles_peak = 0, skinned_peak = 0, posed_peak = 0, animators_peak = 0;
+    // Frames over 100 ms, a hitch anyone would see, and when the first 16 of them ended, in seconds since the log began.
+    std::chrono::steady_clock::time_point began = std::chrono::steady_clock::now();
+    std::size_t slow_frames = 0;
+    std::vector<double> slow_at_s;
+    // Where the slowest frame's time went: the loops since the frame before it, which may be several when Filament skips.
+    std::chrono::nanoseconds pending_update{0}, pending_build{0}, pending_render{0};
+    float slowest = 0;
+    double slowest_update_ms = 0, slowest_build_ms = 0, slowest_render_ms = 0;
     // Filament may skip a frame when the GPU is behind, so only frames it drew count. `update` is the session's update
     // this loop (ticks, particles, animation), `build` the UI and the frame snapshot, `took` the render call.
     void rendered(bool drawn, std::chrono::nanoseconds took, std::chrono::nanoseconds update, std::chrono::nanoseconds build,
@@ -171,9 +179,19 @@ struct PerformanceLog {
         ++loops;
         update_ms_total += std::chrono::duration<double, std::milli>(update).count();
         build_ms_total += std::chrono::duration<double, std::milli>(build).count();
+        pending_update += update; pending_build += build; pending_render += took;
         if (!drawn) return;
         const auto now = std::chrono::steady_clock::now();
-        if (frames++ > 10) frame_ms.push_back(std::chrono::duration<float, std::milli>(now - last_drawn).count()); // Skips start-up frames.
+        if (frames++ > 10) { // Skips start-up frames.
+            const float frame = std::chrono::duration<float, std::milli>(now - last_drawn).count();
+            frame_ms.push_back(frame);
+            if (frame > 100 && ++slow_frames <= 16) slow_at_s.push_back(std::chrono::duration<double>(now - began).count());
+            if (frame > slowest) {
+                const auto ms = [](std::chrono::nanoseconds t) { return std::chrono::duration<double, std::milli>(t).count(); };
+                slowest = frame; slowest_update_ms = ms(pending_update); slowest_build_ms = ms(pending_build); slowest_render_ms = ms(pending_render);
+            }
+        }
+        pending_update = pending_build = pending_render = std::chrono::nanoseconds{0};
         last_drawn = now;
         render_ms_total += std::chrono::duration<double, std::milli>(took).count();
         if (stats.gpu_frame_ms > 0) { gpu_ms_total += stats.gpu_frame_ms; ++gpu_samples; }
@@ -196,6 +214,11 @@ struct PerformanceLog {
         out << "startup_ms " << ms(startup) << "\nframes_drawn " << frames << "\nloops " << loops
             << "\nframe_ms_mean " << mean << "\nframe_ms_p50 " << percentile(0.5) << "\nframe_ms_p99 " << percentile(0.99) << "\nframe_ms_max " << percentile(1.0)
             << "\nfps_mean " << (mean > 0 ? 1000.0 / mean : 0.0) << "\nfps_p99 " << (percentile(0.99) > 0 ? 1000.0 / percentile(0.99) : 0.0)
+            << "\nframes_over_100ms " << slow_frames << "\nframes_over_100ms_at_s ";
+        for (std::size_t i = 0; i < slow_at_s.size(); ++i) out << (i ? "," : "") << slow_at_s[i];
+        if (slow_at_s.empty()) out << "none";
+        out << "\nslowest_frame_update_ms " << slowest_update_ms << "\nslowest_frame_ui_and_snapshot_ms " << slowest_build_ms
+            << "\nslowest_frame_render_ms " << slowest_render_ms
             << "\nupdate_ms_mean " << (loops ? update_ms_total / double(loops) : 0.0) << "\nui_and_snapshot_ms_mean " << (loops ? build_ms_total / double(loops) : 0.0)
             << "\nrender_submit_ms_mean " << (frames ? render_ms_total / double(frames) : 0.0)
             << "\ngpu_frame_ms_mean " << (gpu_samples ? gpu_ms_total / double(gpu_samples) : 0.0)
@@ -212,13 +235,13 @@ struct PerformanceLog {
 int main(int argc, char **argv) {
     try {
         const auto program_start = std::chrono::steady_clock::now();
-        bool smoke = false, open_sample_at_start = false;
+        bool smoke = false, open_sample_at_start = false, project_given = false;
         double perf_run_seconds = 0; // --perf-run: plays the scene, untouched, for this long, then quits.
         std::filesystem::path project = std::filesystem::current_path(), render_test_output, perf_log, game_log, start_scene, config_folder, ui_map_file, shortcuts_file;
         for (int i = 1; i < argc; ++i) {
             const std::string_view arg = argv[i];
             if (arg == "--smoke") smoke = true;
-            else if (arg == "--project" && i + 1 < argc) project = utf8_path(argv[++i]);
+            else if (arg == "--project" && i + 1 < argc) { project = utf8_path(argv[++i]); project_given = true; }
             else if (arg == "--sample") open_sample_at_start = true;
             else if (arg == "--render-test" && i + 1 < argc) render_test_output = utf8_path(argv[++i]);
             else if (arg == "--perf-log" && i + 1 < argc) perf_log = utf8_path(argv[++i]);
@@ -274,7 +297,7 @@ int main(int argc, char **argv) {
         if (open_sample_at_start) ui.open_sample();
         if (!start_scene.empty()) {
             ui.set_scene_path(start_scene);
-            ui.announce(session.load(start_scene), "Scene loaded");
+            ui.load_scene(start_scene, project_given);
         }
         StateLog state_log;
         if (!game_log.empty()) state_log.out.open(game_log);

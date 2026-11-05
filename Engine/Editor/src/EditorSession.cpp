@@ -1761,6 +1761,18 @@ Result<void> EditorSession::open_project(const std::filesystem::path &root) {
     assets_.emplace(std::move(database.value()));
     return {};
 }
+std::filesystem::path EditorSession::project_of(const std::filesystem::path &scene_file) {
+    std::error_code ec;
+    auto folder = std::filesystem::absolute(scene_file, ec).lexically_normal().parent_path();
+    if (ec) return {};
+    while (!folder.empty()) {
+        if (std::filesystem::is_directory(folder / "Assets", ec)) return folder;
+        auto up = folder.parent_path();
+        if (up == folder) break; // The root.
+        folder = std::move(up);
+    }
+    return {};
+}
 Result<ImportedAsset> EditorSession::import_asset(const std::filesystem::path &file) {
     if (project_.empty()) return fail(ErrorCode::InvalidState, "No project is open");
     if (!assets_) {

@@ -78,6 +78,13 @@ std::string EditorUI::title() const {
 }
 LightComponent EditorUI::point_light() const { return LightComponent{LightType::Point, {1,1,1}, editor::EditorSession::point_light_lumens(session.environment().ev100), 10}; }
 void EditorUI::set_scene_path(const std::filesystem::path &path) { std::snprintf(scene_path.data(), scene_path.size(), "%s", path.string().c_str()); }
+void EditorUI::load_scene(const std::filesystem::path &file, bool keep_project) {
+    const auto project = keep_project ? std::filesystem::path{} : editor::EditorSession::project_of(file);
+    std::error_code ec;
+    const bool switching = !project.empty() && !std::filesystem::equivalent(project, session.project(), ec);
+    if (switching && !report(session.open_project(project), ("Opened the project " + project.generic_string()).c_str())) return;
+    announce(session.load(file), switching ? "Scene loaded, with the project it was saved in" : "Scene loaded (undoable)");
+}
 void EditorUI::open_sample() {
     if (!report(session.open_project(sample_project), "Opened the Physics Shooter sample project")) return;
     set_scene_path(sample_project / sample_scene);
@@ -101,7 +108,7 @@ void EditorUI::open_project(const std::filesystem::path &folder) {
 void EditorUI::perform(Pending action) {
     if (action == Pending::NewScene && report(session.new_scene(), "New scene"))
         std::snprintf(scene_path.data(), scene_path.size(), "%s", "Untitled.scene");
-    if (action == Pending::Load) announce(session.load(scene_path.data()), "Scene loaded (undoable)");
+    if (action == Pending::Load) load_scene(scene_path.data());
     if (action == Pending::OpenSample) open_sample();
     if (action == Pending::NewProject) create_project(utf8_path(project_path.data()));
     if (action == Pending::OpenProject) open_project(utf8_path(project_path.data()));

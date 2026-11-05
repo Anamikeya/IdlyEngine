@@ -246,6 +246,9 @@ struct EditorUI {
     std::string title() const;
     LightComponent point_light() const;
     void set_scene_path(const std::filesystem::path &path);
+    // Loads a scene file. A scene saved in another project (see EditorSession::project_of) opens that project first, so its
+    // assets come from where it was saved, unless `keep_project`: --project named the project.
+    void load_scene(const std::filesystem::path &file, bool keep_project = false);
     void open_sample();
     // A folder with an Assets folder and an empty scene: nothing of the sample comes along.
     void create_project(const std::filesystem::path &folder);

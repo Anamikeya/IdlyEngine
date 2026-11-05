@@ -324,7 +324,8 @@ right-clicking removes a key. Mouse gestures can't be changed yet.
 
 **Opening things:** `Ctrl+O` picks a scene file. **Project... > Open Project...** only loads a scene by itself if the folder has a
 `main.scene`, so use `Ctrl+O` for any other name. In the Asset Browser, **Scenes** lists the scene files beside the current one: click one,
-then press **Load**.
+then press **Load**. A scene saved in another project, the nearest folder above it with an `Assets` folder, opens that project with it,
+so its materials and models come from where it was saved. `--scene` does the same, unless `--project` names the project.
 
 ## If something goes wrong
 
