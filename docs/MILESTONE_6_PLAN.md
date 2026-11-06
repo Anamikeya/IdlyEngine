@@ -280,3 +280,30 @@ external editor stays).
   time; the cache now also compares the path.
 - **Tests:** `editor_script_tests` (8 cases, new), `engine.core.acceptance`'s `format_v8_scripts`. Both presets build
   and pass 588 of 588. The Details section has not been drawn on screen yet: slice 4's real-input run covers it.
+
+### Slice 3: the engine API (done 2026-11-06)
+
+- **`ScriptHost`** (`script_host.h`): what scripts can do, as an abstract interface of plain types. The runtime binds
+  it as the methods of `Entity` and the `engine`, `engine.input`, `engine.game` and `log` tables, so sol2 stays inside
+  the runtime and a test can give it any world. A call it cannot carry out throws, and the script sees a Lua error at
+  its line. New value: `Quat`, with Euler angles in degrees as Details shows them. `Vec3:length()` is `std::hypot`, as
+  C++ gameplay measures, so a script computes the same numbers.
+- **`ScriptWorld`** (`engine::script_world`, `script_world.h`): the host over a play session's scene, command bus,
+  physics and game, with no Lua. It attaches every scripted entity, calls `start` on an instance's first tick,
+  `tick` before physics after the game's own, then events (`on_hit`, `on_trigger_enter` and `_exit` on both
+  entities, `on_damage`, `on_death`, `on_clip_event`) and `late_tick` after the game's rules. Scene writes are kept
+  in an overlay that reads see at once, and applied through the bus once per phase. `spawn` applies first, copies the
+  subtree to the root and attaches its scripts for the next tick; `destroy` takes the subtree.
+- **`Game`** gains what scripts need: `add_score`, `announce`, `damage` (queued for the next `post_physics`, cause
+  `Script`), `health`, `add_time`, `give_ammo`, `win`, `lose`, and the damage and deaths of the last tick. The
+  `Interact` action is new, on E.
+- **Editor:** Play makes a `ScriptWorld` after the game, with the same seed every run; the tick calls it, and carries
+  out what scripts ask of clips, effects and ragdolls as it does the game's. Stop and Restart call `on_stop` first.
+  Input reaches the game and scripts through `set_game_input`. Script errors become toasts and Message Log errors,
+  printed lines Message Log entries; both link to the script's asset.
+- **Found by the tests:** a copy spawned during `tick` was ticked in the same pass, before its `start`, because a
+  call went through the instance map while the spawn added to it; a detach in that pass could also have invalidated
+  the iteration. A call now goes through a copy of the instance list, and instances whose entities are gone are
+  forgotten only between calls.
+- **Docs:** `docs/SCRIPTING.md`, the reference for script authors. E added to the game keys in the guide and README.
+- **Tests:** `script_world_tests` (9 cases, new) and two in `editor_script_tests`. The CI preset passes 599 of 599.

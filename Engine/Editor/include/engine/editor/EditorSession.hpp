@@ -616,6 +616,17 @@ public:
     // What the run's game asked for that could not be done, such as a ragdoll for a model without a skeleton.
     const std::vector<std::string> &game_issues() const;
 
+    // ---- Scripts in Play and Simulate (Milestone 6, scripting/script_world.h) ----
+    // Actions for the game and the scripts, while the game holds the mouse.
+    void set_game_input(const gameplay::InputFrame &);
+    // What scripts got wrong and printed since the last take, oldest first; each kept at most 512 deep.
+    std::vector<scripting::ScriptError> take_script_errors();
+    std::vector<scripting::ScriptOutput> take_script_output();
+    // The entities whose scripts run, ascending; empty outside Play.
+    std::vector<EntityId> script_instances() const;
+    // A field of a running script's `self`, when it holds a plain value.
+    std::optional<scripting::Value> script_field(EntityId, std::string_view name) const;
+
     // ---- Lighting ----
     // The environment in force for the shown scene: the first by entity ID, or the defaults.
     EnvironmentComponent environment() const;
@@ -663,6 +674,13 @@ private:
     // Plays what the game asked for on the run's animator: Walk is the Animator's clip, Idle a clip named "idle", Flinch
     // one named "hit", layered on top. A name that starts with the word wins over one that only has it.
     void play_cue(EntityId, gameplay::AnimationCue);
+    // Fires the effect of the source's emitter, for the game or a script. Visual only.
+    void fire_effect(const gameplay::EffectEvent &);
+    // on_stop for the run's scripts, before the run ends.
+    void stop_scripts();
+    void collect_script_messages();
+    std::vector<scripting::ScriptError> script_errors_;
+    std::vector<scripting::ScriptOutput> script_output_;
 };
 // Keeps a transaction open for a scope. Nested guards join the outer one.
 class ScopedTransaction {

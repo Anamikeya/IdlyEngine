@@ -56,6 +56,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace engine::gameplay {
@@ -92,7 +93,7 @@ struct HudState {
 	std::string fall_notice;      // Set when the player was returned to the start after falling out of the arena.
 };
 
-enum class DamageCause : std::uint8_t { Weapon, Impact };
+enum class DamageCause : std::uint8_t { Weapon, Impact, Script };
 
 struct DamageEvent {
 	EntityId target = 0;
@@ -197,6 +198,24 @@ public:
 	[[nodiscard]] GameCounters counters() const noexcept;
 	// Behaviors that could not be used, and failed runtime commands.
 	[[nodiscard]] const std::vector<std::string>& setup_issues() const noexcept;
+
+	// ---- For scripts (Milestone 6) ----
+	// Points, and the short message the HUD shows for them when there is one.
+	void add_score(int points, std::string_view message);
+	void announce(std::string_view message);
+	// Hurts an entity with health in the next post_physics(), as a hit would; a death there is reported like any other.
+	void damage(EntityId target, double amount, physics::Vec3 point);
+	// What an entity with health has left; nothing for one without health, or fallen.
+	[[nodiscard]] std::optional<double> health(EntityId entity) const;
+	void add_time(double seconds);
+	// Rounds for the player's weapon's reserve; nothing when it is unlimited or there is no weapon.
+	void give_ammo(int rounds);
+	// Ends a game being played.
+	void win();
+	void lose();
+	// Damage that reached an entity's health in the last post_physics(), and the entities it killed there, in order.
+	[[nodiscard]] const std::vector<DamageEvent>& damage_taken() const noexcept;
+	[[nodiscard]] const std::vector<EntityId>& deaths() const noexcept;
 
 private:
 	struct Impl;

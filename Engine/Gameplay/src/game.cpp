@@ -167,6 +167,7 @@ InputMap InputMap::shooter_defaults()
 	map.bind(code::left_shift, Action::Sprint);
 	map.bind(code::mouse_left, Action::Fire);
 	map.bind(code::r, Action::Reload);
+	map.bind(code::e, Action::Interact);
 	return map;
 }
 
@@ -234,6 +235,9 @@ struct Game::Impl {
 	double last_event_age = 1e9;
 	std::string fall_notice;
 	std::vector<DamageEvent> damage;
+	std::vector<DamageEvent> queued; // From scripts, for the next apply_damage().
+	std::vector<DamageEvent> hurt;   // What reached health in the last post_physics().
+	std::vector<EntityId> deaths;
 	std::vector<ShotResult> shots;
 	std::vector<EffectEvent> effects;
 	std::vector<std::string> issues;
@@ -754,6 +758,7 @@ struct Game::Impl {
 				continue;
 			}
 			health->current -= event.amount;
+			hurt.push_back(event);
 			if (event.cause == DamageCause::Weapon) {
 				hit_marker = 1;
 			}
@@ -782,6 +787,7 @@ struct Game::Impl {
 		const auto e = native(id);
 		auto& rules = state();
 		const auto record = scene.inspect(id);
+		deaths.push_back(id);
 		if (const auto* target = e.try_get<TargetComponent>()) {
 			rules.score += target->points;
 			--rules.targets_remaining;
@@ -946,6 +952,8 @@ void Game::pre_physics()
 	auto& g = *impl_;
 	++g.ticks;
 	g.damage.clear();
+	g.hurt.clear();
+	g.deaths.clear();
 	g.shots.clear();
 	g.effects.clear();
 	g.animations.clear();
@@ -991,6 +999,8 @@ void Game::post_physics()
 {
 	auto& g = *impl_;
 	g.handle_events();
+	g.damage.insert(g.damage.end(), g.queued.begin(), g.queued.end());
+	g.queued.clear();
 	g.apply_damage();
 	g.submit();
 	auto& rules = g.state();
@@ -1060,5 +1070,52 @@ std::vector<EntityId> Game::standing_targets() const
 	return ids;
 }
 const std::vector<std::string>& Game::setup_issues() const noexcept { return impl_->issues; }
+
+void Game::add_score(int points, std::string_view message)
+{
+	impl_->state().score += points;
+	if (!message.empty()) impl_->announce(std::string(message));
+}
+
+void Game::announce(std::string_view message) { impl_->announce(std::string(message)); }
+
+void Game::damage(EntityId target, double amount, physics::Vec3 point)
+{
+	if (!std::isfinite(amount) || amount <= 0) return;
+	impl_->queued.push_back({target, amount, DamageCause::Script, {}, point});
+}
+
+std::optional<double> Game::health(EntityId entity) const
+{
+	if (!impl_->alive(entity)) return std::nullopt;
+	const auto* health = impl_->native(entity).try_get<HealthComponent>();
+	if (!health) return std::nullopt;
+	return health->current;
+}
+
+void Game::add_time(double seconds)
+{
+	if (std::isfinite(seconds)) impl_->state().time_limit += seconds;
+}
+
+void Game::give_ammo(int rounds)
+{
+	auto& g = *impl_;
+	if (!g.player || !g.alive(g.player)) return;
+	if (auto* weapon = g.native(g.player).try_get_mut<WeaponComponent>(); weapon && weapon->reserve >= 0) weapon->reserve += rounds;
+}
+
+void Game::win()
+{
+	if (impl_->state().phase == GamePhase::Playing) impl_->state().phase = GamePhase::Won;
+}
+
+void Game::lose()
+{
+	if (impl_->state().phase == GamePhase::Playing) impl_->state().phase = GamePhase::Lost;
+}
+
+const std::vector<DamageEvent>& Game::damage_taken() const noexcept { return impl_->hurt; }
+const std::vector<EntityId>& Game::deaths() const noexcept { return impl_->deaths; }
 
 } // namespace engine::gameplay

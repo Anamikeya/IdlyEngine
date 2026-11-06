@@ -63,16 +63,17 @@ struct GameInput {
         io.ConfigFlags &= ~ImGuiConfigFlags_NoMouse;
         io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     }
-    // Once per frame while the game holds the mouse: devices to actions, mouse to aim.
-    void feed(GLFWwindow *window, gameplay::Game &game) {
+    // Once per frame while the game holds the mouse: devices to actions, mouse to aim. The actions are for the game and
+    // the scripts (EditorSession::set_game_input).
+    gameplay::InputFrame feed(GLFWwindow *window, gameplay::Game &game) {
         using namespace gameplay::code;
-        for (const int key : {w, a, s, d, r, space, left_shift}) map.set(key, glfwGetKey(window, key) == GLFW_PRESS);
+        for (const int key : {w, a, s, d, e, r, space, left_shift}) map.set(key, glfwGetKey(window, key) == GLFW_PRESS);
         map.set(mouse_left, glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS);
         double x = 0, y = 0;
         glfwGetCursorPos(window, &x, &y);
         game.look(x - last_x, y - last_y);
         last_x = x; last_y = y;
-        game.set_input(map.take());
+        return map.take();
     }
 };
 // A length in pixels at 100% scale, in pixels at the current scale.
@@ -203,6 +204,8 @@ struct EditorUI {
     // Into the log, and a toast: for what the user is waiting to hear, or would otherwise miss.
     void notify(Severity severity, std::string text, LogLink link = {});
     void log_error(std::string text);
+    // Script errors and printed lines from the session, to toasts and the Message Log.
+    void report_scripts();
     template<class T> bool report(const Result<T> &r, const char *success) {
         if (r) { log(Severity::Success, success); return true; } log_error(r.error().message); return false;
     }

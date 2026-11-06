@@ -46,6 +46,13 @@ if(TARGET engine::scripting)
 		SOURCES Scripting/lua_smoke_tests.cpp Scripting/script_runtime_tests.cpp
 		LIBRARIES gameengine::sol2 engine::scripting)
 endif()
+# Scripts in a running world: the real scene, Box3D and game.
+if(TARGET engine::script_world)
+	gameengine_add_test_executable(script_world_tests
+		LABELS scripting gameplay integration
+		SOURCES Scripting/script_world_tests.cpp
+		LIBRARIES engine::script_world)
+endif()
 
 if(TARGET engine::effects)
 	gameengine_add_test_executable(effects_tests

@@ -18,6 +18,7 @@ enum class Action : std::uint8_t {
 	Sprint,
 	Fire,
 	Reload,
+	Interact, // E: for scripts' doors, buttons and switches (Milestone 6).
 	Count,
 };
 
@@ -35,7 +36,7 @@ struct InputFrame {
 // Device codes for the default bindings. They equal GLFW's key codes for the keyboard; mouse buttons follow from 1000.
 namespace code {
 inline constexpr int space = 32;
-inline constexpr int a = 'A', d = 'D', r = 'R', s = 'S', w = 'W';
+inline constexpr int a = 'A', d = 'D', e = 'E', r = 'R', s = 'S', w = 'W';
 inline constexpr int left_shift = 340;
 inline constexpr int mouse_left = 1000;
 } // namespace code
@@ -43,7 +44,7 @@ inline constexpr int mouse_left = 1000;
 // Turns device state into actions. A press shorter than a tick still reaches the next take().
 class InputMap {
 public:
-	// WASD, mouse button fires, Space jumps, Shift sprints, R reloads.
+	// WASD, mouse button fires, Space jumps, Shift sprints, R reloads, E interacts.
 	static InputMap shooter_defaults();
 
 	void bind(int device_code, Action action);

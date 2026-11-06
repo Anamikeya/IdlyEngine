@@ -14,6 +14,7 @@
 // Everything is deterministic: no clock reaches a script, math.random is seeded by the host, string hashing has a
 // fixed seed, and instances run in the order of their entity IDs.
 
+#include <engine/scripting/script_host.h>
 #include <engine/scripting/script_types.h>
 
 #include <cstddef>
@@ -38,7 +39,9 @@ using PropertyOverride = std::pair<std::string, Value>;
 
 class ScriptRuntime {
 public:
-	explicit ScriptRuntime(ScriptLoader loader, RuntimeLimits limits = {}, std::uint64_t random_seed = 1);
+	// `host` is the world scripts act on, which must outlive the runtime; without one, what needs a world raises an error
+	// in the script that asked (a script's top level, read by Details, has none).
+	explicit ScriptRuntime(ScriptLoader loader, RuntimeLimits limits = {}, std::uint64_t random_seed = 1, ScriptHost* host = nullptr);
 	~ScriptRuntime();
 	ScriptRuntime(const ScriptRuntime&) = delete;
 	ScriptRuntime& operator=(const ScriptRuntime&) = delete;
@@ -60,7 +63,7 @@ public:
 	[[nodiscard]] std::vector<EntityId> instances() const; // Ascending.
 
 	// Calls `callback` on every enabled instance whose script defines it, in entity order, with `args` after self.
-	// Returns how many calls succeeded.
+	// Instances attached meanwhile are not called. Returns how many calls succeeded. Never detach() from inside a call.
 	std::size_t call(std::string_view callback, std::span<const Value> args = {});
 	// Calls it on one instance. False when it has no such instance or function, is disabled, or the call failed.
 	bool call(EntityId entity, std::string_view callback, std::span<const Value> args = {});

@@ -349,7 +349,7 @@ int main(int argc, char **argv) {
                 } else if (perf_run_start && now - *perf_run_start >= std::chrono::duration<double>(perf_run_seconds)) break;
             }
             auto *game = session.game();
-            if (game && game_input.captured) game_input.feed(host.window, *game);
+            if (game && game_input.captured) session.set_game_input(game_input.feed(host.window, *game));
             const auto update_start = std::chrono::steady_clock::now();
             session.update(elapsed);
             const auto update_took = std::chrono::steady_clock::now() - update_start;

@@ -2,6 +2,7 @@
 #include <engine/assets/importers.h>
 #include <engine/assets/skeleton.h>
 #include <engine/editor/EditorPrefs.hpp>
+#include <engine/scripting/script_world.h>
 #include <algorithm>
 #include <cctype>
 #include <cmath>
@@ -182,6 +183,7 @@ struct EditorSession::Runtime {
     commands::CommandBus bus{scene, 0}; // Runtime edits are discarded on stop, so they keep no history.
     std::unique_ptr<physics::ScenePhysics> physics; // Destroyed before the bus and scene (C-3).
     std::unique_ptr<gameplay::Game> game; // Holds references to the three above.
+    std::unique_ptr<scripting::ScriptWorld> scripts; // Holds references to the four above (Milestone 6).
     effects::ParticleSystem particles{1}; // The same seed each run, so a run's particles repeat.
     animation::AnimationSystem animation; // Ticks with the game, so what gameplay plays is in step with it.
     // Entities lying as ragdolls: their bodies are in `physics`; this turns them back into a pose each tick (D7).
@@ -1474,7 +1476,16 @@ Result<void> EditorSession::play() {
     // The first sync builds the bodies, so the game's first tick can already query them.
     if (auto synced = runtime->physics->sync(runtime->scene); !synced) return synced.error();
     runtime->game = gameplay::Game::create(runtime->scene, runtime->bus, *runtime->physics, fixed_step);
+    // Scripts, after the game whose rules they can reach. The same seed every run, so a run repeats (Milestone 6, D2).
+    scripting::ScriptWorld::Setup setup;
+    setup.loader = scripting::package_loader(packages());
+    setup.names = [this](const AssetRef &ref) {
+        const auto name = package_name_of(assets::AssetId{ref.id});
+        return name.empty() ? std::string(game_mount) + "/" + ref.path : name;
+    };
+    runtime->scripts = scripting::ScriptWorld::create(runtime->scene, runtime->bus, *runtime->physics, runtime->game.get(), fixed_step, std::move(setup));
     runtime_ = std::move(runtime);
+    collect_script_messages();
     physics_error_.clear();
     ++play_sessions_;
     reconcile();
@@ -1507,6 +1518,7 @@ Result<void> EditorSession::step() {
 }
 Result<void> EditorSession::stop() {
     if (!runtime_) return fail(ErrorCode::InvalidState, "Not in Play mode");
+    stop_scripts();
     runtime_.reset();
     physics_error_.clear();
     transaction_depth_ = 0; drag_start_.clear(); // A runtime transaction has nothing to finish.
@@ -1516,6 +1528,7 @@ Result<void> EditorSession::stop() {
 }
 Result<void> EditorSession::restart() {
     if (!runtime_) return fail(ErrorCode::InvalidState, "Not in Play mode");
+    stop_scripts();
     runtime_.reset();
     physics_error_.clear();
     transaction_depth_ = 0; drag_start_.clear();
@@ -1547,6 +1560,7 @@ void EditorSession::tick() {
     ++r.ticks;
     const auto start = std::chrono::steady_clock::now();
     if (r.game) r.game->pre_physics();
+    if (r.scripts) r.scripts->pre_physics();
     const auto before_physics = std::chrono::steady_clock::now();
     if (auto report = r.physics->fixed_update(fixed_step, r.scene, r.bus, physics_context); !report) {
         physics_error_ = "Physics stopped: " + report.error().message;
@@ -1557,13 +1571,12 @@ void EditorSession::tick() {
     r.animation.update(std::chrono::duration<double>(fixed_step).count());
     auto animation_took = std::chrono::steady_clock::now() - after_physics;
     auto heard = r.animation.take_events();
-    if (r.game) {
-        // The game hears clip events where the entity's foot is: its lowest joint. A ragdoll's animator is not its pose.
-        std::vector<gameplay::AnimationNotice> notices;
+    // The game and scripts hear clip events where the entity's foot is: its lowest joint. A ragdoll's animator is not its pose.
+    std::vector<gameplay::AnimationNotice> notices;
+    if (r.game || r.scripts)
         for (const auto &event : heard)
             if (!r.ragdolls.contains(event.entity)) notices.push_back({event.entity, event.name, lowest_joint(event.entity)});
-        r.game->hear(notices);
-    }
+    if (r.game) r.game->hear(notices);
     keep_events(std::move(heard));
     const auto before_ragdolls = std::chrono::steady_clock::now();
     pose_ragdolls();
@@ -1578,15 +1591,22 @@ void EditorSession::tick() {
                                              : std::nullopt;
             if (auto fell = start_ragdoll(request.entity, push); !fell) r.game_issues.push_back(fell.error().message);
         }
-        // One-shot effects the game asked for, from the emitter on their source entity. Visual only.
-        for (const auto &event : r.game->effect_events()) {
-            const auto source = r.scene.inspect(event.source);
-            if (!source || !source->components.emitter) continue;
-            std::string why;
-            if (const auto effect = effect_source(source->components.emitter->effect, why))
-                r.particles.fire(event.source, effect->data, {event.point.x, event.point.y, event.point.z},
-                                 {event.direction.x, event.direction.y, event.direction.z}, event.strength * source->components.emitter->rate_scale);
+        for (const auto &event : r.game->effect_events()) fire_effect(event);
+    }
+    if (r.scripts) {
+        r.scripts->post_physics(notices);
+        // What scripts asked of the animations, ragdolls and effects, as for the game's.
+        for (const auto &request : r.scripts->clip_requests()) {
+            if (r.ragdolls.contains(request.entity)) continue;
+            if (auto played = r.animation.play(request.entity, request.clip, request.blend_seconds, true); !played)
+                r.game_issues.push_back("Entity " + std::to_string(request.entity) + ": " + played.error().message);
         }
+        for (const auto id : r.scripts->ragdoll_requests())
+            if (!r.ragdolls.contains(id))
+                if (auto fell = start_ragdoll(id, std::nullopt); !fell) r.game_issues.push_back(fell.error().message);
+        for (const auto &event : r.scripts->effect_requests()) fire_effect(event);
+        for (auto &issue : r.scripts->take_issues()) r.game_issues.push_back(std::move(issue));
+        collect_script_messages();
     }
     const auto end = std::chrono::steady_clock::now();
     ++timing_.ticks;
@@ -2741,6 +2761,44 @@ void EditorSession::play_cue(EntityId id, gameplay::AnimationCue cue) {
     if (clip.empty()) return;
     if (cue == gameplay::AnimationCue::Flinch) (void)runtime_->animation.play_layered(id, clip, 1.0, 0.08);
     else (void)runtime_->animation.play(id, clip, 0.25, true);
+}
+void EditorSession::fire_effect(const gameplay::EffectEvent &event) {
+    auto &r = *runtime_;
+    const auto source = r.scene.inspect(event.source);
+    if (!source || !source->components.emitter) return;
+    std::string why;
+    if (const auto effect = effect_source(source->components.emitter->effect, why))
+        r.particles.fire(event.source, effect->data, {event.point.x, event.point.y, event.point.z}, {event.direction.x, event.direction.y, event.direction.z},
+                         event.strength * source->components.emitter->rate_scale);
+}
+void EditorSession::stop_scripts() {
+    if (!runtime_ || !runtime_->scripts) return;
+    runtime_->scripts->stop();
+    collect_script_messages();
+}
+void EditorSession::collect_script_messages() {
+    if (!runtime_ || !runtime_->scripts) return;
+    auto &scripts = runtime_->scripts->runtime();
+    // Kept for whoever shows them; a session nobody reads keeps only the newest.
+    constexpr std::size_t keep = 512;
+    for (auto &error : scripts.take_errors()) script_errors_.push_back(std::move(error));
+    for (auto &line : scripts.take_output()) script_output_.push_back(std::move(line));
+    if (script_errors_.size() > keep) script_errors_.erase(script_errors_.begin(), script_errors_.end() - keep);
+    if (script_output_.size() > keep) script_output_.erase(script_output_.begin(), script_output_.end() - keep);
+}
+void EditorSession::set_game_input(const gameplay::InputFrame &input) {
+    if (!runtime_) return;
+    if (runtime_->game) runtime_->game->set_input(input);
+    if (runtime_->scripts) runtime_->scripts->set_input(input);
+}
+std::vector<scripting::ScriptError> EditorSession::take_script_errors() { return std::exchange(script_errors_, {}); }
+std::vector<scripting::ScriptOutput> EditorSession::take_script_output() { return std::exchange(script_output_, {}); }
+std::vector<EntityId> EditorSession::script_instances() const {
+    return runtime_ && runtime_->scripts ? runtime_->scripts->runtime().instances() : std::vector<EntityId>{};
+}
+std::optional<scripting::Value> EditorSession::script_field(EntityId id, std::string_view name) const {
+    if (!runtime_ || !runtime_->scripts) return std::nullopt;
+    return runtime_->scripts->runtime().field(id, name);
 }
 const std::vector<std::string> &EditorSession::game_issues() const {
     static const std::vector<std::string> none;

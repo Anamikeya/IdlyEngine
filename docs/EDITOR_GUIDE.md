@@ -297,6 +297,7 @@ Open **Project... > Open Physics Shooter Sample**, press **Play**, then click th
 | `Space` | Jump |
 | `Shift` | Sprint |
 | `R` | Reload, or restart once the game has ended |
+| `E` | Interact: what a script makes of it, such as pressing a button |
 
 The sample opens from its folder in the source tree, so saving changes those tracked files. To experiment freely, copy
 `Samples\PhysicsShooter` somewhere else and open the copy:

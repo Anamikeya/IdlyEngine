@@ -25,6 +25,11 @@ struct Color {
 	double r = 1, g = 1, b = 1, a = 1; // sRGB in [0, 1]; alpha is linear.
 	friend bool operator==(const Color&, const Color&) = default;
 };
+// A rotation, x y z w as the scene stores it. Not a property type: properties that turn things use degrees in a Vec3.
+struct Quaternion {
+	double x = 0, y = 0, z = 0, w = 1;
+	friend bool operator==(const Quaternion&, const Quaternion&) = default;
+};
 // An entity of the scene by its stable ID; 0 is none.
 struct EntityRef {
 	EntityId id = 0;
@@ -77,11 +82,12 @@ struct ScriptError {
 	[[nodiscard]] std::string located() const;
 };
 
-// A line a script printed, with where it printed it.
+// A line a script printed (print, log.info) or warned of (log.warn), with where.
 struct ScriptOutput {
 	std::string script;
 	int line = 0;
 	std::string text;
+	bool warning = false;
 };
 
 // A script's text and the name to show for it.

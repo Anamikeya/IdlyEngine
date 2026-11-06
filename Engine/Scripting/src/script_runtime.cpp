@@ -161,6 +161,7 @@ struct ScriptRuntime::Impl {
 
 	ScriptLoader loader;
 	RuntimeLimits limits;
+	ScriptHost* host = nullptr;
 	Allocator allocator; // Before the state, which it outlives.
 	sol::state lua;
 	// After the state: these hold references into it, so they go first.
@@ -174,9 +175,10 @@ struct ScriptRuntime::Impl {
 	std::uint64_t instructions = 0;
 	ErrorPlace last_place;
 
-	Impl(ScriptLoader script_loader, RuntimeLimits runtime_limits, std::uint64_t seed)
+	Impl(ScriptLoader script_loader, RuntimeLimits runtime_limits, std::uint64_t seed, ScriptHost* world_host)
 		: loader(std::move(script_loader))
 		, limits(runtime_limits)
+		, host(world_host)
 		, allocator{0, runtime_limits.memory_bytes}
 		, lua(sol::default_at_panic, &limited_alloc, &allocator)
 	{
@@ -192,7 +194,10 @@ struct ScriptRuntime::Impl {
 		const sol::protected_function seed_random = lua["math"]["randomseed"];
 		const auto seeded = seed_random(static_cast<lua_Integer>(seed & 0x7fff'ffff'ffff'ffffu));
 		if (!seeded.valid()) throw std::runtime_error("the script random generator could not be seeded");
-		lua.set_function("print", [this](sol::variadic_args args, sol::this_state state) { print(state, args); });
+		lua.set_function("print", [this](sol::variadic_args args, sol::this_state state) { print(state, args, false); });
+		sol::table log = lua.create_named_table("log");
+		log.set_function("info", [this](sol::variadic_args args, sol::this_state state) { print(state, args, false); });
+		log.set_function("warn", [this](sol::variadic_args args, sol::this_state state) { print(state, args, true); });
 		lua.set_function("require", [this](const std::string& name) { return require(name); });
 		lua_sethook(L, &count_instructions, LUA_MASKCOUNT, hook_interval);
 	}
@@ -208,10 +213,10 @@ struct ScriptRuntime::Impl {
 			sol::call_constructor,
 			sol::factories([] { return Vector3{}; }, [](double x, double y, double z) { return Vector3{x, y, z}; }),
 			"x", sol::readonly(&Vector3::x), "y", sol::readonly(&Vector3::y), "z", sol::readonly(&Vector3::z),
-			"length", [](const Vector3& v) { return std::sqrt(v.x * v.x + v.y * v.y + v.z * v.z); },
+			"length", [](const Vector3& v) { return std::hypot(v.x, v.y, v.z); },
 			"normalized",
 			[](const Vector3& v) {
-				const double length = std::sqrt(v.x * v.x + v.y * v.y + v.z * v.z);
+				const double length = std::hypot(v.x, v.y, v.z);
 				return length > 0 ? Vector3{v.x / length, v.y / length, v.z / length} : Vector3{};
 			},
 			"dot", [](const Vector3& a, const Vector3& b) { return a.x * b.x + a.y * b.y + a.z * b.z; },
@@ -240,7 +245,7 @@ struct ScriptRuntime::Impl {
 			[](const Color& c) {
 				return "Color(" + format_number(c.r) + ", " + format_number(c.g) + ", " + format_number(c.b) + ", " + format_number(c.a) + ")";
 			});
-		lua.new_usertype<EntityRef>("Entity",
+		auto entity = lua.new_usertype<EntityRef>("Entity",
 			sol::call_constructor, sol::factories([] { return EntityRef{}; }),
 			"id", sol::property([](const EntityRef& e) { return static_cast<lua_Integer>(e.id); }),
 			sol::meta_function::equal_to, [](const EntityRef& a, const EntityRef& b) { return a == b; },
@@ -253,6 +258,191 @@ struct ScriptRuntime::Impl {
 			sol::meta_function::equal_to, [](const AssetRef& a, const AssetRef& b) { return a == b; },
 			sol::meta_function::to_string,
 			[](const AssetRef& a) { return a.name.empty() ? std::string("Asset(none)") : "Asset(" + a.name + ")"; });
+		bind_rotations();
+		bind_world(entity);
+	}
+
+	// Quat: rotations, with Euler angles in degrees as Details shows them (glm's convention: x, then y, then z).
+	void bind_rotations()
+	{
+		constexpr double to_radians = 3.14159265358979323846 / 180, to_degrees = 180 / 3.14159265358979323846;
+		const auto normalized = [](Quaternion q) {
+			const double length = std::sqrt(q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w);
+			return length > 0 ? Quaternion{q.x / length, q.y / length, q.z / length, q.w / length} : Quaternion{};
+		};
+		const auto multiply = [](const Quaternion& a, const Quaternion& b) {
+			return Quaternion{a.w * b.x + a.x * b.w + a.y * b.z - a.z * b.y, a.w * b.y - a.x * b.z + a.y * b.w + a.z * b.x,
+				a.w * b.z + a.x * b.y - a.y * b.x + a.z * b.w, a.w * b.w - a.x * b.x - a.y * b.y - a.z * b.z};
+		};
+		lua.new_usertype<Quaternion>("Quat",
+			sol::call_constructor,
+			sol::factories([] { return Quaternion{}; }, [normalized](double x, double y, double z, double w) { return normalized({x, y, z, w}); }),
+			"x", sol::readonly(&Quaternion::x), "y", sol::readonly(&Quaternion::y), "z", sol::readonly(&Quaternion::z),
+			"w", sol::readonly(&Quaternion::w),
+			"from_euler",
+			[](double x_degrees, double y_degrees, double z_degrees) {
+				const double cx = std::cos(x_degrees * to_radians / 2), cy = std::cos(y_degrees * to_radians / 2), cz = std::cos(z_degrees * to_radians / 2);
+				const double sx = std::sin(x_degrees * to_radians / 2), sy = std::sin(y_degrees * to_radians / 2), sz = std::sin(z_degrees * to_radians / 2);
+				return Quaternion{sx * cy * cz - cx * sy * sz, cx * sy * cz + sx * cy * sz, cx * cy * sz - sx * sy * cz, cx * cy * cz + sx * sy * sz};
+			},
+			"axis_angle",
+			[](const Vector3& axis, double degrees) {
+				const double length = std::hypot(axis.x, axis.y, axis.z);
+				if (length <= 0) return Quaternion{};
+				const double s = std::sin(degrees * to_radians / 2) / length;
+				return Quaternion{axis.x * s, axis.y * s, axis.z * s, std::cos(degrees * to_radians / 2)};
+			},
+			"euler",
+			[](const Quaternion& q) {
+				const double pitch = std::atan2(2 * (q.y * q.z + q.w * q.x), q.w * q.w - q.x * q.x - q.y * q.y + q.z * q.z);
+				const double yaw = std::asin(std::clamp(-2 * (q.x * q.z - q.w * q.y), -1.0, 1.0));
+				const double roll = std::atan2(2 * (q.x * q.y + q.w * q.z), q.w * q.w + q.x * q.x - q.y * q.y - q.z * q.z);
+				return Vector3{pitch * to_degrees, yaw * to_degrees, roll * to_degrees};
+			},
+			"rotate",
+			[](const Quaternion& q, const Vector3& v) {
+				const Vector3 u{q.x, q.y, q.z};
+				const auto cross = [](const Vector3& a, const Vector3& b) { return Vector3{a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x}; };
+				const Vector3 t = cross(u, v);
+				const Vector3 twice{2 * t.x, 2 * t.y, 2 * t.z};
+				const Vector3 c = cross(u, twice);
+				return Vector3{v.x + q.w * twice.x + c.x, v.y + q.w * twice.y + c.y, v.z + q.w * twice.z + c.z};
+			},
+			"inverse", [](const Quaternion& q) { return Quaternion{-q.x, -q.y, -q.z, q.w}; },
+			sol::meta_function::multiplication, multiply,
+			sol::meta_function::equal_to, [](const Quaternion& a, const Quaternion& b) { return a == b; },
+			sol::meta_function::to_string,
+			[](const Quaternion& q) {
+				return "Quat(" + format_number(q.x) + ", " + format_number(q.y) + ", " + format_number(q.z) + ", " + format_number(q.w) + ")";
+			});
+	}
+
+	ScriptHost& world() const
+	{
+		if (!host) throw std::runtime_error("this needs a running game: scripts reach the world only in Play and Simulate");
+		return *host;
+	}
+	// The world, once it is known that the entity is in it.
+	ScriptHost& world_of(const EntityRef& entity) const
+	{
+		ScriptHost& w = world();
+		if (!entity.id) throw std::runtime_error("this Entity() names no entity");
+		if (!w.exists(entity.id)) throw std::runtime_error("entity " + std::to_string(entity.id) + " no longer exists");
+		return w;
+	}
+	sol::object entity_or_nil(EntityId id) { return id ? sol::make_object(lua, EntityRef{id}) : sol::make_object(lua, sol::lua_nil); }
+
+	// What scripts can do, through the host (script_host.h): methods of Entity, and the engine, input and game tables.
+	void bind_world(sol::usertype<EntityRef>& entity)
+	{
+		entity["valid"] = sol::property([this](const EntityRef& e) { return host && e.id && host->exists(e.id); });
+		entity["name"] = sol::property([this](const EntityRef& e) { return world_of(e).name(e.id); });
+		entity["parent"] = sol::property([this](const EntityRef& e) { return entity_or_nil(world_of(e).parent(e.id)); });
+		entity["children"] = [this](const EntityRef& e) {
+			std::vector<EntityRef> children;
+			for (const EntityId id : world_of(e).children(e.id)) children.push_back(EntityRef{id});
+			return sol::as_table(std::move(children));
+		};
+		entity["position"] = sol::property([this](const EntityRef& e) { return world_of(e).local(e.id).position; },
+			[this](const EntityRef& e, const Vector3& position) {
+				auto& w = world_of(e);
+				auto t = w.local(e.id);
+				t.position = position;
+				w.set_local(e.id, t);
+			});
+		entity["rotation"] = sol::property([this](const EntityRef& e) { return world_of(e).local(e.id).rotation; },
+			[this](const EntityRef& e, const Quaternion& rotation) {
+				auto& w = world_of(e);
+				auto t = w.local(e.id);
+				t.rotation = rotation;
+				w.set_local(e.id, t);
+			});
+		entity["scale"] = sol::property([this](const EntityRef& e) { return world_of(e).local(e.id).scale; },
+			[this](const EntityRef& e, const Vector3& scale) {
+				auto& w = world_of(e);
+				auto t = w.local(e.id);
+				t.scale = scale;
+				w.set_local(e.id, t);
+			});
+		entity["world_position"] = sol::property([this](const EntityRef& e) { return world_of(e).world_position(e.id); },
+			[this](const EntityRef& e, const Vector3& position) { world_of(e).set_world_position(e.id, position); });
+		entity["world_rotation"] = sol::property([this](const EntityRef& e) { return world_of(e).world_rotation(e.id); });
+		entity["destroy"] = [this](const EntityRef& e) { world_of(e).destroy(e.id); };
+		entity["velocity"] = sol::property(
+			[this](const EntityRef& e) {
+				const auto v = world_of(e).velocity(e.id);
+				return v ? sol::make_object(lua, *v) : sol::make_object(lua, sol::lua_nil);
+			},
+			[this](const EntityRef& e, const Vector3& velocity) {
+				if (!world_of(e).set_velocity(e.id, velocity)) throw std::runtime_error("entity " + std::to_string(e.id) + " has no body that moves");
+			});
+		entity["dynamic"] = sol::property([this](const EntityRef& e) { return world_of(e).is_dynamic(e.id); });
+		entity["apply_impulse"] = [this](const EntityRef& e, const Vector3& impulse, sol::optional<Vector3> point) {
+			auto& w = world_of(e);
+			return w.apply_impulse(e.id, impulse, point ? *point : w.world_position(e.id));
+		};
+		entity["play"] = [this](const EntityRef& e, const std::string& clip, sol::optional<double> blend) {
+			world_of(e).play_clip(e.id, clip, blend.value_or(0.2));
+		};
+		entity["fire_effect"] = [this](const EntityRef& e, sol::optional<Vector3> point, sol::optional<Vector3> direction, sol::optional<double> strength) {
+			auto& w = world_of(e);
+			w.fire_effect(e.id, point ? *point : w.world_position(e.id), direction.value_or(Vector3{0, 1, 0}), strength.value_or(1.0));
+		};
+		entity["ragdoll"] = [this](const EntityRef& e) { world_of(e).ragdoll(e.id); };
+		entity["damage"] = [this](const EntityRef& e, double amount) {
+			auto& w = world_of(e);
+			w.damage(e.id, amount, w.world_position(e.id));
+		};
+		entity["health"] = sol::property([this](const EntityRef& e) {
+			const auto health = world_of(e).health(e.id);
+			return health ? sol::make_object(lua, *health) : sol::make_object(lua, sol::lua_nil);
+		});
+		// Another entity's script instance, to read its fields or call its functions; nil when it has none running.
+		entity["script"] = sol::property([this](const EntityRef& e) -> sol::object {
+			const auto found = instances.find(e.id);
+			if (found == instances.end() || !found->second.enabled) return sol::make_object(lua, sol::lua_nil);
+			return found->second.self;
+		});
+
+		sol::table engine = lua.create_named_table("engine");
+		engine.set_function("find", [this](const std::string& name) { return entity_or_nil(world().find(name)); });
+		engine.set_function("spawn", [this](const EntityRef& original, sol::optional<Vector3> position, sol::optional<Quaternion> rotation) {
+			auto& w = world_of(original);
+			return EntityRef{w.spawn(original.id, position ? *position : w.world_position(original.id), rotation ? *rotation : w.world_rotation(original.id))};
+		});
+		engine.set_function("raycast", [this](const Vector3& origin, const Vector3& direction, sol::optional<double> distance, sol::optional<EntityRef> ignore) -> sol::object {
+			const auto hit = world().raycast(origin, direction, distance.value_or(1000.0), ignore ? ignore->id : 0);
+			if (!hit) return sol::make_object(lua, sol::lua_nil);
+			sol::table result = lua.create_table();
+			result["entity"] = entity_or_nil(hit->entity);
+			result["point"] = hit->point;
+			result["normal"] = hit->normal;
+			result["distance"] = hit->distance;
+			return result;
+		});
+		engine.set_function("ticks", [this] { return static_cast<lua_Integer>(world().ticks()); });
+		engine.set_function("time", [this] {
+			const auto& w = world();
+			return static_cast<double>(w.ticks()) * w.step_seconds();
+		});
+		sol::table input = lua.create_table();
+		input.set_function("held", [this](const std::string& action) { return world().held(action); });
+		input.set_function("pressed", [this](const std::string& action) { return world().pressed(action); });
+		engine["input"] = input;
+		sol::table game = lua.create_table();
+		game.set_function("active", [this] { return host && host->has_game(); });
+		game.set_function("score", [this] { return world().score(); });
+		game.set_function("add_score", [this](int points, sol::optional<std::string> message) { world().add_score(points, message.value_or(std::string())); });
+		game.set_function("announce", [this](const std::string& message) { world().announce(message); });
+		game.set_function("time_left", [this] { return world().time_left(); });
+		game.set_function("add_time", [this](double seconds) { world().add_time(seconds); });
+		game.set_function("give_ammo", [this](int rounds) { world().give_ammo(rounds); });
+		game.set_function("targets_left", [this] { return world().targets_left(); });
+		game.set_function("player", [this] { return entity_or_nil(world().player()); });
+		game.set_function("phase", [this] { return world().phase(); });
+		game.set_function("win", [this] { world().win(); });
+		game.set_function("lose", [this] { world().lose(); });
+		engine["game"] = game;
 	}
 
 	// Whole numbers go in as Lua integers, so a property of 3 prints as 3, not 3.0.
@@ -419,10 +609,11 @@ struct ScriptRuntime::Impl {
 		return std::nullopt;
 	}
 
-	void print(sol::this_state state, const sol::variadic_args& args)
+	void print(sol::this_state state, const sol::variadic_args& args, bool warning)
 	{
 		lua_State* L = state;
 		ScriptOutput line;
+		line.warning = warning;
 		lua_Debug frame{};
 		if (lua_getstack(L, 1, &frame) && lua_getinfo(L, "Sl", &frame)) {
 			std::string source = frame.source ? frame.source : "";
@@ -585,8 +776,8 @@ struct ScriptRuntime::Impl {
 	}
 };
 
-ScriptRuntime::ScriptRuntime(ScriptLoader loader, RuntimeLimits limits, std::uint64_t random_seed)
-	: impl_(std::make_unique<Impl>(std::move(loader), limits, random_seed))
+ScriptRuntime::ScriptRuntime(ScriptLoader loader, RuntimeLimits limits, std::uint64_t random_seed, ScriptHost* host)
+	: impl_(std::make_unique<Impl>(std::move(loader), limits, random_seed, host))
 {
 }
 
@@ -619,9 +810,12 @@ std::vector<EntityId> ScriptRuntime::instances() const
 
 std::size_t ScriptRuntime::call(std::string_view callback, std::span<const Value> args)
 {
+	// The instances there were when the call began: one a script attaches meanwhile (a spawned copy) waits for the next.
 	std::size_t succeeded = 0;
-	for (auto& [entity, instance] : impl_->instances)
-		if (impl_->call(entity, instance, callback, args)) ++succeeded;
+	for (const EntityId entity : instances()) {
+		const auto found = impl_->instances.find(entity);
+		if (found != impl_->instances.end() && impl_->call(entity, found->second, callback, args)) ++succeeded;
+	}
 	return succeeded;
 }
 

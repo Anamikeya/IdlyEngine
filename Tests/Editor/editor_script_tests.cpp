@@ -281,3 +281,74 @@ ENGINE_TEST(renaming_a_script_updates_what_names_it)
 	ENGINE_REQUIRE(info);
 	ENGINE_CHECK_EQ(info.value().name, std::string("/Game/Logic/Portcullis"));
 }
+
+ENGINE_TEST(play_runs_scripts_and_stop_puts_the_scene_back)
+{
+	Project p("play");
+	write_script(p.s, p.gate, R"lua(local Gate = { properties = { speed = 2.0 } }
+function Gate:start() print("starting", self.entity.name) end
+function Gate:tick(dt) self.entity.position = self.entity.position + Vec3(0, self.speed * dt, 0) end
+function Gate:on_stop() log.warn("stopping") end
+return Gate
+)lua");
+	const auto gate = make_entity(p.s, "Gate");
+	ENGINE_REQUIRE(p.s.assign_script(gate, p.gate));
+	ENGINE_REQUIRE(p.s.set_script_property(gate, "speed", 6.0));
+	const auto before = p.s.scene().snapshot();
+	ENGINE_REQUIRE(p.s.play());
+	ENGINE_CHECK(p.s.script_instances() == std::vector<EntityId>{gate});
+	for (int i = 0; i < 60; ++i) p.s.update(EditorSession::fixed_step);
+	const auto playing = p.s.scene().inspect(gate);
+	ENGINE_REQUIRE(playing.has_value());
+	ENGINE_CHECK_NEAR(playing->transform.position.y, 6.0, 1e-6); // A second at 6 m/s: the entity's own value, not 2.
+	ENGINE_REQUIRE(p.s.stop());
+	const auto output = p.s.take_script_output();
+	ENGINE_REQUIRE(output.size() == 2);
+	ENGINE_CHECK_EQ(output[0].text, std::string("starting\tGate"));
+	ENGINE_CHECK_EQ(output[0].script, std::string("/Game/Scripts/Gate"));
+	ENGINE_CHECK_EQ(output[0].line, 2);
+	ENGINE_CHECK_EQ(output[1].text, std::string("stopping"));
+	ENGINE_CHECK(output[1].warning);
+	ENGINE_CHECK(p.s.scene().snapshot() == before);
+	ENGINE_CHECK(p.s.script_instances().empty());
+	ENGINE_CHECK(p.s.take_script_errors().empty());
+}
+
+ENGINE_TEST(a_script_error_in_play_stops_that_script_and_says_where)
+{
+	Project p("play-error");
+	write_script(p.s, p.gate, R"lua(local Gate = {}
+function Gate:tick()
+	self.count = (self.count or 0) + 1
+	if self.count == 3 then
+		local door = nil
+		door.open = true
+	end
+end
+return Gate
+)lua");
+	const auto gate = make_entity(p.s, "Gate");
+	const auto other = make_entity(p.s, "Other");
+	ENGINE_REQUIRE(p.s.assign_script(gate, p.gate));
+	ENGINE_REQUIRE(p.s.assign_script(other, p.gate));
+	ENGINE_REQUIRE(p.s.play());
+	for (int i = 0; i < 10; ++i) p.s.update(EditorSession::fixed_step);
+	const auto errors = p.s.take_script_errors();
+	ENGINE_REQUIRE(errors.size() == 2); // Each entity's instance fails once, on its third tick, and stops.
+	ENGINE_CHECK_EQ(errors[0].script, std::string("/Game/Scripts/Gate"));
+	ENGINE_CHECK_EQ(errors[0].line, 6);
+	ENGINE_CHECK_EQ(errors[0].callback, std::string("tick"));
+	ENGINE_CHECK_EQ(errors[0].entity, gate);
+	ENGINE_CHECK_EQ(errors[1].entity, other);
+	const auto count = p.s.script_field(gate, "count");
+	ENGINE_REQUIRE(count.has_value());
+	ENGINE_CHECK(std::get<double>(*count) == 3.0);
+	ENGINE_REQUIRE(p.s.stop());
+	// A script that does not load is reported when Play starts, and the rest still run.
+	write_script(p.s, p.gate, "local Gate = {\n");
+	ENGINE_REQUIRE(p.s.play());
+	const auto load = p.s.take_script_errors();
+	ENGINE_CHECK(!load.empty());
+	if (!load.empty()) ENGINE_CHECK_EQ(load[0].script, std::string("/Game/Scripts/Gate"));
+	ENGINE_REQUIRE(p.s.stop());
+}
