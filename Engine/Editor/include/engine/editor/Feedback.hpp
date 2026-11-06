@@ -13,13 +13,16 @@ const char *to_string(Severity severity) noexcept;
 
 // Something a message is about, which a click can take the user to.
 struct LogLink {
-    enum class Kind : std::uint8_t { None, Entity, Asset };
+    // Script: a line of a script asset, opened in the Script Editor (Milestone 6).
+    enum class Kind : std::uint8_t { None, Entity, Asset, Script };
     Kind kind = Kind::None;
     std::uint64_t id = 0;
     std::string label;
+    int line = 0; // Of a script, 1-based; 0 for none.
     explicit operator bool() const noexcept { return kind != Kind::None; }
     static LogLink entity(std::uint64_t id, std::string label) { return {Kind::Entity, id, std::move(label)}; }
     static LogLink asset(std::uint64_t id, std::string label) { return {Kind::Asset, id, std::move(label)}; }
+    static LogLink script(std::uint64_t id, std::string label, int line) { return {Kind::Script, id, std::move(label), line}; }
 };
 struct LogEntry {
     Severity severity = Severity::Info;

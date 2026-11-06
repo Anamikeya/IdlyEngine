@@ -165,7 +165,7 @@ void EditorUI::asset_item_input(const assets::AssetMetadata &meta) {
     if (ImGui::IsItemClicked(ImGuiMouseButton_Left)) selected_asset = meta.id;
     if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
         if (meta.type == assets::AssetType::Mesh) report(session.place_asset(meta.id), "Model added to the scene");
-        else if (meta.type == assets::AssetType::Material || meta.type == assets::AssetType::Effect) registry.run("Asset.Edit");
+        else if (meta.type == assets::AssetType::Material || meta.type == assets::AssetType::Effect || meta.type == assets::AssetType::Script) registry.run("Asset.Edit");
     }
     if (ImGui::BeginDragDropSource()) {
         ImGui::SetDragDropPayload(asset_payload, &meta.id.value, sizeof meta.id.value);

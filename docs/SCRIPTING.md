@@ -8,6 +8,18 @@ To begin one, type a name in the Asset Browser and press **New script**: it make
 To run it, select an entity and use **Add Component > Script** (with the script selected in the Asset Browser), or
 **Assign to selection**.
 
+## Editing and changing scripts while playing
+
+Double-click a script in the Asset Browser to open it in the **Script Editor**. Its text is checked a moment after you
+stop typing, and a mistake is marked at its line before anything is saved. **Ctrl+S** saves it. Any other editor works
+too: **Open in External Editor** opens the file at the cursor's line, VS Code by default.
+
+Saving while playing changes the running game within half a second, with no restart: every entity running the script
+keeps its `self`, so what it has counted or stored carries on; a property that is new gets its default; and the new
+functions run from the next call. A module that another script `require`s can be changed the same way: the scripts that
+require it are run again so that each uses the new one. A script saved with a mistake keeps the last good code running,
+and the error goes to the Message Log and stays marked in the Script Editor. Stop and Play again for a clean start.
+
 ## A script is a class
 
 A script returns a table. Its `properties` are what Details shows; its functions are what the engine calls. Each entity

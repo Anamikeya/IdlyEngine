@@ -45,9 +45,10 @@ add_library(editor_imgui STATIC
     "${IMGUI_ROOT}/imgui.cpp" "${IMGUI_ROOT}/imgui_draw.cpp"
     "${IMGUI_ROOT}/imgui_widgets.cpp" "${IMGUI_ROOT}/imgui_tables.cpp"
     "${IMGUI_ROOT}/backends/imgui_impl_glfw.cpp"
-    "${GAMEENGINE_RESOURCES_DIR}/box3d/extern/imguizmo/ImGuizmo.cpp")
+    "${GAMEENGINE_RESOURCES_DIR}/box3d/extern/imguizmo/ImGuizmo.cpp"
+    "${GAMEENGINE_RESOURCES_DIR}/ImGuiColorTextEdit/TextEditor.cpp") # The Script Editor's widget (Milestone 6).
 target_include_directories(editor_imgui SYSTEM PUBLIC "${IMGUI_ROOT}" "${IMGUI_ROOT}/backends"
-    "${GAMEENGINE_RESOURCES_DIR}/box3d/extern/imguizmo")
+    "${GAMEENGINE_RESOURCES_DIR}/box3d/extern/imguizmo" "${GAMEENGINE_RESOURCES_DIR}/ImGuiColorTextEdit")
 target_link_libraries(editor_imgui PUBLIC glfw)
 
 add_library(engine_editor_session STATIC src/EditorSession.cpp src/EditorCommands.cpp src/EditorPrefs.cpp src/PropertyTables.cpp src/CameraController.cpp src/FuzzyMatch.cpp src/ConsoleRegistry.cpp src/Feedback.cpp src/GizmoEntry.cpp)
@@ -108,7 +109,7 @@ target_compile_options(engine_desktop_renderer PRIVATE /W4 /permissive- /utf-8)
 add_dependencies(engine_desktop_renderer editor_materials)
 add_executable(engine_editor src/Main.cpp src/GameHud.cpp src/RenderTest.cpp
     src/ui/EditorUI.cpp src/ui/HierarchyPanel.cpp src/ui/InspectorPanel.cpp src/ui/LightingPanel.cpp
-    src/ui/MaterialPanel.cpp src/ui/EffectPanel.cpp src/ui/AnimationPanel.cpp src/ui/ViewportPanel.cpp src/ui/AssetPanel.cpp src/ui/CommandUI.cpp src/ui/FileDialog.cpp src/ui/WorkflowPanels.cpp src/ui/FeedbackPanels.cpp)
+    src/ui/MaterialPanel.cpp src/ui/EffectPanel.cpp src/ui/ScriptPanel.cpp src/ui/AnimationPanel.cpp src/ui/ViewportPanel.cpp src/ui/AssetPanel.cpp src/ui/CommandUI.cpp src/ui/FileDialog.cpp src/ui/WorkflowPanels.cpp src/ui/FeedbackPanels.cpp)
 target_link_libraries(engine_editor PRIVATE engine_editor_session engine_desktop_renderer editor_imgui comdlg32)
 target_include_directories(engine_editor SYSTEM PRIVATE "${GAMEENGINE_RESOURCES_DIR}/glm")
 # Like the materials, the sample is found by an absolute path, so the editor runs from its build tree.

@@ -472,3 +472,61 @@ ENGINE_TEST(scripts_are_found_by_package_name)
 	ENGINE_CHECK_EQ(runtime.call("start"), std::size_t{2});
 	fs::remove_all(root);
 }
+
+ENGINE_TEST(reloading_a_script_keeps_each_instance_and_its_state)
+{
+	Scripts scripts{{"/Game/Scripts/Counter", "local C = { properties = { step = 1 } }\nfunction C:tick() self.count = (self.count or 0) + self.step end\nreturn C\n"}};
+	ScriptRuntime runtime(memory_loader(scripts));
+	const std::vector<PropertyOverride> five{{"step", 5.0}};
+	ENGINE_REQUIRE(runtime.attach(1, "/Game/Scripts/Counter"));
+	ENGINE_REQUIRE(runtime.attach(2, "/Game/Scripts/Counter", five));
+	runtime.call("tick");
+	runtime.call("tick");
+	ENGINE_CHECK_NEAR(number_field(runtime, 1, "count"), 2.0, 0);
+	ENGINE_CHECK_NEAR(number_field(runtime, 2, "count"), 10.0, 0);
+	ENGINE_CHECK(runtime.loaded() == (std::vector<std::string>{"/Game/Scripts/Counter"}));
+
+	// New code, and a new property: the counts go on from where they were, and each gains the new default.
+	scripts["/Game/Scripts/Counter"] = "local C = { properties = { step = 1, bonus = 100 } }\nfunction C:tick() self.count = self.count + self.step * 10 + self.bonus end\nreturn C\n";
+	ENGINE_REQUIRE(runtime.reload("/Game/Scripts/Counter"));
+	runtime.call("tick");
+	ENGINE_CHECK_NEAR(number_field(runtime, 1, "count"), 112.0, 0);
+	ENGINE_CHECK_NEAR(number_field(runtime, 2, "count"), 160.0, 0);
+	ENGINE_CHECK_NEAR(number_field(runtime, 2, "bonus"), 100.0, 0);
+	const auto info = runtime.load("/Game/Scripts/Counter");
+	ENGINE_REQUIRE(info);
+	ENGINE_CHECK(info.value().property("bonus") != nullptr);
+
+	// A broken version keeps the last good one running, and says where it is broken.
+	scripts["/Game/Scripts/Counter"] = "local C = {\n\tproperties = {\n";
+	const auto broken = runtime.reload("/Game/Scripts/Counter");
+	ENGINE_CHECK(!broken);
+	const auto errors = runtime.take_errors();
+	ENGINE_REQUIRE(errors.size() == 1);
+	ENGINE_CHECK_EQ(errors[0].script, std::string("/Game/Scripts/Counter"));
+	ENGINE_CHECK(errors[0].line > 0);
+	runtime.call("tick");
+	ENGINE_CHECK_NEAR(number_field(runtime, 1, "count"), 222.0, 0);
+	ENGINE_CHECK(runtime.enabled(1));
+	// What is not loaded cannot be reloaded.
+	scripts["/Game/Scripts/Other"] = "return {}\n";
+	ENGINE_CHECK(!runtime.reload("/Game/Scripts/Other"));
+}
+
+ENGINE_TEST(reloading_a_module_runs_again_the_scripts_that_require_it)
+{
+	Scripts scripts{
+		{"/Game/Scripts/Tuning", "return { factor = 2 }\n"},
+		{"/Game/Scripts/User", "local tuning = require \"/Game/Scripts/Tuning\"\nlocal U = {}\nfunction U:tick() self.factor = tuning.factor end\nreturn U\n"},
+	};
+	ScriptRuntime runtime(memory_loader(scripts));
+	ENGINE_REQUIRE(runtime.attach(1, "/Game/Scripts/User"));
+	runtime.call("tick");
+	ENGINE_CHECK_NEAR(number_field(runtime, 1, "factor"), 2.0, 0);
+	ENGINE_CHECK(runtime.loaded() == (std::vector<std::string>{"/Game/Scripts/Tuning", "/Game/Scripts/User"}));
+	scripts["/Game/Scripts/Tuning"] = "return { factor = 3 }\n";
+	ENGINE_REQUIRE(runtime.reload("/Game/Scripts/Tuning"));
+	runtime.call("tick");
+	ENGINE_CHECK_NEAR(number_field(runtime, 1, "factor"), 3.0, 0);
+	ENGINE_CHECK(runtime.take_errors().empty());
+}

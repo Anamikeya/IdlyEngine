@@ -352,3 +352,84 @@ return Gate
 	if (!load.empty()) ENGINE_CHECK_EQ(load[0].script, std::string("/Game/Scripts/Gate"));
 	ENGINE_REQUIRE(p.s.stop());
 }
+
+namespace {
+std::string counter_script(int step, const char* mode)
+{
+	return "local C = {}\nfunction C:tick()\n\tself.count = (self.count or 0) + " + std::to_string(step) + "\n\tself.mode = \"" + mode + "\"\nend\nreturn C\n";
+}
+double count_of(const EditorSession& s, EntityId id)
+{
+	const auto value = s.script_field(id, "count");
+	return value && std::holds_alternative<double>(*value) ? std::get<double>(*value) : -1;
+}
+} // namespace
+
+ENGINE_TEST(saving_in_play_reloads_the_running_script_and_keeps_its_state)
+{
+	Project p("hot");
+	write_script(p.s, p.gate, counter_script(1, "one"));
+	const auto gate = make_entity(p.s, "Gate");
+	ENGINE_REQUIRE(p.s.assign_script(gate, p.gate));
+	ENGINE_REQUIRE(p.s.play());
+	for (int i = 0; i < 10; ++i) p.s.update(EditorSession::fixed_step);
+	ENGINE_CHECK(count_of(p.s, gate) == 10);
+
+	// Saved from the Script Editor: the next tick runs the new code, counting on from 10.
+	ENGINE_REQUIRE(p.s.save_script(p.gate, counter_script(100, "two")));
+	p.s.update(EditorSession::fixed_step);
+	ENGINE_CHECK(count_of(p.s, gate) == 110);
+	const auto mode = p.s.script_field(gate, "mode");
+	ENGINE_REQUIRE(mode.has_value());
+	ENGINE_CHECK_EQ(std::get<std::string>(*mode), std::string("two"));
+	const auto reloaded = p.s.take_script_output();
+	ENGINE_REQUIRE(reloaded.size() == 1);
+	ENGINE_CHECK(reloaded[0].text.starts_with("Reloaded"));
+	ENGINE_CHECK_EQ(reloaded[0].script, std::string("/Game/Scripts/Gate"));
+
+	// Saved broken: the file is written, the error is reported, and the last good code runs on.
+	ENGINE_REQUIRE(p.s.save_script(p.gate, "local C = {\nfunction C:tick()\n"));
+	const auto errors = p.s.take_script_errors();
+	ENGINE_REQUIRE(errors.size() == 1);
+	ENGINE_CHECK_EQ(errors[0].script, std::string("/Game/Scripts/Gate"));
+	ENGINE_CHECK(errors[0].line > 0);
+	p.s.update(EditorSession::fixed_step);
+	ENGINE_CHECK(count_of(p.s, gate) == 210);
+
+	// Changed by another editor: seen within half a second of play.
+	write_script(p.s, p.gate, counter_script(1000, "three"));
+	for (int i = 0; i < 31; ++i) p.s.update(EditorSession::fixed_step);
+	ENGINE_CHECK(count_of(p.s, gate) > 1210);
+	const auto later = p.s.script_field(gate, "mode");
+	ENGINE_REQUIRE(later.has_value());
+	ENGINE_CHECK_EQ(std::get<std::string>(*later), std::string("three"));
+	ENGINE_REQUIRE(p.s.stop());
+	// Saving while editing changes the file, and what Details reads from it.
+	ENGINE_REQUIRE(p.s.save_script(p.gate, "return { properties = { height = 2 } }\n"));
+	const auto info = p.s.script_info(p.gate);
+	ENGINE_REQUIRE(info);
+	ENGINE_CHECK(info.value().property("height") != nullptr);
+	const auto text = p.s.script_text(p.gate);
+	ENGINE_REQUIRE(text);
+	ENGINE_CHECK_EQ(text.value(), std::string("return { properties = { height = 2 } }\n"));
+}
+
+ENGINE_TEST(the_script_editor_checks_text_before_it_is_saved)
+{
+	Project p("check");
+	const auto broken = p.s.check_script(p.gate, "local Gate = {\n\tproperties = { speed = 1 }\n");
+	ENGINE_CHECK(!broken);
+	if (!broken) ENGINE_CHECK(broken.error().message.find("/Game/Scripts/Gate:") != std::string::npos);
+	const auto typed = p.s.check_script(p.gate, "return { properties = { wobble = 0.5 } }\n");
+	ENGINE_REQUIRE(typed);
+	ENGINE_CHECK(typed.value().property("wobble") != nullptr);
+	// Nothing was saved: the file still declares what it did.
+	const auto saved = p.s.script_info(p.gate);
+	ENGINE_REQUIRE(saved);
+	ENGINE_CHECK(saved.value().property("wobble") == nullptr);
+	ENGINE_CHECK(p.s.script_file(p.gate).filename() == fs::path("Gate.lua"));
+	// The external editor's command.
+	ENGINE_CHECK_EQ(EditorSession::external_command("code -g \"{file}:{line}\"", fs::path("D:/Game/Gate.lua"), 12), std::string("code -g \"D:/Game/Gate.lua:12\""));
+	ENGINE_CHECK_EQ(EditorSession::external_command("", fs::path("a.lua"), 0), std::string("code -g \"a.lua:1\""));
+	ENGINE_CHECK_EQ(EditorSession::external_command("notepad {file}", fs::path("b.lua"), 3), std::string("notepad b.lua"));
+}

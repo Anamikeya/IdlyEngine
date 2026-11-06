@@ -659,30 +659,43 @@ struct ScriptRuntime::Impl {
 
 	// ---- Scripts ------------------------------------------------------------------------------------------------
 
-	Result<ScriptInfo> fail_load(ScriptError error)
-	{
-		const std::string message = error.located();
-		errors.push_back(std::move(error));
-		return fail(ErrorCode::ParseError, message);
-	}
-
 	Result<ScriptInfo> load(std::string_view name)
 	{
 		auto source = loader(name);
 		if (!source) return source.error();
 		const ScriptSource& script = source.value();
 		if (const auto known = scripts.find(script.name); known != scripts.end()) return known->second.info;
+		auto built = build_class(script);
+		if (!built) return built.error();
+		auto& [info, cls] = built.value();
+		sol::table meta = lua.create_table();
+		meta["__index"] = cls;
+		scripts[script.name] = LoadedScript{info, cls, meta};
+		return info;
+	}
 
+	struct Built {
+		ScriptInfo info;
+		sol::table cls;
+	};
+	// Runs a script's top level and reads the class it returns, storing nothing.
+	Result<Built> build_class(const ScriptSource& script)
+	{
+		const auto failed_with = [this](ScriptError error) -> Result<Built> {
+			const std::string message = error.located();
+			errors.push_back(std::move(error));
+			return fail(ErrorCode::ParseError, message);
+		};
 		lua_State* L = lua.lua_state();
 		const int top = lua_gettop(L);
-		if (auto failed = compile(script)) return fail_load(std::move(*failed));
-		if (const int status = protected_call(0, 1); status != LUA_OK) return fail_load(error_from_stack(status, script.name));
+		if (auto failed = compile(script)) return failed_with(std::move(*failed));
+		if (const int status = protected_call(0, 1); status != LUA_OK) return failed_with(error_from_stack(status, script.name));
 		auto invalid = [&](std::string message) {
 			lua_settop(L, top);
 			ScriptError error;
 			error.script = script.name;
 			error.message = std::move(message);
-			return fail_load(std::move(error));
+			return failed_with(std::move(error));
 		};
 		if (!lua_istable(L, -1))
 			return invalid(std::string("must return a table, its class; it returned ") + luaL_typename(L, -1));
@@ -717,10 +730,52 @@ struct ScriptRuntime::Impl {
 			if (function.get_type() != sol::type::function) return invalid(std::string("its '") + callback + "' must be a function");
 			info.callbacks.emplace_back(callback);
 		}
-		sol::table meta = lua.create_table();
-		meta["__index"] = cls;
-		scripts[script.name] = LoadedScript{info, cls, meta};
-		return info;
+		return Built{std::move(info), std::move(cls)};
+	}
+
+	// Runs a script again and swaps its class under every instance (D8). Instances keep their `self`, and gain the
+	// defaults of properties that are new. On a failure the old class stays, and the error is reported.
+	Result<ScriptInfo> reload_class(LoadedScript& loaded, const ScriptSource& source)
+	{
+		auto built = build_class(source);
+		if (!built) return built.error();
+		auto& [info, cls] = built.value();
+		std::vector<const PropertyDecl*> added;
+		for (const auto& decl : info.properties)
+			if (!loaded.info.property(decl.name)) added.push_back(&decl);
+		for (auto& [entity, instance] : instances) {
+			if (instance.script != loaded.info.name) continue;
+			for (const auto* decl : added)
+				if (instance.self.raw_get<sol::object>(decl->name).get_type() == sol::type::lua_nil) instance.self[decl->name] = make_object(decl->default_value);
+		}
+		loaded.cls = cls;
+		loaded.info = std::move(info);
+		loaded.instance_meta["__index"] = cls;
+		return loaded.info;
+	}
+
+	Result<void> reload(std::string_view name)
+	{
+		auto source = loader(name);
+		if (!source) return source.error();
+		const std::string canonical = source.value().name;
+		if (const auto found = scripts.find(canonical); found != scripts.end()) {
+			auto reloaded = reload_class(found->second, source.value());
+			if (!reloaded) return reloaded.error();
+			return {};
+		}
+		// A module: run it again when next required, and run every script again so each requires the new one.
+		if (modules.erase(canonical)) {
+			std::optional<Error> first;
+			for (auto& [script_name, loaded] : scripts) {
+				auto again = loader(script_name);
+				if (!again) { if (!first) first = again.error(); continue; }
+				if (auto reloaded = reload_class(loaded, again.value()); !reloaded && !first) first = reloaded.error();
+			}
+			if (first) return *first;
+			return {};
+		}
+		return fail(ErrorCode::NotFound, canonical + " is not loaded");
 	}
 
 	Result<void> attach(EntityId entity, std::string_view name, std::span<const PropertyOverride> overrides)
@@ -784,6 +839,17 @@ ScriptRuntime::ScriptRuntime(ScriptLoader loader, RuntimeLimits limits, std::uin
 ScriptRuntime::~ScriptRuntime() = default;
 
 Result<ScriptInfo> ScriptRuntime::load(std::string_view name) { return impl_->load(name); }
+
+std::vector<std::string> ScriptRuntime::loaded() const
+{
+	std::vector<std::string> names;
+	for (const auto& entry : impl_->scripts) names.push_back(entry.first);
+	for (const auto& entry : impl_->modules) names.push_back(entry.first);
+	std::sort(names.begin(), names.end());
+	return names;
+}
+
+Result<void> ScriptRuntime::reload(std::string_view name) { return impl_->reload(name); }
 
 Result<void> ScriptRuntime::attach(EntityId entity, std::string_view script, std::span<const PropertyOverride> overrides)
 {

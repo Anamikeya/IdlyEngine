@@ -218,6 +218,34 @@ In the Inspector, a Particle Emitter can be told not to play by itself, in which
 to scale its rate. The shooter's **Impact Effect Template** works this way: give it an emitter and every hit fires that
 effect along the surface it struck.
 
+## Write scripts
+
+A script is a Lua file in the asset folder that runs on the entities whose **Script** component names it, in Play and
+Simulate. Its properties show in Details, where each entity can have its own values. [`SCRIPTING.md`](SCRIPTING.md) is
+the reference: what a script declares, what the engine calls, and what a script can do.
+
+1. Type a name in the Asset Browser's name field and press **New script**. It makes `Scripts/<name>.lua` from a template
+   that names every function the engine calls.
+2. Double-click it, or press **Edit Script** in Details, to open it in the **Script Editor**, a tab beside the Asset
+   Browser. Lua is colored and lines are numbered. A moment after you stop typing, the text is checked: a mistake is
+   shown in red with its line, and its line is marked. The properties and functions it declares are listed above the
+   text; click a function to go to it. **Ctrl+S** saves the script while its text has the keyboard; elsewhere it saves
+   the scene. **Find** (or Ctrl+F in the text) finds and replaces. **Revert** goes back to the saved text.
+3. Select an entity and choose **Add Component > Script**, with the script selected in the Asset Browser, or drop the
+   script on the Script field. Details then shows a field for each property; the arrow beside one takes it back to the
+   script's default. A value the script no longer declares, after a rename in it, is shown dimmed with **Remove**.
+4. Press Play. What scripts print, and their errors, go to the Message Log, with a link to the line that made them;
+   an error also shows as a toast and stays marked in the Script Editor until the script is saved again.
+
+**Changing a script while playing.** Save it, from the Script Editor or from any other editor, and the running scripts
+take it within half a second, without a restart: each entity keeps the values its script has built up, gains the
+default of a property that is new, and runs the new code from then on. A script saved with a mistake keeps the last good
+code running. Stop and Play again to start everything afresh.
+
+**Another editor.** **Open in External Editor** opens the script at the cursor's line, with VS Code by default
+(`code -g "{file}:{line}"`). The **...** button beside it sets the command; `{file}` and `{line}` are filled in. A file
+changed by another editor is read again in the Script Editor if it has no unsaved changes; otherwise it asks which to keep.
+
 ## Animate models
 
 Placing a model that has animations gives it an **Animator** component playing its first animation, and it plays while you

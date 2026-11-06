@@ -56,6 +56,13 @@ While a text field has the keyboard, only Ctrl+P and Ctrl+Shift+P fire.
 | Favorite |  | AssetBrowser | `Asset.ToggleFavorite` |
 | Fix Up Redirectors |  | Global | `Assets.FixUpRedirectors` |
 
+## Scripts
+
+| Command | Keys | Context | ID |
+|---|---|---|---|
+| Save Script | `Ctrl+S` | ScriptEditor | `Script.Save` |
+| Open in External Editor |  | ScriptEditor | `Script.OpenExternal` |
+
 ## Create
 
 | Command | Keys | Context | ID |
@@ -175,6 +182,7 @@ While a text field has the keyboard, only Ctrl+P and Ctrl+Shift+P fire.
 | Lighting |  | Global | `Window.Lighting` |
 | Material Editor |  | Global | `Window.MaterialEditor` |
 | Effect Editor |  | Global | `Window.EffectEditor` |
+| Script Editor |  | Global | `Window.ScriptEditor` |
 | Animation |  | Global | `Window.Animation` |
 | Asset Browser |  | Global | `Window.AssetBrowser` |
 | Console |  | Global | `Window.Console` |

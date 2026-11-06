@@ -307,3 +307,42 @@ external editor stays).
   forgotten only between calls.
 - **Docs:** `docs/SCRIPTING.md`, the reference for script authors. E added to the game keys in the guide and README.
 - **Tests:** `script_world_tests` (9 cases, new) and two in `editor_script_tests`. The CI preset passes 599 of 599.
+
+### Slice 4: the Script Editor and hot reload (done 2026-11-06)
+
+- **Hot reload in the runtime:** `ScriptRuntime::reload` runs a script's top level again and swaps its class under
+  every instance; each keeps its `self` and gains the defaults of new properties. A failure keeps the last good
+  class. A changed module is dropped from the `require` cache and every script is reloaded so each requires the new
+  one. `loaded()` lists what is loaded. Loading a class was split from storing it to share the code.
+- **Session:** `script_file`, `script_text`, `save_script` (one-step write; in Play, reloads at once),
+  `check_script` (the typed text under the script's name, its `require`s from files), and `reload_changed_scripts`,
+  which `update()` calls twice a second in Play, paused or not, so a save from any editor is taken. Each reload is a
+  printed line ("Reloaded: ..."), each failure a script error.
+- **The Script Editor** (`ScriptPanel.cpp`): goossens' widget, compiled into the editor's own ImGui. Lua colors, line
+  numbers, find and replace (its own Ctrl+F), Save (Ctrl+S, `Script.Save`), Revert, Open in External Editor
+  (`code -g "{file}:{line}"` by default, set with the **...** button; started without a console window), the
+  properties and functions declared (a function's name goes to its line), the typed text checked 0.4 s after typing
+  stops with its error in red and marked at its line, and Play's errors marked until the next save. A file changed
+  on disk is read again when there is nothing unsaved, and otherwise asks which to keep.
+- **Decisions while building it:**
+  - **Where it docks:** beside the Asset Browser, not the Material and Effect Editors as planned. The right dock
+    already holds four tabs and is narrow, and code needs width. The view also stays in sight while editing during
+    Play.
+  - **Bracket completion is off:** the widget skips a closing bracket it added only when it is typed at once, so
+    typing `f(x)` gave `f(x))`.
+  - **Keys:** the widget does not set ImGui's `WantTextInput`, so the editor's shortcuts (W, E, R, Delete, Ctrl+Z)
+    would have fired while typing code. The text area's focus now counts as typing, and Ctrl+S there is `Script.Save`
+    in a new ScriptEditor context, listed with the other panel-over-global choices in `editor_ux_tests`.
+- **Message Log and toasts** link script errors and printed lines to their line (`LogLink::Kind::Script`), which opens
+  the Script Editor there. Asset Edit, a double-click and Details' **Edit Script** open a script; another with unsaved
+  changes stays open, with a warning. Window > Script Editor; the panel is closed by default, like Animation.
+- **Real input** (`Tests/RealInput/milestone6_scripts.ps1`, 15 checks): New script, opening it, typing a script with
+  `R` typed rather than switching to Scale, Ctrl+S saving the script and not the scene, Add Component > Script with
+  the Asset Browser's script, a speed of 3 in Details, the target rising 6.00 m in 2 s of Play, the script saved during
+  Play moving it 3.00 m sideways in the next second from where it was, a broken save marked at line 2 while the last
+  good code ran on, the error's link putting the cursor on line 2, mending it, Stop putting the target back, and the
+  scene saved with `SCRIPT ... "Scripts/Lift.lua" 1 speed n 3`. 15 of 15 on the first run. Its captures showed the
+  **...** button clipped at the panel's edge when "(unsaved)" was shown; the tools now wrap, and the run passed 15 of
+  15 again with that change (`docs/evidence/m6-scripts`).
+- **Docs:** the guide's "Write scripts" section, and editing and hot reload in `SCRIPTING.md`.
+- **Tests:** two in `scripting_tests`, two in `editor_script_tests`. Both presets pass 603 of 603.

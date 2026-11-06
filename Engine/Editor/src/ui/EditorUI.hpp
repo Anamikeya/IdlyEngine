@@ -12,6 +12,7 @@
 #include <engine/editor/Feedback.hpp>
 #include <engine/editor/GizmoEntry.hpp>
 #include <engine/renderer/DesktopRenderer.hpp>
+#include <TextEditor.h>
 #include <glm/glm.hpp>
 #include <algorithm>
 #include <array>
@@ -22,6 +23,7 @@
 #include <filesystem>
 #include <functional>
 #include <map>
+#include <memory>
 #include <optional>
 #include <set>
 #include <string>
@@ -175,6 +177,7 @@ struct EditorUI {
     void save_settings();
     // The UI's state, for the --game-log line.
     std::string log_fields() const;
+    std::string script_fields() const;
     std::string effect_fields() const;
     // Registers every command and binds its behavior; throws if the table and the bindings disagree.
     void bind_commands();
@@ -318,6 +321,13 @@ struct EditorUI {
     bool texture_slot(const char *label, assets::MaterialTexture &slot);
     void material_editor();
     void effect_editor();
+    void script_editor();
+    // Opens a script in the Script Editor, at a 1-based line when one is given. Unsaved changes to another keep it open.
+    void open_script(assets::AssetId, int line = 0);
+    bool load_script_text(assets::AssetId);
+    bool script_unsaved() const;
+    void save_open_script();
+    void open_script_externally();
     static assets::EffectData starter_effect();
     // The Animation panel (Milestone 5): the selected animator's clips, a timeline to scrub, crossfades and layered
     // clips to try, and the clip events kept in its model's .meta.
@@ -428,11 +438,31 @@ struct EditorUI {
     bool show_toolbar = true, show_hierarchy = true, show_inspector = true, show_lighting = true, show_material = true, show_assets = true, show_console = true;
     // The Animation panel floats, closed until asked for: the right-hand dock's tabs would no longer fit.
     bool show_effect = true, show_animation = false, focus_animation = false;
+    bool show_script = false, focus_script = false;
+    // ---- The Script Editor (Milestone 6, D9): one script at a time, its text as typed, checked as it is ----
+    struct ScriptEdit {
+        assets::AssetId id;
+        std::unique_ptr<TextEditor> text;
+        std::size_t saved_undo = 0;                          // The undo index of the saved text: unsaved when it differs.
+        std::filesystem::file_time_type file_time{};         // The file's, when last read or written here.
+        bool changed_on_disk = false;                        // While unsaved, by someone else.
+        std::size_t checked_undo = ~std::size_t(0);          // The text the last check read.
+        double edited_at = 0;                                // ImGui time of the latest change.
+        std::size_t seen_undo = 0;
+        std::optional<scripting::ScriptInfo> declares;       // From the last check that passed.
+        std::string problem;                                 // From the last check that failed.
+        int problem_line = 0;
+        bool markers_stale = true;
+        int go_to = 0;                                       // A line to show when next drawn, 1-based; 0 for none.
+        bool focused = false;                                // The text area has the keyboard this frame.
+    } script_edit;
+    // Errors scripts made in Play, by script name, newest last and a few each: markers in the Script Editor until saved.
+    std::map<std::string, std::vector<scripting::ScriptError>, std::less<>> script_problems;
     bool layout_reset_requested = false, layout_prompt = false;
     std::array<char, 128> layout_name{};
     std::string pending_layout; // ImGui settings to load before the next frame.
     std::string saved_panels;   // Which panels were open when settings were last saved.
-    std::array<bool *, 10> panel_flags();
+    std::array<bool *, 11> panel_flags();
     void layout_dialog();
     std::vector<std::string> saved_layouts() const;
     void apply_pending_layout();

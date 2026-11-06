@@ -1034,6 +1034,10 @@ void EditorUI::script_section() {
         }
         ImGui::EndTable();
     }
+    if (!details_search[0] && !details_only_modified && same_script && !component.script.empty()) {
+        if (tip_button("Edit Script", "Open the script in the Script Editor")) open_script(assets::AssetId{component.script.id});
+        mark("Details.Script.Edit");
+    }
     if (!details_search[0] && !details_only_modified) {
         if (component.script.empty()) ImGui::TextColored({0.95f, 0.75f, 0.3f, 1}, "No script: choose one, or drop a script on the field.");
         else if (!same_script) ImGui::TextDisabled("The selected entities run different scripts.");

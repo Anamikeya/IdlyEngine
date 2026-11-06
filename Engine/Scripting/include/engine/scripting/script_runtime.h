@@ -50,6 +50,15 @@ public:
 	// fails to load is reported in take_errors() too, and loading it again tries again.
 	Result<ScriptInfo> load(std::string_view name);
 
+	// The scripts and modules loaded, by the names their loader gave them, ascending.
+	[[nodiscard]] std::vector<std::string> loaded() const;
+	// Hot reload (D8): loads a script again from its loader. One that runs and returns a class replaces the old class
+	// under every instance: each keeps its `self`, gains the defaults of properties that are new, and calls the new
+	// functions from then on. One that fails keeps the old code running, and its error is in take_errors() too. A module
+	// is run again when next required, and every script is reloaded so that each requires the new one. Not from inside
+	// a call.
+	Result<void> reload(std::string_view name);
+
 	// Gives an entity an instance of a script: `self` holds each property, the override when there is one and
 	// otherwise the default, and `self.entity`. An override of the wrong type is reported and the default used; one
 	// the script does not declare is ignored. Replaces the entity's instance if it has one. Nothing is called: start

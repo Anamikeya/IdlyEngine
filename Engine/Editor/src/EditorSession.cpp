@@ -1485,6 +1485,9 @@ Result<void> EditorSession::play() {
     };
     runtime->scripts = scripting::ScriptWorld::create(runtime->scene, runtime->bus, *runtime->physics, runtime->game.get(), fixed_step, std::move(setup));
     runtime_ = std::move(runtime);
+    script_times_.clear();
+    script_watch_ = {};
+    reload_changed_scripts(); // Notes the files' times, so a later change is seen.
     collect_script_messages();
     physics_error_.clear();
     ++play_sessions_;
@@ -1520,6 +1523,7 @@ Result<void> EditorSession::stop() {
     if (!runtime_) return fail(ErrorCode::InvalidState, "Not in Play mode");
     stop_scripts();
     runtime_.reset();
+    script_times_.clear();
     physics_error_.clear();
     transaction_depth_ = 0; drag_start_.clear(); // A runtime transaction has nothing to finish.
     ejected_ = simulating_ = false;
@@ -1539,6 +1543,11 @@ gameplay::Game *EditorSession::game() const { return runtime_ ? runtime_->game.g
 void EditorSession::update(std::chrono::nanoseconds elapsed) {
     advance_effects(elapsed);
     advance_animations(elapsed);
+    // Scripts changed on disk, by the Script Editor or another one, run again: paused or not (D8).
+    if (runtime_ && runtime_->scripts && elapsed.count() > 0 && (script_watch_ += elapsed) >= std::chrono::milliseconds(500)) {
+        script_watch_ = {};
+        reload_changed_scripts();
+    }
     if (!runtime_ || runtime_->paused || elapsed.count() <= 0) return;
     auto &r = *runtime_;
     const auto before_effects = std::chrono::steady_clock::now();
@@ -2792,6 +2801,66 @@ void EditorSession::set_game_input(const gameplay::InputFrame &input) {
     if (runtime_->scripts) runtime_->scripts->set_input(input);
 }
 std::vector<scripting::ScriptError> EditorSession::take_script_errors() { return std::exchange(script_errors_, {}); }
+std::filesystem::path EditorSession::script_file(assets::AssetId id) const {
+    const auto meta = assets_ ? assets_->find(id) : std::nullopt;
+    if (!meta || meta->type != assets::AssetType::Script) return {};
+    return asset_folder() / utf8_file(meta->path);
+}
+Result<std::string> EditorSession::script_text(assets::AssetId id) const {
+    const auto file = script_file(id);
+    if (file.empty()) return fail(ErrorCode::NotFound, "The script is not in the asset folder");
+    return read_text_file(file);
+}
+Result<void> EditorSession::save_script(assets::AssetId id, std::string_view text) {
+    const auto file = script_file(id);
+    if (file.empty()) return fail(ErrorCode::NotFound, "The script is not in the asset folder");
+    if (text.size() > scripting::max_script_bytes) return fail(ErrorCode::InvalidArgument, "A script is at most 1 MB");
+    if (auto written = write_text_file(file, std::string(text)); !written) return written;
+    if (runtime_ && runtime_->scripts) reload_changed_scripts();
+    return {};
+}
+Result<scripting::ScriptInfo> EditorSession::check_script(assets::AssetId id, std::string_view text) const {
+    const auto meta = assets_ ? assets_->find(id) : std::nullopt;
+    if (!meta || meta->type != assets::AssetType::Script) return fail(ErrorCode::NotFound, "The script is not in the asset folder");
+    std::string name = package_name_of(id);
+    if (name.empty()) name = std::string(game_mount) + "/" + meta->path;
+    const auto files = scripting::package_loader(packages());
+    const std::string typed(text);
+    // This script as typed, under its own name; what it requires as saved.
+    const scripting::ScriptLoader loader = [&](std::string_view wanted) -> Result<scripting::ScriptSource> {
+        auto found = files(wanted);
+        if ((found && found.value().name == name) || wanted == name) return scripting::ScriptSource{name, typed};
+        return found;
+    };
+    return scripting::inspect_script(name, loader);
+}
+void EditorSession::reload_changed_scripts() {
+    if (!runtime_ || !runtime_->scripts) return;
+    auto &scripts = runtime_->scripts->runtime();
+    for (const auto &name : scripts.loaded()) {
+        const auto found = packages().resolve(name);
+        if (!found) continue;
+        std::error_code ec;
+        const auto written = std::filesystem::last_write_time(found.value().file, ec);
+        if (ec) continue;
+        const auto [known, fresh] = script_times_.try_emplace(name, written);
+        if (fresh || known->second == written) continue;
+        known->second = written;
+        // A failure keeps the old code running; the runtime reports it with its line.
+        if (scripts.reload(name)) script_output_.push_back({name, 0, "Reloaded: the running scripts use it from now on", false});
+    }
+    collect_script_messages();
+}
+std::string EditorSession::external_command(std::string_view pattern, const std::filesystem::path &file, int line) {
+    std::string command(pattern.empty() ? default_external_editor : pattern);
+    const auto put = [&](std::string_view key, const std::string &value) {
+        for (auto at = command.find(key); at != std::string::npos; at = command.find(key, at + value.size())) command.replace(at, key.size(), value);
+    };
+    const auto text = file.u8string();
+    put("{file}", std::string(reinterpret_cast<const char *>(text.data()), text.size()));
+    put("{line}", std::to_string(std::max(line, 1)));
+    return command;
+}
 std::vector<scripting::ScriptOutput> EditorSession::take_script_output() { return std::exchange(script_output_, {}); }
 std::vector<EntityId> EditorSession::script_instances() const {
     return runtime_ && runtime_->scripts ? runtime_->scripts->runtime().instances() : std::vector<EntityId>{};

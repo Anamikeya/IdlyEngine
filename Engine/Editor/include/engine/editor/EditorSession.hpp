@@ -551,6 +551,21 @@ public:
     ScriptValue scene_value(const scripting::Value &) const;
     // A scene's value as the script sees it.
     scripting::Value script_value(const ScriptValue &) const;
+    // ---- The Script Editor and hot reload (Milestone 6, D8, D9) ----
+    // A script's file on disk, and its text as the file holds it.
+    std::filesystem::path script_file(assets::AssetId) const;
+    Result<std::string> script_text(assets::AssetId) const;
+    // Writes a script's text to its file in one step. In Play the running scripts take it at once (hot reload).
+    Result<void> save_script(assets::AssetId, std::string_view text);
+    // What a script's text would declare if it were saved, for marking errors as it is typed. Like script_info, its top
+    // level runs in a throwaway sandbox; scripts it requires come from their files.
+    Result<scripting::ScriptInfo> check_script(assets::AssetId, std::string_view text) const;
+    // In Play: loads again every script and module whose file changed since it was loaded, whoever changed it.
+    // update() calls it twice a second; each reload is reported as a printed line or a script error.
+    void reload_changed_scripts();
+    // The command that opens a file at a line in another editor: `pattern` with {file} and {line} put in.
+    static constexpr std::string_view default_external_editor = "code -g \"{file}:{line}\"";
+    static std::string external_command(std::string_view pattern, const std::filesystem::path &file, int line);
     // What the shown scene's particle system holds now.
     effects::Stats effect_stats() const;
     // Advances the edit-mode preview; update() calls it, and so can a host that is not playing.
@@ -681,6 +696,9 @@ private:
     void collect_script_messages();
     std::vector<scripting::ScriptError> script_errors_;
     std::vector<scripting::ScriptOutput> script_output_;
+    // The files of the run's loaded scripts as they were when loaded, and the time since they were last looked at.
+    std::map<std::string, std::filesystem::file_time_type> script_times_;
+    std::chrono::nanoseconds script_watch_{0};
 };
 // Keeps a transaction open for a scope. Nested guards join the outer one.
 class ScopedTransaction {
