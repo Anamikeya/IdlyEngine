@@ -39,12 +39,12 @@ if(TARGET engine::animation)
 	target_compile_definitions(animation_tests PRIVATE "GAMEENGINE_TEST_RESOURCES_DIR=\"${GAMEENGINE_RESOURCES_DIR}\"")
 endif()
 
-# Lua and sol2 as the engine builds them.
-if(TARGET gameengine::sol2)
+# Lua and sol2 as the engine builds them, and Engine/Scripting on them.
+if(TARGET engine::scripting)
 	gameengine_add_test_executable(scripting_tests
 		LABELS scripting unit
-		SOURCES Scripting/lua_smoke_tests.cpp
-		LIBRARIES gameengine::sol2)
+		SOURCES Scripting/lua_smoke_tests.cpp Scripting/script_runtime_tests.cpp
+		LIBRARIES gameengine::sol2 engine::scripting)
 endif()
 
 if(TARGET engine::effects)

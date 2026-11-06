@@ -11,7 +11,9 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <string>
+#include <string_view>
 #include <vector>
 
 using namespace engine::assets;
@@ -289,6 +291,8 @@ ENGINE_TEST(asset_types_follow_extensions)
 	ENGINE_CHECK(asset_type_for("b.bmp") == AssetType::Unknown);
 	ENGINE_CHECK(asset_type_for("b.gltf") == AssetType::Unknown);
 	ENGINE_CHECK(asset_type_for("dir.obj/file") == AssetType::Unknown);
+	ENGINE_CHECK(asset_type_for("Scripts/Gate.LUA") == AssetType::Script);
+	ENGINE_CHECK_EQ(std::string(to_string(AssetType::Script)), std::string("script"));
 }
 
 // ---- OBJ ---------------------------------------------------------------------------------------
@@ -1285,6 +1289,31 @@ ENGINE_TEST(import_file_copies_writes_a_stable_id_and_never_overwrites)
 	AssetDatabase reopened = open_scanned(root);
 	ENGINE_CHECK(reopened.find(first.value())->path == "tri.obj");
 	ENGINE_CHECK(static_cast<bool>(reopened.load_mesh(second.value())));
+}
+
+// Scripts are catalogued and copied as they are; the scripting runtime reads and checks them (Milestone 6).
+ENGINE_TEST(scripts_are_catalogued_and_imported_as_text)
+{
+	const fs::path root = scratch("script_root");
+	const fs::path outside = scratch("script_outside");
+	const std::string gate = "local Gate = {}\nreturn Gate\n";
+	write_text(root / "Scripts" / "Gate.lua", gate);
+	write_text(outside / "Door.lua", "this is not even Lua");
+	AssetDatabase db = open_scanned(root);
+	const auto found = db.find(std::string_view("Scripts/Gate.lua"));
+	ENGINE_REQUIRE(found.has_value());
+	ENGINE_CHECK(found->type == AssetType::Script);
+	ENGINE_CHECK(db.validate_all().empty()); // Not compiled here: a broken script is the runtime's to report.
+
+	const auto door = db.import_file(outside / "Door.lua");
+	ENGINE_REQUIRE(static_cast<bool>(door));
+	ENGINE_CHECK(fs::exists(root / "Door.lua"));
+	ENGINE_CHECK(fs::exists(root / "Door.lua.meta"));
+	ENGINE_CHECK(db.find(door.value())->type == AssetType::Script);
+	ENGINE_CHECK_EQ(db.assets().size(), std::size_t{2});
+	std::ifstream in(root / "Scripts" / "Gate.lua", std::ios::binary);
+	const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+	ENGINE_CHECK_EQ(text, gate);
 }
 
 ENGINE_TEST(import_file_reports_errors_and_leaves_nothing_behind)

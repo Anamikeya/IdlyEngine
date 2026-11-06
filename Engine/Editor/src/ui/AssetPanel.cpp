@@ -40,6 +40,7 @@ ImU32 type_color(assets::AssetType type) {
     case assets::AssetType::Material: return IM_COL32(230, 150, 60, 255);
     case assets::AssetType::Environment: return IM_COL32(165, 105, 215, 255);
     case assets::AssetType::Effect: return IM_COL32(55, 185, 200, 255);
+    case assets::AssetType::Script: return IM_COL32(215, 200, 70, 255);
     default: return IM_COL32(120, 120, 120, 255);
     }
 }
@@ -50,6 +51,7 @@ const char *type_label(assets::AssetType type) {
     case assets::AssetType::Material: return "MATERIAL";
     case assets::AssetType::Environment: return "HDR";
     case assets::AssetType::Effect: return "EFFECT";
+    case assets::AssetType::Script: return "SCRIPT";
     default: return "?";
     }
 }
@@ -59,6 +61,7 @@ assets::AssetType type_from_name(std::string_view name) {
     if (name == "material") return assets::AssetType::Material;
     if (name == "environment") return assets::AssetType::Environment;
     if (name == "effect") return assets::AssetType::Effect;
+    if (name == "script") return assets::AssetType::Script;
     return assets::AssetType::Unknown;
 }
 bool has_text(std::string_view text, std::string_view wanted) {

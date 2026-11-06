@@ -39,6 +39,7 @@ enum class AssetType : std::uint8_t {
 	Material, // .material: text, see parse_material
 	Environment, // .hdr: equirectangular radiance
 	Effect, // .effect: text, see parse_effect
+	Script, // .lua: text that Engine/Scripting runs; the database only catalogues it
 };
 
 [[nodiscard]] const char* to_string(AssetType type) noexcept;

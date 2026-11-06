@@ -228,3 +228,28 @@ external editor stays).
 - **Verified:** both MSVC presets configured and built in empty folders (`build-m6-*`, 1,079 steps, 354 s and 340 s)
   and pass 563 of 563 CTest entries. No warning came from the new libraries, the engine or the tests; the CI preset
   builds them with `/WX`.
+
+### Slice 1: the script runtime (done 2026-11-06)
+
+- **`Engine/Scripting`** (`engine::scripting`): `script_types.h` (values, property declarations, script info, errors,
+  printed lines, the loader), `script_runtime.h` (`ScriptRuntime`, `inspect_script`, `order_by_source`) and
+  `script_loader.h` (`package_loader` through the VFS, `memory_loader`). Lua and sol2 are private to its sources.
+- **Script classes:** a script returns a table. Its `properties` map names to defaults of seven types: number, boolean,
+  text, `Vec3`, `Color`, `Entity()` and `Asset("/Game/...")`, at most 64. Details will list them in the order the
+  script's text first assigns them, as Lua tables keep no order. Its callbacks are found by name. Each instance's
+  `self` holds the properties, then whatever the script adds, and falls back to the class for functions. Overrides of
+  the wrong type are reported and the default is used.
+- **Sandbox:** base without `dofile`, `loadfile`, `warn` or bytecode (`load` is text only), plus `coroutine`, `math`,
+  `string` (no `dump`), `table` and `utf8`. `collectgarbage` keeps `count`, `collect` and `step`. `math.randomseed`
+  needs a number, and the host seeds it. Each script has its own globals, falling back to the shared libraries.
+  `require` loads through the loader once per canonical name, and reports missing modules and cycles.
+- **Budgets:** an instruction count hook every 1,000 instructions stops a call past 10 million instructions (36 to 42
+  ms of a plain loop here). Found while testing: a script that catches that error with `pcall` in a loop ran forever,
+  so `pcall`, `xpcall`, `coroutine.resume`, `coroutine.close` and `load` now pass the error on when the call is over
+  its budget. Memory is limited by the state's allocator (256 MB by default); Lua collects and retries before it fails.
+- **Errors:** a message handler records the first Lua frame's script and line and a traceback before the stack
+  unwinds; `name:line:` is taken off the message when it names a script the runtime compiled. A failed call disables
+  that instance only; attaching it again starts afresh.
+- **Assets:** `AssetType::Script` for `.lua`. The database catalogues and copies scripts without decoding them; the
+  Asset Browser labels them SCRIPT. The type filter chip waits for slice 2, as it moves the browser's layout.
+- **Tests:** `scripting_tests` gains 16 cases (23 in all) and `asset_tests` one. Both presets build and pass 580 of 580.
