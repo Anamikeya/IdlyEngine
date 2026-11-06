@@ -4,7 +4,7 @@ Branch `milestone-6`, worktree `D:\AI\GameEngine-Integration`. Plan: [`MILESTONE
 [`architecture/010-scripting.md`](architecture/010-scripting.md). Reference for script authors: [`SCRIPTING.md`](SCRIPTING.md).
 Every result below was produced at commit `7a9aace` (code, tests, sample), except the earlier slices' own real-input runs,
 which were made on their slices' commits and are listed with them. The commit after it adds only documents and
-evidence. **Not merged into `main` and not pushed:** both wait for your approval.
+evidence. **Merged into `main` on 2026-11-06 with your approval**, and pushed to `origin` with the `milestone-6` branch.
 
 ## Verdict
 

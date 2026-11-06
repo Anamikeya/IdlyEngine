@@ -1,8 +1,8 @@
 # Milestone 6 plan: scripting
 
 Branch `milestone-6`, worktree `D:\AI\GameEngine-Integration`, created from `main` at `ea2fa85` (the Milestone 5 merge).
-**Status: approved 2026-11-06; done 2026-11-06** ([`MILESTONE_6_REPORT.md`](MILESTONE_6_REPORT.md)). Do not merge into `main`
-without the user's approval.
+**Status: approved 2026-11-06; done 2026-11-06** ([`MILESTONE_6_REPORT.md`](MILESTONE_6_REPORT.md)), and merged into
+`main` that day with the user's approval.
 
 Decisions (2026-11-06), the recommended option each time: Lua 5.4.9 with sol2 3.5.0, and goossens' ImGuiColorTextEdit,
 go into `resources` at the pinned commits. Scripts are edited in a Script Editor tab, with Open in External Editor.
