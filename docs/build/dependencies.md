@@ -19,6 +19,7 @@ default, fatal with `GAMEENGINE_STRICT_DEPENDENCY_LOCK=ON`, which CI uses).
 | Dear ImGui | github.com/ocornut/imgui | `d88f238d` | v1.93.0-docking-10 | MIT | **Built** as `gameengine::imgui` (core + GLFW platform backend) for Codex's editor; null-backend smoke test |
 | miniaudio | github.com/mackron/miniaudio | `9634bedb` | 0.11.25 | Public domain / MIT-0 | Not yet built |
 | spdlog | github.com/gabime/spdlog | `6d9805df` | v1.17.0-66 | MIT | Codex (headers) |
+| ozz-animation | github.com/guillaumeblanc/ozz-animation | `744eb9d9` | 0.17.0 | MIT | **Linked** as `gameengine::ozz` (runtime and offline libraries, `/MD`). Added 2026-11-03 for Milestone 5 |
 | Tracy | github.com/wolfpld/tracy | `1f4c5357` | v0.14.1-262 | BSD-3-Clause | Not yet built |
 | glTF-Transform | github.com/donmccurdy/glTF-Transform | `8e2a94a2` | v4.5.1-6 | MIT | JavaScript asset tooling, not a C++ dependency |
 | Ninja (source) | github.com/ninja-build/ninja | `3ccb2270` | development | Apache-2.0 | Not used; builds use an installed Ninja binary |
@@ -71,3 +72,20 @@ verified with 2.42). MSVC is unaffected.
 - No clang/clang-cl on PATH.
 - Filament defaults `USE_STATIC_CRT=ON`; the engine uses the dynamic CRT. Must be overridden when
   Filament is added to the build (flagged by Codex, not yet relevant).
+
+## ozz-animation (added 2026-11-03)
+
+Read and built on 2026-11-03 at `744eb9d9` (release 0.17.0), approved by the user for Milestone 5.
+
+- Runtime (`ozz_base`, `ozz_animation`) and offline (`ozz_animation_offline`) libraries need nothing else. The engine
+  turns its tools, FBX and glTF importers, samples, howtos and tests off, so its bundled GLFW, gtest, jsoncpp and
+  tinygltf never enter the build. The engine imports glTF itself and builds ozz data with the offline library.
+- It needs **CMake 3.30**, above the engine's own 3.25 minimum, so configure fails early with a message when
+  `GAMEENGINE_WITH_ANIMATION` is on and CMake is older.
+- It defaults to the static CRT. `ozz_build_msvc_rt_dll=ON` gives `/MD`, like the rest of the engine.
+- Its folder sets `/W4` and warnings-as-errors for its own targets. Built with MSVC 19.44 in C++20, it compiles with
+  no warnings, so this is left as ozz sets it.
+- Its CMake writes only under the binary dir. Its `BUILD_CLANG_FORMAT` target would reformat the read-only sources in
+  place; it is not part of `all`, and must never be built.
+- Rotation keys are stored as three 16-bit components: a sampled pose is within about 0.5 mm per metre of exact.
+

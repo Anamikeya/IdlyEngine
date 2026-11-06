@@ -5,6 +5,7 @@
 // Not thread safe; use from one thread.
 
 #include "engine/assets/asset_types.h"
+#include "engine/assets/virtual_paths.h"
 
 #include <engine/core/Result.hpp>
 
@@ -48,6 +49,7 @@ using MeshAsset = LoadedAsset<MeshData>;
 using TextureAsset = LoadedAsset<TextureData>;
 using MaterialAsset = LoadedAsset<MaterialData>;
 using EnvironmentAsset = LoadedAsset<EnvironmentData>;
+using EffectAsset = LoadedAsset<EffectData>;
 
 // A file decoded away from the database, ready for AssetDatabase::commit_import. Holds no database state.
 struct PreparedImport {
@@ -57,6 +59,7 @@ struct PreparedImport {
 	std::shared_ptr<const TextureData> texture;
 	std::shared_ptr<const MaterialData> material;
 	std::shared_ptr<const EnvironmentData> environment;
+	std::shared_ptr<const EffectData> effect;
 };
 
 // Reads and decodes a file with default settings. Touches nothing shared, so any thread may call it.
@@ -91,11 +94,18 @@ public:
 	Result<TextureAsset> load_texture(AssetId id);
 	Result<MaterialAsset> load_material(AssetId id);
 	Result<EnvironmentAsset> load_environment(AssetId id);
+	Result<EffectAsset> load_effect(AssetId id);
 
 	// Writes a new .material under a free name based on `path`, with a .meta holding a new random id, and rescans.
 	Result<AssetId> create_material(std::string_view path, const MaterialData& material);
 	// Replaces the file atomically; the cache holds the new value and the revision increases.
 	Result<void> save_material(AssetId id, const MaterialData& material);
+	// The same for particle effects (.effect).
+	Result<AssetId> create_effect(std::string_view path, const EffectData& effect);
+	Result<void> save_effect(AssetId id, const EffectData& effect);
+	// Replaces a model's clip events in its .meta (see normalize_clip_events). The model is not re-imported and its
+	// revision stays; find() returns the new events at once.
+	Result<void> set_clip_events(AssetId id, std::vector<ClipEvent> events);
 
 	// Copies an outside file into the root under a free name, writes a .meta with a new random id, rescans and
 	// loads it once. Nothing stays behind on failure. A file already under the root is just loaded.
@@ -111,8 +121,17 @@ public:
 	// What renderers compare to see a reload; 0 for an unknown id.
 	[[nodiscard]] std::uint32_t revision(AssetId id) const;
 	// Moves or renames the file and its .meta inside the root, keeping the id, so references by id keep working.
-	// Fails without touching anything when the target exists or would be another asset type.
-	Result<void> move(AssetId id, std::string_view new_path);
+	// Fails without touching anything when the target exists or would be another asset type. With
+	// `leave_redirector`, a redirector (virtual_paths.h) is left at the old path, naming the new one, as the editor
+	// does; a redirector already at the new path is removed either way, since the asset takes that name.
+	Result<void> move(AssetId id, std::string_view new_path, bool leave_redirector = false);
+	// The redirectors found by the last scan, ascending by path. Files that are not valid redirectors are issues().
+	[[nodiscard]] std::span<const Redirector> redirectors() const noexcept;
+	// Deletes the redirector files at these paths (Redirector::path), then rescans. Returns how many went; paths that
+	// are not redirectors are skipped.
+	Result<std::size_t> remove_redirectors(std::span<const std::string> paths);
+	// Counts scans, so a caller that keeps something built from the catalogue knows when to rebuild it.
+	[[nodiscard]] std::uint64_t scans() const noexcept;
 	// Checks every catalogued source file still exists; marks and returns the missing ones.
 	std::vector<AssetId> find_missing();
 	// Drops the cached data and bumps the revision; the next load re-imports.

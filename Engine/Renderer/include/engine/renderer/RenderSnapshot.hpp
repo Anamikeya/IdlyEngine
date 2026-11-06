@@ -54,6 +54,16 @@ struct PartMaterial {
     MaterialHandle material;
     bool operator==(const PartMaterial &) const = default;
 };
+// A skeleton's pose: the model-space transform of each joint, column-major, in the order of the mesh's skeleton.
+// Shared, so a frame copies a pointer; whoever animates makes a new one each tick. Null: the mesh as it rests.
+using JointMatrix = std::array<float, 16>;
+using Pose = std::shared_ptr<const std::vector<JointMatrix>>;
+inline constexpr std::size_t max_pose_joints = 1024;
+// Keys from here up are not scene entities but things the run owns and draws with a scene entity's look, such as
+// pieces of debris (Milestone 5, D11). Their bindings must give `world`.
+inline constexpr EntityId runtime_object_base = EntityId{1} << 62;
+// A selection outline: the editor's highlight, drawn around the object's silhouette and never across it (slice 7).
+enum class Outline : std::uint8_t { None, Selected, Primary };
 struct MeshBinding {
     EntityId entity = 0;
     MeshHandle mesh;
@@ -61,6 +71,10 @@ struct MeshBinding {
     bool visible = true;
     Surface surface;
     std::vector<PartMaterial> parts;
+    Pose pose; // For a skinned mesh; a pose whose size is not the skeleton's draws the rest pose.
+    // Where to draw instead of the entity's scene transform: something attached to a bone (D2). Must be finite.
+    std::optional<WorldTransform> world;
+    Outline outline = Outline::None;
 };
 struct PerspectiveCamera {
     EntityId entity = 0;
@@ -78,6 +92,7 @@ struct LightBinding {
     double range = 10;    // Point and spot influence radius in meters; ignored for directional.
     double inner_cone_radians = 0.4363, outer_cone_radians = 0.6109; // Spot half angles.
     bool cast_shadows = false;
+    std::optional<WorldTransform> world; // As for MeshBinding.
 };
 struct RenderObject {
     EntityId entity;
@@ -86,6 +101,8 @@ struct RenderObject {
     WorldTransform world;
     Surface surface;
     std::vector<PartMaterial> parts;
+    Pose pose;
+    Outline outline = Outline::None;
 };
 struct RenderLight {
     EntityId entity;
@@ -114,6 +131,22 @@ struct RenderEnvironment {
     bool ambient_occlusion = true, bloom = true;
     bool operator==(const RenderEnvironment &) const = default;
 };
+// Particles of one emitter, from a particle system. Drawn as quads facing the camera, or stretched along their velocity,
+// with an unlit material that adds light or blends over the scene. Colors are linear, not premultiplied.
+enum class ParticleBlendMode : std::uint8_t { Additive, Alpha };
+struct RenderParticle {
+    std::array<float, 3> position{}, velocity{};
+    float size = 0, rotation = 0; // Quad width in metres; radians around the view direction.
+    std::array<float, 4> color{};
+};
+struct RenderParticles {
+    std::uint64_t key = 0; // Stable while the batch lives, so the renderer can keep its buffers.
+    ParticleBlendMode blend = ParticleBlendMode::Additive;
+    TextureHandle texture; // Zero: a soft round dot.
+    double strength = 1;   // Multiplies the color; above 1 it blooms.
+    double stretch = 0;    // Above 0: quads lie along the velocity, speed times this many seconds long.
+    std::vector<RenderParticle> particles;
+};
 struct FrameStamp {
     std::uint64_t scene = 0; // Host-issued nonzero session identity, never a Flecs ID.
     std::uint64_t revision = 0, frame = 0;
@@ -126,6 +159,7 @@ struct FrameSnapshot {
     RenderEnvironment environment;
     bool show_grid = true;
     double grid_spacing = 1; // Meters between grid lines.
+    std::vector<RenderParticles> particles; // Ascending by key.
 };
 using Frame = std::shared_ptr<const FrameSnapshot>;
 
@@ -136,11 +170,17 @@ using Frame = std::shared_ptr<const FrameSnapshot>;
 // Backend adapters convert projection/depth conventions as necessary.
 Result<Frame> extract_frame(const Scene &, FrameStamp, const PerspectiveCamera &,
                             std::span<const MeshBinding>, std::span<const LightBinding>,
-                            const RenderEnvironment & = {}, bool show_grid = true, double grid_spacing = 1);
+                            const RenderEnvironment & = {}, bool show_grid = true, double grid_spacing = 1,
+                            std::vector<RenderParticles> particles = {});
 // Editor navigation is host state, not a managed scene entity or undo operation.
 // The same rigid-camera validation applies. lens.entity is zero for this overload.
 Result<Frame> extract_frame(const Scene &, FrameStamp, const PerspectiveCamera &,
                             const WorldTransform &camera_world,
                             std::span<const MeshBinding>, std::span<const LightBinding>,
-                            const RenderEnvironment & = {}, bool show_grid = true, double grid_spacing = 1);
+                            const RenderEnvironment & = {}, bool show_grid = true, double grid_spacing = 1,
+                            std::vector<RenderParticles> particles = {});
+// Particle batches as a frame takes them: sorted by key, a later duplicate key dropped, non-finite particles removed,
+// and the total capped at max_frame_particles. Throws nothing.
+inline constexpr std::size_t max_frame_particles = 200000;
+std::vector<RenderParticles> clean_particles(std::vector<RenderParticles> particles);
 } // namespace engine::renderer

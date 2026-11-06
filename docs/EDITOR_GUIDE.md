@@ -34,6 +34,8 @@ Closing the main window asks about unsaved changes. Closing the black console wi
 | **Inspector** | Change the values of what's selected. It shares its place with the next two, so click its tab if another is in front |
 | **Lighting** | Set the sky, exposure and shadows for the scene |
 | **Material Editor** | Change the material selected in the Asset Browser |
+| **Effect Editor** | Change the particle effect selected in the Asset Browser |
+| **Animation** | Preview, scrub and mark the selected animator's clips. Closed until **Window > Animation** opens it, and it floats |
 | **Asset Browser** | Import, find and use models, images, materials and HDR images |
 | **Message Log** | Read what the editor has told you, filtered by severity |
 | **Console** | Type commands and change settings |
@@ -125,6 +127,10 @@ A plane handle needs an axis letter first, and the whole typed drag is one undo 
 **Undo:** `Ctrl+Z` and `Ctrl+Y`. **Window > Undo History** shows every step, and clicking one jumps there. Selecting, hiding and bookmarks
 aren't undo steps.
 
+**What's selected** has an orange line around its outer edge, lighter orange for the others when several are selected. The line follows
+the model's silhouette only. No box is drawn, and no edge inside it. It shows even where something else hides the model, and selecting a
+group outlines its members. The game's own view shows no outline.
+
 ## Arrange the scene
 
 In the Scene Hierarchy:
@@ -152,7 +158,9 @@ selected, an edit reaches all of them, and values that differ show as "Multiple 
 background, and a long one shows a progress bar with Cancel. Files are copied into the project's `Assets` folder.
 
 Supported files are `.glb`, `.obj`, `.png`, `.jpg`, `.tga`, `.ppm` and `.hdr`, up to 64 MB. Re-export `.gltf` models as self-contained
-`.glb` files. Models import without animation: a skinned model comes in its bind pose.
+`.glb` files. A skinned or animated model brings its skeleton and animations with it; hold the mouse over it in the Asset Browser to
+see how many joints it has and the names of its animations, and see **Animate models** below. A model that needs more than 256 bones
+to draw is refused, and a vertex moved by more than 4 joints keeps the strongest 4.
 
 If you add files to `Assets` yourself, press **Rescan**.
 
@@ -164,10 +172,97 @@ If you add files to `Assets` yourself, press **Rescan**.
 | Find the asset an object uses | Press `Ctrl+B` |
 | Find anything by name | Press `Ctrl+P` |
 | Rename or move an asset | Press `F2`, or right-click it. Slashes move it to another folder, and references follow |
+| Use an asset by its name | Type its package name, such as `/Game/Textures/Brick`, in a field's list and press Enter |
 | See the browser over everything | Press `Ctrl+Space`, and `Esc` to close it |
+
+**Package names.** Every asset also has a name in Unreal's style: `/Game`, then its folder and file name without the extension, so
+`Assets/Textures/Brick.png` is `/Game/Textures/Brick`. Hold the mouse over an asset to see its name. Names ignore upper and lower case, so
+`/game/textures/brick` finds the same asset. If two assets in one folder share a name apart from the extension, add the extension
+(`/Game/Textures/Brick.png`) to say which. Scenes still store each reference by the asset's ID, so names are for finding and typing.
+
+**Redirectors.** Moving or renaming an asset leaves a small `.redirect` file at its old path saying where it went, so anything that
+still uses the old name, such as a scene you don't have open, still finds it. **Fix Up Redirectors (N)** appears in the Asset Browser
+while there are any (also in the command palette). It rewrites every scene file in the project, the open scene (one undo step; save it
+afterwards), and the materials and effects that use an old path, then deletes the redirectors. A redirector that leads nowhere, or
+round in a loop, is kept and reported.
 
 **Materials:** type a name beside **New material** and press it. Double-click a material to open it in the Material Editor, or press
 `Ctrl+E` to open the selected object's material. Material changes save themselves when you release a control, and they can be undone.
+
+## Add particle effects
+
+A particle effect is a `.effect` file in the asset folder: how particles are born, move, change and look. An entity
+plays one through a **Particle Emitter** component. Particles are only for show: they never push anything, score or
+change the scene, and a run plays the same with them or without them.
+
+1. Type a name in the Asset Browser's name field and press **New effect**. The effect is selected and its Effect Editor
+   opens with a double-click.
+2. Press **Place in scene** in the Effect Editor, or drag the effect onto the viewport. An emitter appears and starts
+   playing at once. **Create... > Particle Emitter** does the same with the effect selected in the Asset Browser.
+3. Change values in the Effect Editor. Dragging shows the change on every emitter using the effect, and releasing saves
+   it to the file as one undo step.
+
+| Part of the Effect Editor | What it sets |
+|---|---|
+| Emission | How long one cycle lasts, particles per second, a burst at the start of each cycle, and how many may live at once |
+| Motion | Lifetime and speed (min and max), the spread cone around the emitter's up axis, a start sphere, acceleration (gravity by default), drag, spin, and stretch, which draws streaks along the velocity for sparks |
+| Floor | Particles can bounce on a flat floor at a height, keeping some of their speed |
+| Look | **Additive** adds light (sparks, flashes); **Alpha** covers what is behind (smoke, dust). Strength above 1 blooms. An image replaces the soft round dot |
+| Size and color over life | Up to eight keys each: a time from 0 (birth) to 1 (death), then a width or a color with alpha |
+
+**Restart** starts every emitter again. **View > Play Effects** turns the preview off while editing; Play and Simulate
+always run their own particles from the beginning, and Stop throws them away. **View > Restart Effects** is also in the
+viewport's view menu.
+
+In the Inspector, a Particle Emitter can be told not to play by itself, in which case gameplay fires it, not to loop, and
+to scale its rate. The shooter's **Impact Effect Template** works this way: give it an emitter and every hit fires that
+effect along the surface it struck.
+
+## Animate models
+
+Placing a model that has animations gives it an **Animator** component playing its first animation, and it plays while you
+edit. Poses are only for show while editing: they never change the scene, its undo history or its file. What the scene
+keeps is what the Animator says: the clip, speed (negative plays backwards), whether it loops, where it starts, and whether it
+plays while editing (**Preview while editing**). **Clips from** plays another model's animations on the joints with the same
+names. Add an Animator to any skinned model with **Add Component > Animator**.
+
+**Window > Animation** (or **Open Animation panel** under the Animator in the Inspector) opens the Animation panel for the
+selected animator. It floats; drag its title onto a dock to keep it there.
+
+| In the Animation panel | What it does |
+|---|---|
+| **Play** / **Pause**, **Restart** | Holds or resumes the preview, or starts the Animator's clip again from its start time |
+| The timeline | Drag it to scrub; the animation holds where you leave it. Triangles mark the clip's events |
+| A clip's **Play** | Crossfades to it over **Crossfade (s)**. Only the preview changes |
+| A clip's **Layer** | Plays it once on top of the current clip, as its difference from its first frame: a flinch over a walk |
+| A clip's **Default** | Makes it the clip the Animator starts with. This changes the scene, as one undo step |
+| **Events** | Named moments of a clip, such as `footstep`. **Add at** marks one at the timeline's time; drag a time to move it. They are saved in the model's `.meta` file, each change one undo step, and gameplay hears them every time playback crosses them |
+
+**View > Play Animations** stops every preview while editing (scrubbing still works); **View > Restart Animations** starts them
+all again; **View > Show Bones** draws the skeletons. Play and Simulate run every animator from its clip's start, in step with the
+game's ticks, and Stop throws that away.
+
+**To hold something in a hand**, put it under the character in the Scene Hierarchy, then **Add Component > Attach To Bone** and pick
+the joint in **Bone** (or type its name). Its transform is then relative to that joint, and it is drawn there as the character
+moves; the gizmo and outlines follow it. Physics and gameplay still see it at its plain place under the character.
+
+## Ragdolls and debris
+
+**Add Component > Ragdoll** on a skinned model makes it fall as jointed bodies: on death (when gameplay kills it), on demand,
+or never (**Falls**). The bodies are made from its skeleton when it falls, start from the pose it is in, and move on as that
+pose was moving. Long bones get a capsule sized from the skin around them; hands and feet ride on the bones above them.
+**Swing** and **Twist** say how far each joint may turn from its rest, **Joint friction** how much it resists. Under the
+section, Details says how many bodies the ragdoll has and how heavy it is (hover for each one).
+
+**Show ragdolls**, or **View > Show Ragdolls**, draws the capsules on the model as it stands. **Add bone settings** adds settings
+for one bone: its **Body** (as generated, a body of its own, or none, so it only follows its parent), **Radius**, **Density**,
+**Swing** and **Twist**. Each change is one undo step. Only these settings are saved; bodies exist only while the scene runs.
+
+In Play or Simulate, **Ragdoll now** in Details (or **Play > Ragdoll Selected**) makes the selection fall, and **Stand up** hands
+it back to its animator. Its own collider sits out while it lies, and a shot pushes the part it hits. Stop takes the bodies away.
+
+**Play > Drop Debris** drops eight pieces that look like the selected entity from above it. Debris bounces and piles up, and goes
+two seconds after it settles, or after ten seconds; there are at most 64 pieces at once, and Stop takes them away.
 
 ## Light the scene
 
@@ -225,6 +320,7 @@ Press the backtick key to open the Console. Suggestions appear as you type, `Tab
 | `help` | List everything, or add a word to search |
 | `stat fps`, `stat timings`, `stat none` | Show or hide performance numbers |
 | `show collision` | Toggle collider outlines |
+| `asset.resolve /Game/Textures/Brick` | Show the asset a package name finds, and any redirectors on the way |
 | `camera.speed 5` | Set a value. A name alone shows the current value |
 | `r.shadows off` | Turn a view setting off. `r.bloom`, `r.ambient_occlusion` and `r.skybox` work the same way |
 | `Viewport.FocusSelected` | Run any command by its ID, as listed in `EDITOR_SHORTCUTS.md` |
@@ -239,13 +335,14 @@ right-clicking removes a key. Mouse gestures can't be changed yet.
 | What | Where |
 |---|---|
 | A scene | The `.scene` file named in the toolbar's **Scene file** field |
-| Assets and materials | `Assets\` in the project folder |
+| Assets, materials and effects | `Assets\` in the project folder |
 | Hidden objects and bookmarks | `<scene file>.editor`, beside the scene |
 | Keys, layout and editor settings | `keymap.ini`, `layout.ini` and `editor.ini` in `%APPDATA%\GameEngine\` |
 
 **Opening things:** `Ctrl+O` picks a scene file. **Project... > Open Project...** only loads a scene by itself if the folder has a
 `main.scene`, so use `Ctrl+O` for any other name. In the Asset Browser, **Scenes** lists the scene files beside the current one: click one,
-then press **Load**.
+then press **Load**. A scene saved in another project, the nearest folder above it with an `Assets` folder, opens that project with it,
+so its materials and models come from where it was saved. `--scene` does the same, unless `--project` names the project.
 
 ## If something goes wrong
 

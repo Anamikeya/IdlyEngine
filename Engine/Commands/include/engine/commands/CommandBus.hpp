@@ -76,9 +76,26 @@ struct SetBehaviors {
     EntityId id;
     std::vector<BehaviorComponent> behaviors;
 };
+struct SetParticleEmitter {
+    EntityId id;
+    std::optional<ParticleEmitterComponent> emitter;
+};
+struct SetAnimator {
+    EntityId id;
+    std::optional<AnimatorComponent> animator;
+};
+struct SetAttachToBone {
+    EntityId id;
+    std::optional<AttachToBoneComponent> attach;
+};
+struct SetRagdoll {
+    EntityId id;
+    std::optional<RagdollComponent> ragdoll;
+};
 using Command = std::variant<CreateEntity, DeleteEntity, RenameEntity, SetTransform, SetParent,
                              ReplaceScene, SetMesh, SetCamera, SetLight, DuplicateEntity,
-                             SetRigidBody, SetColliders, SetEnvironment, SetBehaviors>;
+                             SetRigidBody, SetColliders, SetEnvironment, SetBehaviors, SetParticleEmitter,
+                             SetAnimator, SetAttachToBone, SetRagdoll>;
 struct CommandDescriptor {
     std::string_view name;
     Capability permission;

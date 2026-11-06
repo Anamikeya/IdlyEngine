@@ -173,6 +173,47 @@ struct Arena {
 
 	void settle() { ticks(20); }
 
+	// A patrolling enemy standing on the floor at (x, z): a kinematic capsule with health, a model and a Ragdoll.
+	EntityId enemy(double x, double z, std::vector<std::pair<std::string, double>> patrol, double health = 100, bool ragdoll = true)
+	{
+		Components c;
+		c.body = body(BodyKind::Kinematic);
+		ColliderComponent capsule;
+		capsule.shape = ColliderShape::Capsule;
+		capsule.radius = 0.3;
+		capsule.half_height = 0.6;
+		capsule.center = {0, 0.9, 0};
+		c.colliders = {capsule};
+		c.mesh = MeshComponent{};
+		c.mesh->mesh_asset = {0x1234, "models/Mannequin.glb"};
+		if (ragdoll) {
+			c.ragdoll = RagdollComponent{};
+		}
+		c.behaviors = {behavior("health", {{"max", health}}), behavior("target", {{"points", 200}}), behavior("enemy", std::move(patrol))};
+		return add("Enemy", at(x, 0, z), c);
+	}
+
+	// A template with a particle emitter and a behavior, out of the way below the floor.
+	EntityId effect(const char* behavior_type, std::vector<std::pair<std::string, double>> values = {}, EntityId parent = 0, Transform t = at(0, -40, 0))
+	{
+		Components c;
+		c.emitter = ParticleEmitterComponent{{2, "effects/dust.effect"}, false, false, 1};
+		c.behaviors = {behavior(behavior_type, std::move(values))};
+		return add(behavior_type, t, c, parent);
+	}
+
+	double yaw_of(EntityId id) const
+	{
+		const auto& q = scene.inspect(id)->transform.rotation;
+		return 2 * std::atan2(q.y, q.w);
+	}
+
+	std::size_t requests(AnimationCue cue) const
+	{
+		return static_cast<std::size_t>(std::count_if(game->animation_requests().begin(), game->animation_requests().end(),
+			[&](const AnimationRequest& r) { return r.cue == cue; }));
+	}
+
 	Vec3 position(EntityId id) const
 	{
 		const auto w = scene.world_transform(id);
@@ -298,10 +339,13 @@ ENGINE_TEST(unusable_behaviors_are_reported)
 	Components mover;
 	mover.behaviors = {behavior("mover")}; // A mover with no kinematic body.
 	a.add("Mover", {}, mover);
+	Components enemy;
+	enemy.behaviors = {behavior("enemy")}; // An enemy with no kinematic body.
+	a.add("Enemy", {}, enemy);
 	ENGINE_REQUIRE(static_cast<bool>(a.world->sync(a.scene)));
 	const auto game = Game::create(a.scene, a.bus, *a.world, fixed_step);
 	ENGINE_REQUIRE(game != nullptr);
-	ENGINE_CHECK_EQ(game->setup_issues().size(), std::size_t{3});
+	ENGINE_CHECK_EQ(game->setup_issues().size(), std::size_t{4});
 }
 
 // ---- Player ----------------------------------------------------------------------------------
@@ -578,6 +622,33 @@ ENGINE_TEST(a_shot_at_a_wall_leaves_a_mark_and_does_not_move_it)
 	ENGINE_CHECK_EQ(a.scene.size(), entities); // The mark has faded.
 }
 
+ENGINE_TEST(an_impact_template_with_an_emitter_asks_for_particles_instead_of_a_mark)
+{
+	Arena a;
+	a.floor();
+	a.player();
+	a.rules();
+	Components wall;
+	wall.colliders = {box({5, 3, 0.5})};
+	a.add("Wall", at(0, 3, -6), wall);
+	Components sparks;
+	sparks.emitter = ParticleEmitterComponent{{1, "effects/sparks.effect"}, false, false, 2};
+	sparks.behaviors = {{"impact_effect", {}}};
+	const auto source = a.add("Impact Effect Template", at(0, -40, 0), sparks);
+	a.begin();
+	const auto entities = a.scene.size();
+	a.tick(pressed({Action::Fire}));
+	ENGINE_REQUIRE(a.game->shots().size() == 1);
+	ENGINE_CHECK_EQ(a.scene.size(), entities); // Nothing enters the scene.
+	ENGINE_REQUIRE(a.game->effect_events().size() == 1);
+	const auto& event = a.game->effect_events()[0];
+	ENGINE_CHECK_EQ(event.source, source);
+	ENGINE_CHECK_NEAR(event.direction.z, 1.0f, 1e-3f); // Along the wall's normal, back towards the player.
+	ENGINE_CHECK_NEAR(event.point.z, -5.5f + 0.02f, 1e-3f);
+	a.tick({});
+	ENGINE_CHECK(a.game->effect_events().empty()); // One tick's requests only.
+}
+
 // ---- Targets ---------------------------------------------------------------------------------
 
 ENGINE_TEST(a_dynamic_target_takes_damage_and_moves)
@@ -812,12 +883,263 @@ ENGINE_TEST(the_same_input_gives_the_same_game)
 	ENGINE_CHECK(run() == run());
 }
 
+// ---- Milestone 5: enemies and effects ------------------------------------------------------
+
+ENGINE_TEST(an_enemy_patrols_facing_the_way_it_walks_and_stands_at_each_end)
+{
+	Arena a;
+	a.floor();
+	a.player();
+	a.rules();
+	const auto enemy = a.enemy(-3, -8, {{"ax", -3}, {"az", -8}, {"bx", 3}, {"bz", -8}, {"walk_speed", 1.5}, {"pause", 1}, {"turn_rate", 20}});
+	a.begin();
+	// Turned to face +X, the way to its far end, and walking at its speed.
+	ENGINE_CHECK_NEAR(a.yaw_of(enemy), std::numbers::pi / 2, 1e-6);
+	const double x = a.position(enemy).x;
+	a.ticks(60);
+	ENGINE_CHECK_NEAR(a.position(enemy).x, x + 1.5, 0.03);
+	ENGINE_CHECK_NEAR(a.position(enemy).z, -8, 1e-9);
+	ENGINE_CHECK_NEAR(a.position(enemy).y, 0, 1e-9);
+	// At the end it stands still for its pause, asking for its idle clip once, then turns and walks back.
+	bool idle = false, walk_again = false;
+	double end_x = -1e9;
+	for (int i = 0; i < 360 && !walk_again; ++i) {
+		a.tick();
+		idle = idle || a.requests(AnimationCue::Idle) == 1;
+		if (idle) {
+			end_x = std::max(end_x, a.position(enemy).x);
+			walk_again = a.requests(AnimationCue::Walk) == 1;
+		}
+	}
+	ENGINE_CHECK(idle && walk_again);
+	ENGINE_CHECK_NEAR(end_x, 3, 0.03);
+	a.ticks(60);
+	ENGINE_CHECK_NEAR(a.yaw_of(enemy), -std::numbers::pi / 2, 1e-6);
+	ENGINE_CHECK(a.position(enemy).x < 3 - 0.5);
+	// Its kinematic body went with it, so shots find it where it is.
+	const auto state = a.world->body_state(enemy);
+	ENGINE_REQUIRE(state.has_value());
+	ENGINE_CHECK_NEAR(state->pose.position.x, a.position(enemy).x, 0.05);
+}
+
+ENGINE_TEST(a_shot_enemy_flinches_and_stands_for_a_moment)
+{
+	Arena a;
+	a.floor();
+	a.player({{"damage", 10}});
+	a.rules();
+	const auto enemy = a.enemy(0, -6, {{"ax", 0}, {"az", -6}, {"bx", 0}, {"bz", -12}, {"walk_speed", 1}, {"flinch_time", 0.5}, {"turn_rate", 20}});
+	a.begin();
+	a.tick(pressed({Action::Fire}));
+	ENGINE_REQUIRE(a.game->shots().size() == 1 && a.game->shots()[0].entity == enemy);
+	ENGINE_CHECK_EQ(a.requests(AnimationCue::Flinch), std::size_t{1});
+	ENGINE_CHECK_EQ(a.game->counters().flinches, std::uint64_t{1});
+	const double z = a.position(enemy).z;
+	a.ticks(25);
+	ENGINE_CHECK_NEAR(a.position(enemy).z, z, 1e-9); // Staggered.
+	a.ticks(30);
+	ENGINE_CHECK(a.position(enemy).z < z - 0.2); // And on its way again.
+	ENGINE_CHECK(a.game->standing_targets() == std::vector<EntityId>{enemy});
+}
+
+ENGINE_TEST(a_killed_enemy_with_a_ragdoll_asks_for_one_and_stays_where_it_fell)
+{
+	Arena a;
+	a.floor();
+	a.player({{"damage", 30}, {"impulse", 90}, {"fire_interval", 0.1}});
+	a.rules();
+	const auto enemy = a.enemy(0, -6, {{"ax", 0}, {"az", -6}, {"bx", 4}, {"bz", -6}}, 30);
+	const auto other = a.target(-20);
+	a.begin();
+	a.tick(pressed({Action::Fire}));
+	ENGINE_REQUIRE(a.game->ragdoll_requests().size() == 1);
+	const auto& request = a.game->ragdoll_requests()[0];
+	ENGINE_CHECK_EQ(request.entity, enemy);
+	ENGINE_CHECK(request.pushed);
+	ENGINE_CHECK_NEAR(request.impulse.z, -90.0f, 1e-3f); // Along the shot, at the weapon's push.
+	ENGINE_CHECK_NEAR(request.point.x, a.game->shots()[0].point.x, 1e-6f);
+	ENGINE_CHECK_NEAR(request.point.z, a.game->shots()[0].point.z, 1e-6f);
+	ENGINE_CHECK_EQ(a.game->counters().ragdolls, std::uint64_t{1});
+	// It counts as destroyed, but stays in the scene for its ragdoll, and stops walking.
+	ENGINE_CHECK_EQ(a.game->hud().score, 200);
+	ENGINE_CHECK_EQ(a.game->hud().targets_remaining, 1);
+	ENGINE_CHECK(a.game->standing_targets() == std::vector<EntityId>{other});
+	a.ticks(5);
+	ENGINE_REQUIRE(a.scene.inspect(enemy).has_value());
+	const Vec3 lies = a.position(enemy);
+	a.ticks(60);
+	ENGINE_CHECK_NEAR(a.position(enemy).x, lies.x, 1e-9);
+	// More shots hurt it no more: no second death.
+	a.tick(pressed({Action::Fire}));
+	ENGINE_CHECK(!a.game->shots().empty() && !a.game->shots()[0].damaged);
+	ENGINE_CHECK(a.game->ragdoll_requests().empty());
+	ENGINE_CHECK_EQ(a.game->hud().score, 200);
+	ENGINE_CHECK(a.game->phase() == GamePhase::Playing);
+}
+
+ENGINE_TEST(a_killed_enemy_without_a_ragdoll_is_removed)
+{
+	Arena a;
+	a.floor();
+	a.player({{"damage", 30}});
+	a.rules();
+	const auto enemy = a.enemy(0, -6, {}, 30, false);
+	a.begin();
+	a.tick(pressed({Action::Fire}));
+	ENGINE_CHECK(a.game->ragdoll_requests().empty());
+	a.tick();
+	ENGINE_CHECK(!a.scene.inspect(enemy).has_value());
+	ENGINE_CHECK(a.game->phase() == GamePhase::Won);
+}
+
+ENGINE_TEST(footsteps_raise_dust_where_the_foot_lands)
+{
+	Arena a;
+	a.floor();
+	a.player();
+	a.rules();
+	const auto enemy = a.enemy(0, -6, {}, 25);
+	const auto dust = a.effect("footstep_effect");
+	a.begin();
+	a.game->pre_physics();
+	const AnimationNotice notices[] = {{enemy, "footstep", {0.1f, 0.02f, -6.2f}}, {enemy, "wave", {0, 0, 0}}, {999, "footstep", {0, 0, 0}}};
+	a.game->hear(notices);
+	a.game->post_physics();
+	ENGINE_REQUIRE(a.game->effect_events().size() == 1);
+	const auto& event = a.game->effect_events()[0];
+	ENGINE_CHECK_EQ(event.source, dust);
+	ENGINE_CHECK_NEAR(event.point.z, -6.2f, 1e-6f);
+	ENGINE_CHECK_NEAR(event.direction.y, 1.0f, 1e-6f);
+	ENGINE_CHECK_EQ(a.game->counters().footsteps, std::uint64_t{1});
+	// A fallen enemy's animator may still run, but its feet raise nothing.
+	a.tick(pressed({Action::Fire}));
+	a.game->pre_physics();
+	a.game->hear(std::span<const AnimationNotice>(notices, 1));
+	a.game->post_physics();
+	ENGINE_CHECK(a.game->effect_events().empty());
+}
+
+ENGINE_TEST(each_shot_flashes_at_the_muzzle_along_the_aim)
+{
+	Arena a;
+	a.floor();
+	const auto player = a.player({{"fire_interval", 0.1}});
+	a.rules();
+	EntityId camera = 0;
+	for (const auto& e : a.scene.snapshot().entities) {
+		if (e.parent == player) camera = e.id;
+	}
+	const auto muzzle = a.effect("muzzle_effect", {}, camera, at(0.2, -0.1, -0.7));
+	a.begin();
+	a.tick(pressed({Action::Fire}));
+	ENGINE_REQUIRE(a.game->effect_events().size() == 1); // The shot misses: only the flash.
+	const auto& flash = a.game->effect_events()[0];
+	ENGINE_CHECK_EQ(flash.source, muzzle);
+	const Vec3 at_muzzle = a.position(muzzle);
+	ENGINE_CHECK_NEAR(flash.point.x, at_muzzle.x, 1e-5);
+	ENGINE_CHECK_NEAR(flash.point.y, at_muzzle.y, 1e-5);
+	ENGINE_CHECK_NEAR(flash.point.z, at_muzzle.z, 1e-5);
+	ENGINE_CHECK_NEAR(flash.direction.z, -1.0f, 1e-4f);
+	std::uint64_t fired = 1;
+	for (int i = 0; i < 30; ++i) {
+		a.tick(held({Action::Fire}));
+		fired += a.game->shots().size();
+	}
+	ENGINE_CHECK(fired >= 5);
+	ENGINE_CHECK_EQ(a.game->counters().muzzle_flashes, fired); // One a shot.
+}
+
+ENGINE_TEST(glass_breaks_into_shards_and_slivers_the_same_way_each_time)
+{
+	const auto run = [] {
+		Arena a;
+		a.floor();
+		a.player({{"damage", 30}, {"impulse", 60}});
+		a.rules();
+		a.target(-20);
+		Components glass;
+		glass.mesh = MeshComponent{};
+		glass.colliders = {box({0.5, 0.5, 0.5})};
+		glass.behaviors = {behavior("health", {{"max", 25}}), behavior("breakable", {{"shards", 6}, {"speed", 3}})};
+		Transform pane = at(0, 1.5, -5);
+		pane.scale = {3, 2, 0.1};
+		const auto id = a.add("Glass", pane, glass);
+		Components shard;
+		shard.mesh = MeshComponent{};
+		shard.emitter = ParticleEmitterComponent{{3, "effects/slivers.effect"}, false, false, 1};
+		shard.behaviors = {behavior("shard", {{"lifetime", 4}})};
+		Transform small = at(0, -40, 0);
+		small.scale = {0.2, 0.15, 0.02};
+		const auto look = a.add("Shard", small, shard);
+		a.begin();
+		a.tick(pressed({Action::Fire}));
+		ENGINE_CHECK(a.game->shots().size() == 1 && a.game->shots()[0].entity == id);
+		// Slivers where the shot broke it, along the shot.
+		const auto& effects = a.game->effect_events();
+		const auto slivers = std::find_if(effects.begin(), effects.end(), [&](const EffectEvent& e) { return e.source == look; });
+		ENGINE_REQUIRE(slivers != effects.end());
+		ENGINE_CHECK_NEAR(slivers->direction.z, -1.0f, 1e-4f);
+		ENGINE_CHECK_NEAR(slivers->point.z, a.game->shots()[0].point.z, 1e-6f);
+		auto pieces = a.world->debris();
+		ENGINE_CHECK_EQ(pieces.size(), std::size_t{6});
+		ENGINE_CHECK_EQ(a.game->counters().shards, std::uint64_t{6});
+		for (const auto& piece : pieces) {
+			ENGINE_CHECK_EQ(piece.look, look);
+			// Inside the pane's box when it broke.
+			ENGINE_CHECK(std::abs(piece.pose.position.x) <= 1.5f && std::abs(piece.pose.position.y - 1.5f) <= 1.0f && std::abs(piece.pose.position.z + 5) <= 0.05f);
+		}
+		a.tick();
+		ENGINE_CHECK(!a.scene.inspect(id).has_value());
+		a.ticks(30);
+		// Thrown away from the shooter, and down onto the floor.
+		pieces = a.world->debris();
+		float furthest = 0;
+		for (const auto& piece : pieces) furthest = std::min(furthest, piece.pose.position.z + 5);
+		ENGINE_CHECK(furthest < -0.3f);
+		std::vector<physics::Pose> poses;
+		for (const auto& piece : pieces) poses.push_back(piece.pose);
+		return poses;
+	};
+	const auto first = run(), second = run();
+	ENGINE_REQUIRE(first.size() == second.size());
+	for (std::size_t i = 0; i < first.size(); ++i) ENGINE_CHECK(first[i] == second[i]);
+}
+
+ENGINE_TEST(hard_hits_raise_dust_once_a_cooldown)
+{
+	Arena a;
+	a.floor();
+	a.player();
+	a.rules();
+	const auto dust = a.effect("dust_effect", {{"min_speed", 3}, {"cooldown", 0.5}});
+	Components crate;
+	crate.body = body(BodyKind::Dynamic);
+	crate.colliders = {box({0.4, 0.4, 0.4}, 100)};
+	const auto id = a.add("Crate", at(5, 4, -5), crate);
+	Components gentle = crate;
+	a.add("Gentle Crate", at(-5, 0.5, -5), gentle); // Already resting: it raises nothing.
+	a.begin();
+	std::vector<EffectEvent> seen;
+	for (int i = 0; i < 90; ++i) {
+		a.tick();
+		for (const auto& e : a.game->effect_events()) seen.push_back(e);
+	}
+	ENGINE_REQUIRE(!seen.empty());
+	ENGINE_CHECK_EQ(seen.front().source, dust);
+	ENGINE_CHECK(seen.front().strength > 1.0);
+	ENGINE_CHECK_NEAR(seen.front().point.x, 5.0f, 0.5f);
+	ENGINE_CHECK_NEAR(seen.front().point.y, 0.0f, 0.1f);
+	ENGINE_CHECK(seen.size() <= 2); // A bounce, at most, after the cooldown.
+	ENGINE_CHECK_EQ(a.game->counters().dust, seen.size());
+	(void)id;
+}
+
 // ---- The sample ------------------------------------------------------------------------------
 
 ENGINE_TEST(sample_scene_loads_with_every_behavior_understood)
 {
 	SamplePlay play(read_sample());
-	ENGINE_CHECK_EQ(play.game->hud().targets_total, 9);
+	ENGINE_CHECK_EQ(play.game->hud().targets_total, 12);
 	ENGINE_CHECK_NEAR(play.game->hud().time_limit, 90.0, 1e-9);
 	ENGINE_CHECK(play.game->camera() != 0);
 	ENGINE_CHECK(play.world->diagnostics().issues.empty());
@@ -840,7 +1162,7 @@ ENGINE_TEST(sample_scene_settles_without_exploding)
 			ENGINE_FAIL(name); // It should rest where the scene put it.
 		}
 	}
-	ENGINE_CHECK_EQ(play.game->hud().targets_remaining, 9);
+	ENGINE_CHECK_EQ(play.game->hud().targets_remaining, 12);
 	ENGINE_CHECK_EQ(play.game->hud().score, 0);
 	// Everything is on the floor or above it, and the player has not moved.
 	for (const auto& e : play.scene.snapshot().entities) {
@@ -857,8 +1179,13 @@ ENGINE_TEST(sample_can_be_won_by_shooting_every_target)
 	SamplePlay play(read_sample());
 	play.ticks(30);
 	int guard = 0;
+	// Enemies that die into ragdolls stay in the scene: what counts is whether the game still has them standing.
+	const auto standing = [&](EntityId id) {
+		const auto ids = play.game->standing_targets();
+		return std::find(ids.begin(), ids.end(), id) != ids.end();
+	};
 	while (play.game->phase() == GamePhase::Playing && guard++ < 20) {
-		const auto remaining = play.targets();
+		const auto remaining = play.game->standing_targets();
 		if (remaining.empty()) {
 			break;
 		}
@@ -866,7 +1193,7 @@ ENGINE_TEST(sample_can_be_won_by_shooting_every_target)
 		const auto name = play.scene.inspect(id)->name;
 		// Stand 3 m away and fire until it is gone, moving to another side every so often in case something is in the way.
 		constexpr std::array<std::pair<double, double>, 4> sides{{{0, 3.2}, {-3.2, 0}, {3.2, 0}, {0, -3.2}}};
-		for (int tries = 0; tries < 400 && play.scene.inspect(id); ++tries) {
+		for (int tries = 0; tries < 400 && standing(id); ++tries) {
 			const Vec3 p = play.position(id);
 			if (tries % 25 == 0) {
 				const auto [dx, dz] = sides[static_cast<std::size_t>(tries / 25) % sides.size()];
@@ -880,12 +1207,12 @@ ENGINE_TEST(sample_can_be_won_by_shooting_every_target)
 				play.ticks(80);
 			}
 		}
-		if (play.scene.inspect(id)) {
+		if (standing(id)) {
 			ENGINE_FAIL(name.c_str());
 		}
 	}
 	ENGINE_CHECK(play.game->phase() == GamePhase::Won);
-	ENGINE_CHECK(play.game->hud().score >= 1250);
+	ENGINE_CHECK(play.game->hud().score >= 1850);
 	ENGINE_CHECK_EQ(play.game->hud().targets_remaining, 0);
 }
 
@@ -896,10 +1223,48 @@ ENGINE_TEST(sample_glass_breaks_without_counting_as_a_target)
 	const EntityId glass = play.find("Glass Barrier");
 	ENGINE_REQUIRE(glass != 0);
 	play.aim(play.position(glass));
-	play.ticks(40, held({Action::Fire}));
+	// Firing until it breaks, and no longer: an enemy walks behind it.
+	for (int i = 0; i < 40 && play.scene.inspect(glass); ++i) {
+		play.tick(held({Action::Fire}));
+	}
+	play.tick();
 	ENGINE_CHECK(!play.scene.inspect(glass).has_value());
-	ENGINE_CHECK_EQ(play.game->hud().targets_remaining, 9);
+	ENGINE_CHECK_EQ(play.game->hud().targets_remaining, 12);
 	ENGINE_CHECK_EQ(play.game->hud().score, 0);
+	// It broke into pieces of debris like the shard template, and slivers.
+	const EntityId shard = play.find("Glass Shard Template");
+	const auto pieces = play.world->debris();
+	ENGINE_CHECK_EQ(pieces.size(), std::size_t{14});
+	ENGINE_CHECK(std::all_of(pieces.begin(), pieces.end(), [&](const physics::DebrisState& d) { return d.look == shard; }));
+	ENGINE_CHECK_EQ(play.game->counters().shards, std::uint64_t{14});
+}
+
+ENGINE_TEST(sample_enemies_patrol_flinch_and_die_into_ragdolls)
+{
+	SamplePlay play(read_sample());
+	const EntityId enemy = play.find("Enemy 2");
+	ENGINE_REQUIRE(enemy != 0);
+	const Vec3 start = play.position(enemy);
+	play.ticks(120);
+	ENGINE_CHECK(play.position(enemy).z < start.z - 1.0); // On its way from z -3 to -9.
+	// From just past the glass, three shots in the chest: two flinches, then it falls.
+	play.aim_from({0, 0.9, 1.5}, {play.position(enemy).x, 0.92, play.position(enemy).z});
+	for (int i = 0; i < 200 && play.game->counters().ragdolls == 0; ++i) {
+		const Vec3 p = play.position(enemy);
+		play.aim({p.x, 0.92, p.z});
+		play.tick(held({Action::Fire}));
+		if (!play.game->ragdoll_requests().empty()) {
+			ENGINE_CHECK_EQ(play.game->ragdoll_requests()[0].entity, enemy);
+			ENGINE_CHECK(play.game->ragdoll_requests()[0].pushed);
+		}
+	}
+	ENGINE_CHECK_EQ(play.game->counters().ragdolls, std::uint64_t{1});
+	ENGINE_CHECK_EQ(play.game->counters().flinches, std::uint64_t{2});
+	ENGINE_CHECK(play.scene.inspect(enemy).has_value());
+	const auto standing = play.game->standing_targets();
+	ENGINE_CHECK(std::find(standing.begin(), standing.end(), enemy) == standing.end());
+	ENGINE_CHECK_EQ(play.game->hud().targets_remaining, 11);
+	ENGINE_CHECK_EQ(play.game->hud().score, 200);
 }
 
 ENGINE_TEST(sample_is_lost_when_the_time_runs_out)
@@ -907,7 +1272,7 @@ ENGINE_TEST(sample_is_lost_when_the_time_runs_out)
 	SamplePlay play(read_sample());
 	play.ticks(static_cast<int>(90 / tick_seconds) + 5);
 	ENGINE_CHECK(play.game->phase() == GamePhase::Lost);
-	ENGINE_CHECK_EQ(play.game->hud().targets_remaining, 9);
+	ENGINE_CHECK_EQ(play.game->hud().targets_remaining, 12);
 }
 
 ENGINE_TEST(sample_restart_starts_over_from_the_scene)
@@ -924,7 +1289,7 @@ ENGINE_TEST(sample_restart_starts_over_from_the_scene)
 	SamplePlay second(authored);
 	ENGINE_CHECK_EQ(second.game->hud().ammo, 15);
 	ENGINE_CHECK_EQ(second.game->hud().score, 0);
-	ENGINE_CHECK_EQ(second.targets().size(), std::size_t{9});
+	ENGINE_CHECK_EQ(second.targets().size(), std::size_t{12});
 	ENGINE_CHECK(second.scene.snapshot().entities == authored.entities);
 }
 
@@ -945,7 +1310,7 @@ ENGINE_TEST(sample_domino_chain_destroys_its_target_with_one_push)
 		play.tick();
 	}
 	ENGINE_CHECK(!play.scene.inspect(chain).has_value());
-	ENGINE_CHECK_EQ(play.game->hud().targets_remaining, 8);
+	ENGINE_CHECK_EQ(play.game->hud().targets_remaining, 11);
 }
 
 ENGINE_TEST(sample_crate_pushed_off_the_shelf_scores_in_the_bonus_zone)

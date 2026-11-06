@@ -61,7 +61,10 @@ if(NOT TARGET engine::assets)
     message(FATAL_ERROR "Engine/Editor requires engine::assets")
 endif()
 # engine/renderer/ResourceRegistry.hpp is header-only, so the renderer library itself stays free of the asset module.
-target_link_libraries(engine_editor_session PUBLIC engine::renderer engine::physics_scene engine::assets engine::gameplay)
+if(NOT TARGET engine::animation)
+    message(FATAL_ERROR "Engine/Editor requires engine::animation; configure with GAMEENGINE_WITH_ANIMATION=ON")
+endif()
+target_link_libraries(engine_editor_session PUBLIC engine::renderer engine::physics_scene engine::assets engine::gameplay engine::effects engine::animation)
 target_compile_options(engine_editor_session PRIVATE /W4 /WX /permissive- /utf-8)
 add_executable(engine_editor_tests tests/EditorTests.cpp)
 target_link_libraries(engine_editor_tests PRIVATE engine_editor_session)
@@ -74,7 +77,7 @@ set_tests_properties(engine.editor.acceptance PROPERTIES TIMEOUT 60)
 set(RENDERER_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../Renderer")
 set(MATERIAL_DIR "${CMAKE_CURRENT_BINARY_DIR}/materials")
 file(MAKE_DIRECTORY "${MATERIAL_DIR}")
-foreach(name ui grid)
+foreach(name ui grid selection_mask selection_outline)
     add_custom_command(OUTPUT "${MATERIAL_DIR}/${name}.filamat"
         COMMAND matc -p desktop -a opengl -o "${MATERIAL_DIR}/${name}.filamat" "${RENDERER_ROOT}/materials/${name}.mat"
         DEPENDS matc "${RENDERER_ROOT}/materials/${name}.mat" VERBATIM)
@@ -91,6 +94,13 @@ foreach(blending opaque masked transparent)
         DEPENDS matc "${RENDERER_ROOT}/materials/pbr.mat" VERBATIM)
     list(APPEND EDITOR_MATERIALS "${MATERIAL_DIR}/pbr_${blending}.filamat")
 endforeach()
+# Particles: one Filament material per blend mode (additive light, alpha over the scene).
+foreach(blending add transparent)
+    add_custom_command(OUTPUT "${MATERIAL_DIR}/particle_${blending}.filamat"
+        COMMAND matc -p desktop -a opengl "-TBLENDING=${blending}" -o "${MATERIAL_DIR}/particle_${blending}.filamat" "${RENDERER_ROOT}/materials/particle.mat"
+        DEPENDS matc "${RENDERER_ROOT}/materials/particle.mat" VERBATIM)
+    list(APPEND EDITOR_MATERIALS "${MATERIAL_DIR}/particle_${blending}.filamat")
+endforeach()
 add_custom_target(editor_materials DEPENDS ${EDITOR_MATERIALS})
 add_library(engine_desktop_renderer STATIC "${RENDERER_ROOT}/src/desktop/DesktopRenderer.cpp" "${RENDERER_ROOT}/src/desktop/ImGuiRenderer.cpp")
 target_link_libraries(engine_desktop_renderer PUBLIC engine::renderer PRIVATE filament filament-iblprefilter editor_imgui engine::assets)
@@ -98,12 +108,13 @@ target_compile_options(engine_desktop_renderer PRIVATE /W4 /permissive- /utf-8)
 add_dependencies(engine_desktop_renderer editor_materials)
 add_executable(engine_editor src/Main.cpp src/GameHud.cpp src/RenderTest.cpp
     src/ui/EditorUI.cpp src/ui/HierarchyPanel.cpp src/ui/InspectorPanel.cpp src/ui/LightingPanel.cpp
-    src/ui/MaterialPanel.cpp src/ui/ViewportPanel.cpp src/ui/AssetPanel.cpp src/ui/CommandUI.cpp src/ui/FileDialog.cpp src/ui/WorkflowPanels.cpp src/ui/FeedbackPanels.cpp)
+    src/ui/MaterialPanel.cpp src/ui/EffectPanel.cpp src/ui/AnimationPanel.cpp src/ui/ViewportPanel.cpp src/ui/AssetPanel.cpp src/ui/CommandUI.cpp src/ui/FileDialog.cpp src/ui/WorkflowPanels.cpp src/ui/FeedbackPanels.cpp)
 target_link_libraries(engine_editor PRIVATE engine_editor_session engine_desktop_renderer editor_imgui comdlg32)
 target_include_directories(engine_editor SYSTEM PRIVATE "${GAMEENGINE_RESOURCES_DIR}/glm")
 # Like the materials, the sample is found by an absolute path, so the editor runs from its build tree.
 get_filename_component(ENGINE_SAMPLES_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../Samples" ABSOLUTE)
-target_compile_definitions(engine_editor PRIVATE EDITOR_MATERIAL_DIR="${MATERIAL_DIR}" ENGINE_SAMPLES_DIR="${ENGINE_SAMPLES_DIR}")
+target_compile_definitions(engine_editor PRIVATE EDITOR_MATERIAL_DIR="${MATERIAL_DIR}" ENGINE_SAMPLES_DIR="${ENGINE_SAMPLES_DIR}"
+    ENGINE_RESOURCES_DIR="${GAMEENGINE_RESOURCES_DIR}") # The render test draws a skinned model from the dependency tree when it is there.
 target_compile_options(engine_editor PRIVATE /W4 /permissive- /utf-8)
 option(ENGINE_EDITOR_GPU_TESTS "Register visible desktop GPU smoke test (requires interactive desktop)" OFF)
 if(ENGINE_EDITOR_GPU_TESTS)

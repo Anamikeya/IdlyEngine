@@ -1,15 +1,19 @@
 #pragma once
+#include <engine/animation/animation.h>
 #include <engine/assets/asset_database.h>
 #include <engine/commands/CommandBus.hpp>
 #include <engine/editor/CameraController.hpp>
 #include <engine/editor/Selection.hpp>
+#include <engine/effects/particles.h>
 #include <engine/gameplay/game.h>
 #include <engine/physics/scene_physics.h>
 #include <engine/renderer/RenderSnapshot.hpp>
 #include <engine/renderer/ResourceRegistry.hpp>
 #include <array>
 #include <chrono>
+#include <deque>
 #include <filesystem>
+#include <functional>
 #include <future>
 #include <map>
 #include <memory>
@@ -59,14 +63,20 @@ Result<EditorViewState> read_view_state(std::string_view);
 // What the viewport leaves out. These only take things away from what the scene says.
 struct ViewFlags {
     bool grid = true, skybox = true, shadows = true, ambient_occlusion = true, bloom = true;
+    bool effects = true; // Particle emitters play while editing. Only the preview: it never changes the scene.
+    bool animations = true; // Animators whose preview is on play while editing; the same promise.
+    bool bones = false;     // Skeletons are drawn over the view.
+    bool ragdolls = false;  // Ragdolls' capsules are drawn over the view: where they would be, or are.
+    bool outlines = true;   // Selected models are outlined. Off in the game's own view.
 };
 
 enum class PlayState { Editing, Playing, Paused };
 
-// Time spent in fixed ticks, since the session began.
+// Time spent in fixed ticks, since the session began. `animation` is posing animators and ragdolls in a tick, apart from
+// `gameplay`. `effects` is advancing Play's particles, once an update, over `effect_updates` updates.
 struct SimulationTiming {
-    std::uint64_t ticks = 0;
-    std::chrono::nanoseconds physics{0}, physics_max{0}, gameplay{0};
+    std::uint64_t ticks = 0, effect_updates = 0;
+    std::chrono::nanoseconds physics{0}, physics_max{0}, gameplay{0}, animation{0}, animation_max{0}, effects{0}, effects_max{0};
 };
 
 // What an import left in the asset folder.
@@ -124,14 +134,49 @@ class EditorSession {
     mutable std::optional<assets::AssetDatabase> assets_;
     mutable renderer::ResourceRegistry resources_;
     mutable std::map<std::tuple<std::uint64_t, std::string, assets::AssetType>, Resolved> resolved_;
+    // "/Game" and its index, rebuilt when the catalogue's scan count moves on (slice 7).
+    mutable assets::VirtualFileSystem packages_;
+    mutable std::optional<std::uint64_t> packages_scans_;
+    mutable std::vector<std::string> package_conflicts_;
+    // The scene edits that make every asset reference `fix` changes the way `fix` leaves it.
+    std::vector<commands::Command> reference_edits(const std::function<bool(AssetRef &)> &fix) const;
     std::vector<std::string> asset_problems_;
+    std::map<EntityId, renderer::Pose> poses_;
     // Material edits in progress, not saved yet (a drag in the Material Editor); these win over the file.
     std::map<assets::AssetId, assets::MaterialData> material_drafts_;
+    // The same for particle effects in the Effect Editor.
+    std::map<assets::AssetId, assets::EffectData> effect_drafts_;
+    // Plays the editor scene's emitters while editing (view_flags.effects). Play mode has its own, in Runtime.
+    effects::ParticleSystem edit_particles_{1};
+    // Plays the editor scene's animators while editing (view_flags.animations). Play mode has its own, in Runtime.
+    animation::AnimationSystem edit_animation_;
+    // Skeletons and clips built from models, by the model data they came from. A model reloaded from disk is new data, so
+    // it gets a new rig. An entry whose model data has been freed is stale: it is rebuilt if asked for, and dropped when
+    // unused assets are released.
+    struct RigEntry { std::weak_ptr<const assets::MeshData> model; std::shared_ptr<const animation::Rig> rig; std::string problem; };
+    struct ClipEntry { std::weak_ptr<const assets::MeshData> model, source; std::shared_ptr<const animation::ClipSet> clips; std::string problem; };
+    mutable std::map<const assets::MeshData *, RigEntry> rigs_;
+    // The flesh of each joint of a model, for sizing ragdolls: the box, in the joint's own space, of the vertices it
+    // moves more than any other joint does. Kept and dropped like rigs.
+    struct FleshEntry { std::weak_ptr<const assets::MeshData> model; std::vector<assets::Bounds> boxes; std::vector<char> any; };
+    mutable std::map<const assets::MeshData *, FleshEntry> flesh_;
+    const FleshEntry &flesh_for(const std::shared_ptr<const assets::MeshData> &) const;
+    mutable std::map<std::pair<const assets::MeshData *, const assets::MeshData *>, ClipEntry> clip_sets_;
+    std::deque<animation::AnimationEvent> recent_events_;
     // One ordered history of named steps. A scene step's data lives in the command bus; a material edit carries its own.
     struct MaterialEdit { assets::AssetId id; assets::MaterialData before, after; };
+    struct EffectEdit { assets::AssetId id; assets::EffectData before, after; };
+    struct EventsEdit { assets::AssetId id; std::vector<assets::ClipEvent> before, after; };
     struct FolderEdit { EditorFolders before, after; };
     // `scene`: the command bus holds a matching step. A transaction can change the scene and folders together.
-    struct HistoryStep { std::string name; std::optional<MaterialEdit> material; std::optional<FolderEdit> folders; bool scene = true; };
+    struct HistoryStep {
+        std::string name;
+        std::optional<MaterialEdit> material;
+        std::optional<FolderEdit> folders;
+        bool scene = true;
+        std::optional<EffectEdit> effect;
+        std::optional<EventsEdit> events;
+    };
     std::vector<HistoryStep> undo_steps_, redo_steps_;
     std::uint64_t bus_recorded_ = 0;
     int transaction_depth_ = 0;
@@ -168,8 +213,9 @@ class EditorSession {
     std::set<assets::AssetId> referenced_assets();
     void reconcile();
     Result<void> editing_only(const char *action) const;
-    // Local TRS that places an entity at `world` under `parent` (0 = root); rejects shear.
-    Result<Transform> local_from_world(EntityId parent, const WorldTransform &world) const;
+    // Local TRS that places an entity drawn at `world` under `parent` (0 = root), on the parent's joint `bone` when it
+    // is attached to one; rejects shear.
+    Result<Transform> local_from_world(EntityId parent, const WorldTransform &world, const std::string *bone = nullptr) const;
 public:
     static constexpr std::chrono::nanoseconds fixed_step{16'666'667}; // 60 Hz runtime ticks
     static constexpr int max_ticks_per_update = 5;
@@ -341,14 +387,46 @@ public:
     Result<void> open_project(const std::filesystem::path &root);
     const std::filesystem::path &project() const { return project_; }
     std::filesystem::path asset_folder() const { return project_ / "Assets"; }
+    // The project a scene file belongs to: the nearest folder holding it, or above that, with an `Assets` folder. Empty when
+    // there is none.
+    static std::filesystem::path project_of(const std::filesystem::path &scene_file);
     // Copies a file into the asset folder; see assets::AssetDatabase::import_file. References are not touched.
     Result<ImportedAsset> import_asset(const std::filesystem::path &file);
     Result<void> rescan_assets();
     // Re-imports from disk; everything drawing the asset picks up the new revision on the next frame.
     Result<void> reload_asset(assets::AssetId);
     // Moves or renames the file, keeping its ID, and updates the paths stored in the scene (one undo step) and in
-    // materials (saved at once). References find assets by ID first, so a stale path would still resolve.
+    // materials (saved at once). References find assets by ID first, so a stale path would still resolve. A redirector
+    // is left at the old path for everything else that names it (assets/virtual_paths.h). `new_path` is a path in the
+    // asset folder or a package name, "/Game/Textures/Walls/Brick"; without an extension it keeps the old one.
     Result<void> rename_asset(assets::AssetId, const std::string &new_path);
+
+    // ---- Package names and redirectors (Milestone 5, slice 7; assets/virtual_paths.h) ----
+    // The mount point of the project's asset folder.
+    static constexpr std::string_view game_mount = "/Game";
+    // Mounted on open_project and indexed again whenever the catalogue has been scanned since. Safe to resolve with from
+    // any thread; the index is rebuilt here, on the session's.
+    const assets::VirtualFileSystem &packages() const;
+    // "/Game/Textures/Brick", in any case, followed through redirectors to the catalogued asset.
+    Result<assets::PackageResolution> resolve_package(std::string_view name) const;
+    // What people see for an asset: its package name ("/Game/Textures/Brick"), or "" when it is not catalogued.
+    std::string package_name_of(assets::AssetId) const;
+    // The redirectors in the asset folder, and what indexing them found wrong (assets/virtual_paths.h).
+    std::vector<assets::Redirector> redirectors() const;
+    std::vector<std::string> package_conflicts() const;
+    struct FixUpReport {
+        std::size_t redirectors = 0;                // Removed.
+        std::size_t references = 0;                 // Rewritten, in scene files and the open scene.
+        std::vector<std::filesystem::path> scenes;  // Scene files rewritten on disk.
+        bool open_scene = false;                    // The open scene changed, as one undo step; it is not saved.
+        std::size_t assets = 0;                     // Materials and effects saved.
+        std::vector<std::string> kept;              // Redirectors left in place, and why.
+    };
+    // Rewrites every reference that still names a redirector's path, or names the asset it stood for by ID, to where the
+    // asset is now. That covers the project's scene files (written in place), the open scene (one undo step, left
+    // unsaved), and materials and effects (saved). Then the redirectors it resolved are deleted. One that leads nowhere,
+    // or round in a loop, is kept and listed. Edit mode only.
+    Result<FixUpReport> fix_up_redirectors();
     // What a thumbnail needs, from a worker. A mesh is ready to draw; a texture comes reduced to at most `thumbnail_size`.
     static constexpr std::uint32_t thumbnail_size = 128;
     struct ThumbnailData {
@@ -359,6 +437,8 @@ public:
         std::uint32_t width = 0, height = 0;                // Of `pixels`.
         std::uint32_t source_width = 0, source_height = 0;  // Of the image.
         std::size_t vertices = 0, triangles = 0;
+        std::size_t joints = 0;            // Of a model's skeleton.
+        std::vector<std::string> clips;    // A model's animations, by name.
         bool failed = false;
     };
     // Decodes a model or texture on a worker, without touching the catalogue.
@@ -371,7 +451,8 @@ public:
     // Sets the entity's model or texture according to the asset's type, adding a mesh renderer if it has none, and
     // makes the color white so the asset shows as authored. One undo step.
     Result<commands::Receipt> assign_asset(EntityId, assets::AssetId);
-    // Creates an entity drawing the model, named after the file and resting on the floor (y = 0), and selects it.
+    // Creates an entity drawing the model, named after the file and resting on the floor (y = 0), and selects it. For a
+    // particle effect, an entity with an emitter playing it.
     Result<commands::Receipt> place_asset(assets::AssetId);
     // The same with its base at `point`.
     Result<commands::Receipt> place_asset_at(assets::AssetId, const Vec3 &point);
@@ -382,6 +463,11 @@ public:
     // Problems with the references in the last frame().
     const std::vector<std::string> &asset_problems() const { return asset_problems_; }
     const renderer::ResourceRegistry &resources() const { return resources_; }
+    // ---- Poses of skinned models: visual only, never in the scene, its file or its history (Milestone 5, D1) ----
+    // Model-space joint transforms frames draw an entity's model with, in its skeleton's order. Null: its rest pose.
+    void set_pose(EntityId, renderer::Pose);
+    renderer::Pose pose(EntityId) const;
+    void clear_poses() { poses_.clear(); }
 
     // ---- Background import: decoding happens on a worker; the catalogue and the GPU stay on this thread ----
     std::uint64_t begin_import(const std::filesystem::path &file);
@@ -420,6 +506,85 @@ public:
     // Number of parts the entity's mesh has, each of which can take a material.
     std::size_t mesh_part_count(const MeshComponent &);
 
+    // ---- Particle effects: .effect files in the asset folder ----
+    // Creates "effects/<name>.effect" under a free name.
+    Result<assets::AssetId> create_effect(const std::string &name, const assets::EffectData & = {});
+    // The current value: a draft while one is being edited, otherwise the saved one.
+    std::optional<assets::EffectData> effect(assets::AssetId) const;
+    // A live change: every emitter using it shows it at once, without restarting. Nothing is saved, no undo step.
+    Result<void> preview_effect(assets::AssetId, const assets::EffectData &);
+    // Saves the effect to its file: one undo step. A draft is replaced, and emitters using it start again.
+    Result<void> save_effect(assets::AssetId, const assets::EffectData &);
+    void discard_effect_draft(assets::AssetId);
+    // Gives the entity a particle emitter playing this effect, or changes its effect. One undo step.
+    Result<commands::Receipt> assign_effect(EntityId, assets::AssetId);
+    // Starts every emitter of the shown scene again from its beginning, and drops one-shot effects.
+    void restart_effects();
+    // What the shown scene's particle system holds now.
+    effects::Stats effect_stats() const;
+    // Advances the edit-mode preview; update() calls it, and so can a host that is not playing.
+    void advance_effects(std::chrono::nanoseconds elapsed);
+
+    // ---- Animation: poses are visual only, never in the scene, its file or its history (Milestone 5, D1, D2) ----
+    // The shown scene's animation system: the edit-mode preview, or the play session's. Its run-time controls (play,
+    // play_layered, set_time, set_paused, set_ik) change nothing in the scene.
+    animation::AnimationSystem &animation();
+    const animation::AnimationSystem &animation() const;
+    // The clips an entity's animator plays, bound to its model's skeleton: from its clip source, or its own model.
+    // Null when there are none, with the reason in `problem`.
+    std::shared_ptr<const animation::ClipSet> clip_set(EntityId, std::string *problem = nullptr) const;
+    // The skeleton of the entity's model; null when it has none.
+    std::shared_ptr<const animation::Rig> rig(EntityId) const;
+    // The model asset whose clips an entity's animator plays; the null id when there is none.
+    assets::AssetId clip_source(EntityId) const;
+    // Advances the edit-mode preview; update() calls it.
+    void advance_animations(std::chrono::nanoseconds elapsed);
+    // Starts every animator of the shown scene again from its authored clip.
+    void restart_animations();
+    // A joint of the entity's model as drawn now (its pose, or its rest pose), in world space.
+    std::optional<WorldTransform> joint_world(EntityId, std::string_view joint) const;
+    // Where the entity is drawn: its scene transform, moved by the joint it or an ancestor is attached to (D2). Gizmos,
+    // outlines and picking use it; set_world() and drags take positions in the same space.
+    std::optional<WorldTransform> drawn_world(EntityId) const;
+    // Clip events the shown scene crossed, oldest first; at most 64 are kept.
+    const std::deque<animation::AnimationEvent> &animation_events() const { return recent_events_; }
+    struct BoneLine { EntityId entity = 0; Vec3 from, to; }; // From a joint's parent to the joint, in world space.
+    // The skeletons of the shown scene's skinned and animated models as drawn now; `only` keeps one entity's.
+    std::vector<BoneLine> bone_lines(EntityId only = 0) const;
+    // The events of a model's clips, kept in its .meta (D5).
+    std::vector<assets::ClipEvent> clip_events(assets::AssetId model) const;
+    // Replaces them: one undo step. The model is not imported again.
+    Result<void> set_clip_events(assets::AssetId model, std::vector<assets::ClipEvent> events);
+    // Gives the entity an animator playing `clip` of its own model, or changes its clip. One undo step.
+    Result<commands::Receipt> assign_clip(EntityId, const std::string &clip);
+    // The pose the entity is drawn with now: the host's, else its ragdoll's, else its animator's. Null: its rest pose.
+    renderer::Pose shown_pose(EntityId) const;
+
+    // ---- Ragdolls (Milestone 5, D7): the run's physics holds the bodies; the scene keeps only the Ragdoll settings ----
+    // What the entity's Ragdoll would build from its model's skeleton and skin, sized as the entity stands. Empty, with
+    // the reason in `problem`, when it cannot be built.
+    std::optional<physics::RagdollPlan> ragdoll_plan(EntityId, std::string *problem = nullptr) const;
+    // Only while running: turns the entity into a ragdoll from the pose it is in, moving as that pose and its body were.
+    // An impulse at a world point (a shot) lands on the part nearest it. The entity's own body sits out meanwhile.
+    Result<void> start_ragdoll(EntityId, std::optional<std::pair<Vec3, Vec3>> impulse_at = std::nullopt);
+    // Removes its bodies: the animator poses it again, and its own body comes back.
+    Result<void> stop_ragdoll(EntityId);
+    bool ragdolled(EntityId) const;
+    // Entities lying as ragdolls now, ascending.
+    std::vector<EntityId> ragdolled_entities() const;
+    // Outlines of ragdolls, as Show Ragdolls draws them: the capsules at the entity's pose, which is where its bodies
+    // are once it falls. `only` keeps one entity's.
+    std::vector<physics::DebugLine> ragdoll_lines(EntityId only = 0) const;
+
+    // ---- Debris (D11): loose pieces in the run's physics, at most physics::max_debris, gone once they settle ----
+    // Only while running: a piece that looks like `look` (its model and material, at its scale) with a box around it,
+    // starting at a point, turned and moving as given.
+    Result<std::uint64_t> spawn_debris(EntityId look, const Vec3 &position, const Quaternion &rotation, const Vec3 &velocity,
+                                       const Vec3 &spin = {}, double lifetime = 10);
+    std::vector<physics::DebrisState> debris() const;
+    // What the run's game asked for that could not be done, such as a ragdoll for a model without a skeleton.
+    const std::vector<std::string> &game_issues() const;
+
     // ---- Lighting ----
     // The environment in force for the shown scene: the first by entity ID, or the defaults.
     EnvironmentComponent environment() const;
@@ -435,6 +600,38 @@ public:
     Result<commands::Receipt> create_preset_lights(bool outdoor);
 private:
     void tick();
+    struct EffectSource { assets::AssetId id; std::uint32_t revision = 0; std::shared_ptr<const assets::EffectData> data; };
+    // The effect a reference names, with a draft winning over the file; `problem` says why there is none.
+    std::optional<EffectSource> effect_source(const AssetRef &, std::string &problem) const;
+    effects::ParticleSystem &shown_particles();
+    const effects::ParticleSystem &shown_particles() const;
+    // Emitters of the shown scene, for its particle system.
+    std::vector<effects::EmitterInput> emitter_inputs(const std::vector<EntityRecord> &entities, const std::function<void(const std::string &)> &problem) const;
+    // Animators of the shown scene, for its animation system.
+    std::vector<animation::AnimatorInput> animator_inputs(const std::vector<EntityRecord> &entities, const std::function<void(const std::string &)> &problem) const;
+    std::shared_ptr<const animation::Rig> rig_for(const std::shared_ptr<const assets::MeshData> &, std::string &problem) const;
+    std::shared_ptr<const animation::ClipSet> clips_for(const EntityRecord &, std::string &problem) const;
+    std::optional<assets::AssetMetadata> asset_meta(const AssetRef &) const;
+    // The model-space transform of a joint of the entity's model as drawn now; empty when it has no such joint.
+    std::optional<animation::JointMatrix> joint_model(EntityId, std::string_view joint) const;
+    // What an attachment on the way up from `id` does to its scene transform: drawn = correction * scene. Identity when
+    // nothing is attached. `records` finds entities, so a frame can use its snapshot.
+    std::array<double, 16> attachment_correction(EntityId id, const std::function<std::optional<EntityRecord>(EntityId)> &records) const;
+    void keep_events(std::vector<animation::AnimationEvent> events);
+    // An entity's ragdoll as the builder reads it: its model, skeleton and plan, and where it is drawn.
+    struct RagdollBuild {
+        std::shared_ptr<const assets::MeshData> model;
+        physics::RagdollPlan plan;
+        std::array<double, 16> world{};
+    };
+    std::optional<RagdollBuild> ragdoll_build(EntityId, std::string &problem) const;
+    // Poses the run's ragdolls from their bodies; tick() calls it after physics.
+    void pose_ragdolls();
+    // The lowest joint of the entity as drawn, in the world: where a foot lands. Its origin when it has no pose.
+    physics::Vec3 lowest_joint(EntityId) const;
+    // Plays what the game asked for on the run's animator: Walk is the Animator's clip, Idle a clip named "idle", Flinch
+    // one named "hit", layered on top. A name that starts with the word wins over one that only has it.
+    void play_cue(EntityId, gameplay::AnimationCue);
 };
 // Keeps a transaction open for a scope. Nested guards join the outer one.
 class ScopedTransaction {

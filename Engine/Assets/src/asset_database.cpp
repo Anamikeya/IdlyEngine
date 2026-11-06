@@ -1,6 +1,7 @@
 #include "engine/assets/asset_database.h"
 
 #include "engine/assets/importers.h"
+#include "engine/assets/virtual_paths.h"
 
 #include <algorithm>
 #include <fstream>
@@ -36,6 +37,12 @@ std::string lowercase(std::string text)
 bool ends_with_meta(const std::string& path)
 {
 	return path.size() > 5 && lowercase(path.substr(path.size() - 5)) == ".meta";
+}
+
+bool ends_with_redirect(const std::string& path)
+{
+	const std::size_t n = redirector_extension.size();
+	return path.size() > n && lowercase(path.substr(path.size() - n)) == redirector_extension;
 }
 
 bool inside(const fs::path& root, const fs::path& candidate)
@@ -77,14 +84,16 @@ struct AssetDatabase::Impl {
 		std::shared_ptr<const TextureData> texture;
 		std::shared_ptr<const MaterialData> material;
 		std::shared_ptr<const EnvironmentData> environment;
+		std::shared_ptr<const EffectData> effect;
 
-		[[nodiscard]] bool cached() const noexcept { return mesh || texture || material || environment; }
+		[[nodiscard]] bool cached() const noexcept { return mesh || texture || material || environment || effect; }
 		void drop() noexcept
 		{
 			mesh.reset();
 			texture.reset();
 			material.reset();
 			environment.reset();
+			effect.reset();
 		}
 	};
 
@@ -93,8 +102,11 @@ struct AssetDatabase::Impl {
 	std::map<AssetId, Entry> by_id;
 	std::map<std::string, AssetId> by_path;
 	std::vector<AssetIssue> issues;
+	std::vector<Redirector> redirectors; // Ascending by path.
+	std::uint64_t scans = 0;
 
 	fs::path source_of(const AssetMetadata& meta) const { return root / from_utf8(meta.path); }
+	fs::path redirector_file(const std::string& path) const { return root / from_utf8(path + std::string(redirector_extension)); }
 
 	// All reads go through here: the canonical target must stay under the canonical root (no symlink escapes).
 	Result<std::vector<std::uint8_t>> read(const fs::path& path, std::uint64_t max_bytes) const
@@ -168,6 +180,64 @@ struct AssetDatabase::Impl {
 			return material.error();
 		}
 		return std::make_shared<const MaterialData>(std::move(material.value()));
+	}
+
+	Result<std::shared_ptr<const EffectData>> import_effect(const AssetMetadata& meta) const
+	{
+		auto bytes = read(source_of(meta), 1024 * 1024);
+		if (!bytes) {
+			return bytes.error();
+		}
+		const auto& b = bytes.value();
+		auto effect = parse_effect(std::string_view(reinterpret_cast<const char*>(b.data()), b.size()));
+		if (!effect) {
+			return effect.error();
+		}
+		return std::make_shared<const EffectData>(std::move(effect.value()));
+	}
+
+	// Writes a new text asset of `type` under a free name based on `path`, with a .meta holding a new random id.
+	Result<AssetId> create_text(AssetDatabase& db, std::string_view path, AssetType type, const char* noun,
+		const char* extension, const std::string& content)
+	{
+		auto normalized = normalize_asset_path(path);
+		if (!normalized) {
+			return fail(ErrorCode::InvalidArgument, std::string("the ") + noun + " name cannot be used: " + normalized.error().message);
+		}
+		if (asset_type_for(normalized.value()) != type) {
+			return fail(ErrorCode::InvalidArgument, std::string("a ") + noun + "'s file name must end in " + extension);
+		}
+		const fs::path target = free_name(root / from_utf8(normalized.value()));
+		std::error_code ec;
+		fs::create_directories(target.parent_path(), ec);
+		if (ec) {
+			return fail(ErrorCode::InvalidState, "cannot create the folder for " + normalized.value());
+		}
+		fs::path meta_path = target;
+		meta_path += ".meta";
+		const AssetId id = new_id();
+		const auto undo = [&] {
+			std::error_code ignored;
+			fs::remove(target, ignored);
+			fs::remove(meta_path, ignored);
+			(void)db.scan();
+		};
+		if (auto written = write_atomic(target, content); !written) {
+			return written.error();
+		}
+		if (auto written = write_atomic(meta_path, write_meta(MetaFile{id, {}})); !written) {
+			undo();
+			return written.error();
+		}
+		if (auto scanned = db.scan(); !scanned) {
+			undo();
+			return scanned.error();
+		}
+		if (!db.find(id)) {
+			undo();
+			return fail(ErrorCode::InvalidArgument, normalized.value() + " could not be catalogued");
+		}
+		return id;
 	}
 
 	Result<std::shared_ptr<const EnvironmentData>> import_environment(const AssetMetadata& meta) const
@@ -281,6 +351,7 @@ Result<std::size_t> AssetDatabase::scan()
 	std::vector<AssetIssue> issues;
 	std::set<std::string> metas;      // Relative paths of sidecars, without ".meta".
 	std::vector<AssetMetadata> found; // Supported assets with a valid path.
+	std::vector<Redirector> redirectors;
 
 	std::error_code ec;
 	fs::recursive_directory_iterator it(db.root, fs::directory_options::skip_permission_denied, ec);
@@ -299,6 +370,22 @@ Result<std::size_t> AssetDatabase::scan()
 			metas.insert(relative.substr(0, relative.size() - 5));
 			continue;
 		}
+		if (ends_with_redirect(relative)) {
+			auto text = db.read(it->path(), 64 * 1024);
+			if (!text) {
+				issues.push_back({relative, text.error().message});
+				continue;
+			}
+			const auto& b = text.value();
+			auto parsed = parse_redirector(std::string_view(reinterpret_cast<const char*>(b.data()), b.size()),
+				relative.substr(0, relative.size() - redirector_extension.size()));
+			if (!parsed) {
+				issues.push_back({relative, parsed.error().message});
+				continue;
+			}
+			redirectors.push_back(std::move(parsed.value()));
+			continue;
+		}
 		auto path = normalize_asset_path(relative);
 		if (!path) {
 			issues.push_back({relative, path.error().message});
@@ -308,7 +395,7 @@ Result<std::size_t> AssetDatabase::scan()
 		meta.path = std::move(path.value());
 		meta.type = asset_type_for(meta.path);
 		if (meta.type == AssetType::Unknown) {
-			issues.push_back({meta.path, "unsupported format (supported: .glb, .obj, .png, .jpg, .jpeg, .tga, .ppm, .material, .hdr)"});
+			issues.push_back({meta.path, "unsupported format (supported: .glb, .obj, .png, .jpg, .jpeg, .tga, .ppm, .material, .effect, .hdr)"});
 			continue;
 		}
 		meta.source_bytes = it->file_size(ec);
@@ -334,6 +421,7 @@ Result<std::size_t> AssetDatabase::scan()
 			}
 			meta.has_meta = true;
 			meta.settings = parsed.value().settings;
+			meta.events = parsed.value().events;
 			if (parsed.value().id) {
 				meta.id = *parsed.value().id;
 			}
@@ -380,9 +468,12 @@ Result<std::size_t> AssetDatabase::scan()
 	}
 
 	std::sort(issues.begin(), issues.end(), [](const AssetIssue& a, const AssetIssue& b) { return a.path < b.path; });
+	std::sort(redirectors.begin(), redirectors.end(), [](const Redirector& a, const Redirector& b) { return a.path < b.path; });
 	db.by_id = std::move(entries);
 	db.by_path = std::move(paths);
 	db.issues = std::move(issues);
+	db.redirectors = std::move(redirectors);
+	++db.scans;
 	return db.by_id.size();
 }
 
@@ -436,6 +527,12 @@ Result<MaterialAsset> AssetDatabase::load_material(AssetId id)
 		[this](const AssetMetadata& meta) { return impl_->import_material(meta); });
 }
 
+Result<EffectAsset> AssetDatabase::load_effect(AssetId id)
+{
+	return impl_->load<EffectData>(id, AssetType::Effect, &Impl::Entry::effect,
+		[this](const AssetMetadata& meta) { return impl_->import_effect(meta); });
+}
+
 Result<EnvironmentAsset> AssetDatabase::load_environment(AssetId id)
 {
 	return impl_->load<EnvironmentData>(id, AssetType::Environment, &Impl::Entry::environment,
@@ -448,7 +545,7 @@ std::uint32_t AssetDatabase::revision(AssetId id) const
 	return it == impl_->by_id.end() ? 0 : it->second.revision;
 }
 
-Result<void> AssetDatabase::move(AssetId id, std::string_view new_path)
+Result<void> AssetDatabase::move(AssetId id, std::string_view new_path, bool leave_redirector)
 {
 	const auto it = impl_->by_id.find(id);
 	if (it == impl_->by_id.end()) {
@@ -478,7 +575,7 @@ Result<void> AssetDatabase::move(AssetId id, std::string_view new_path)
 		return fail(ErrorCode::InvalidState, "cannot create the folder for " + normalized.value());
 	}
 	// The id goes with the file: a new .meta first, even for an asset whose id came from its old path.
-	if (auto written = impl_->write_atomic(target_meta, write_meta(MetaFile{id, meta.settings})); !written) {
+	if (auto written = impl_->write_atomic(target_meta, write_meta(MetaFile{id, meta.settings, meta.events})); !written) {
 		return written.error();
 	}
 	fs::rename(source, target, ec);
@@ -488,10 +585,57 @@ Result<void> AssetDatabase::move(AssetId id, std::string_view new_path)
 		return fail(ErrorCode::InvalidState, "cannot move " + meta.path + ": " + ec.message());
 	}
 	fs::remove(source_meta, ec);
+	// The asset takes its new name back from any redirector standing there, which would only be hidden by it.
+	fs::remove(impl_->redirector_file(normalized.value()), ec);
+	std::string unwritten;
+	if (leave_redirector) {
+		const Redirector left{meta.path, normalized.value(), id};
+		if (auto written = impl_->write_atomic(impl_->redirector_file(meta.path), write_redirector(left)); !written) {
+			unwritten = written.error().message;
+		}
+	}
 	if (auto scanned = scan(); !scanned) {
 		return scanned.error();
 	}
+	if (!unwritten.empty()) {
+		return fail(ErrorCode::InvalidState, meta.path + " moved, but no redirector could be left there: " + unwritten);
+	}
 	return {};
+}
+
+std::span<const Redirector> AssetDatabase::redirectors() const noexcept
+{
+	return impl_->redirectors;
+}
+
+std::uint64_t AssetDatabase::scans() const noexcept
+{
+	return impl_->scans;
+}
+
+Result<std::size_t> AssetDatabase::remove_redirectors(std::span<const std::string> paths)
+{
+	std::size_t removed = 0;
+	std::string failed;
+	for (const std::string& path : paths) {
+		const auto known = std::find_if(impl_->redirectors.begin(), impl_->redirectors.end(), [&](const Redirector& r) { return r.path == path; });
+		if (known == impl_->redirectors.end()) {
+			continue;
+		}
+		std::error_code ec;
+		if (fs::remove(impl_->redirector_file(path), ec)) {
+			++removed;
+		} else if (ec) {
+			failed += (failed.empty() ? "" : ", ") + path;
+		}
+	}
+	if (auto scanned = scan(); !scanned) {
+		return scanned.error();
+	}
+	if (!failed.empty()) {
+		return fail(ErrorCode::InvalidState, "cannot remove the redirectors " + failed);
+	}
+	return removed;
 }
 
 Result<AssetId> AssetDatabase::create_material(std::string_view path, const MaterialData& material)
@@ -499,44 +643,7 @@ Result<AssetId> AssetDatabase::create_material(std::string_view path, const Mate
 	if (auto valid = validate_material(material); !valid) {
 		return valid.error();
 	}
-	auto normalized = normalize_asset_path(path);
-	if (!normalized) {
-		return fail(ErrorCode::InvalidArgument, "the material name cannot be used: " + normalized.error().message);
-	}
-	if (asset_type_for(normalized.value()) != AssetType::Material) {
-		return fail(ErrorCode::InvalidArgument, "a material's file name must end in .material");
-	}
-	const fs::path target = impl_->free_name(impl_->root / from_utf8(normalized.value()));
-	std::error_code ec;
-	fs::create_directories(target.parent_path(), ec);
-	if (ec) {
-		return fail(ErrorCode::InvalidState, "cannot create the folder for " + normalized.value());
-	}
-	fs::path meta_path = target;
-	meta_path += ".meta";
-	const AssetId id = impl_->new_id();
-	const auto undo = [&] {
-		std::error_code ignored;
-		fs::remove(target, ignored);
-		fs::remove(meta_path, ignored);
-		(void)scan();
-	};
-	if (auto written = impl_->write_atomic(target, write_material(material)); !written) {
-		return written.error();
-	}
-	if (auto written = impl_->write_atomic(meta_path, write_meta(MetaFile{id, {}})); !written) {
-		undo();
-		return written.error();
-	}
-	if (auto scanned = scan(); !scanned) {
-		undo();
-		return scanned.error();
-	}
-	if (!find(id)) {
-		undo();
-		return fail(ErrorCode::InvalidArgument, normalized.value() + " could not be catalogued");
-	}
-	return id;
+	return impl_->create_text(*this, path, AssetType::Material, "material", ".material", write_material(material));
 }
 
 Result<void> AssetDatabase::save_material(AssetId id, const MaterialData& material)
@@ -557,6 +664,60 @@ Result<void> AssetDatabase::save_material(AssetId id, const MaterialData& materi
 	it->second.material = std::make_shared<const MaterialData>(material);
 	it->second.state = AssetState::Loaded;
 	++it->second.revision;
+	return {};
+}
+
+Result<AssetId> AssetDatabase::create_effect(std::string_view path, const EffectData& effect)
+{
+	if (auto valid = validate_effect(effect); !valid) {
+		return valid.error();
+	}
+	return impl_->create_text(*this, path, AssetType::Effect, "effect", ".effect", write_effect(effect));
+}
+
+Result<void> AssetDatabase::save_effect(AssetId id, const EffectData& effect)
+{
+	const auto it = impl_->by_id.find(id);
+	if (it == impl_->by_id.end()) {
+		return fail(ErrorCode::NotFound, "unknown asset id " + to_string(id));
+	}
+	if (it->second.meta.type != AssetType::Effect) {
+		return fail(ErrorCode::InvalidArgument, it->second.meta.path + " is not an effect");
+	}
+	if (auto valid = validate_effect(effect); !valid) {
+		return valid.error();
+	}
+	if (auto written = impl_->write_atomic(impl_->source_of(it->second.meta), write_effect(effect)); !written) {
+		return written.error();
+	}
+	it->second.effect = std::make_shared<const EffectData>(effect);
+	it->second.state = AssetState::Loaded;
+	++it->second.revision;
+	return {};
+}
+
+Result<void> AssetDatabase::set_clip_events(AssetId id, std::vector<ClipEvent> events)
+{
+	const auto it = impl_->by_id.find(id);
+	if (it == impl_->by_id.end()) {
+		return fail(ErrorCode::NotFound, "unknown asset id " + to_string(id));
+	}
+	auto& meta = it->second.meta;
+	if (meta.type != AssetType::Mesh) {
+		return fail(ErrorCode::InvalidArgument, meta.path + " is not a model");
+	}
+	auto normalized = normalize_clip_events(std::move(events));
+	if (!normalized) {
+		return normalized.error();
+	}
+	fs::path meta_path = impl_->source_of(meta);
+	meta_path += ".meta";
+	// The id is written too, so an asset whose id came from its path keeps it.
+	if (auto written = impl_->write_atomic(meta_path, write_meta(MetaFile{id, meta.settings, normalized.value()})); !written) {
+		return written.error();
+	}
+	meta.has_meta = true;
+	meta.events = std::move(normalized.value());
 	return {};
 }
 
@@ -582,7 +743,7 @@ Result<AssetId> AssetDatabase::import_source(const fs::path& source, const Prepa
 		const std::string extension = utf8(source.extension());
 		return fail(ErrorCode::InvalidArgument, "unsupported file type '" + extension + "'" +
 			(lowercase(extension) == ".gltf" ? " (re-export the model as a self-contained .glb)" : "") +
-			"; supported: .glb, .obj, .png, .jpg, .jpeg, .tga, .ppm, .material, .hdr");
+			"; supported: .glb, .obj, .png, .jpg, .jpeg, .tga, .ppm, .material, .effect, .hdr");
 	}
 	const auto load = [&](AssetId id) -> Result<void> {
 		if (prepared && prepared->type == type) {
@@ -593,6 +754,7 @@ Result<AssetId> AssetDatabase::import_source(const fs::path& source, const Prepa
 				entry.texture = prepared->texture;
 				entry.material = prepared->material;
 				entry.environment = prepared->environment;
+				entry.effect = prepared->effect;
 				entry.state = AssetState::Loaded;
 				return {};
 			}
@@ -603,6 +765,8 @@ Result<AssetId> AssetDatabase::import_source(const fs::path& source, const Prepa
 			return done(load_mesh(id));
 		case AssetType::Material:
 			return done(load_material(id));
+		case AssetType::Effect:
+			return done(load_effect(id));
 		case AssetType::Environment:
 			return done(load_environment(id));
 		default:
@@ -697,6 +861,9 @@ std::vector<AssetIssue> AssetDatabase::validate_all()
 		case AssetType::Material:
 			check(impl_->import_material(meta));
 			break;
+		case AssetType::Effect:
+			check(impl_->import_effect(meta));
+			break;
 		case AssetType::Environment:
 			check(impl_->import_environment(meta));
 			break;
@@ -753,7 +920,8 @@ std::size_t AssetDatabase::unload_unused()
 		const bool texture_unused = e.texture && e.texture.use_count() == 1;
 		const bool material_unused = e.material && e.material.use_count() == 1;
 		const bool environment_unused = e.environment && e.environment.use_count() == 1;
-		if (mesh_unused || texture_unused || material_unused || environment_unused) {
+		const bool effect_unused = e.effect && e.effect.use_count() == 1;
+		if (mesh_unused || texture_unused || material_unused || environment_unused || effect_unused) {
 			e.drop();
 			if (e.state == AssetState::Loaded) {
 				e.state = AssetState::Unloaded;
@@ -819,6 +987,14 @@ Result<PreparedImport> prepare_import(const fs::path& source, const ImportLimits
 			return failed(material.error());
 		}
 		prepared.material = std::make_shared<const MaterialData>(std::move(material.value()));
+		break;
+	}
+	case AssetType::Effect: {
+		auto effect = parse_effect(text);
+		if (!effect) {
+			return failed(effect.error());
+		}
+		prepared.effect = std::make_shared<const EffectData>(std::move(effect.value()));
 		break;
 	}
 	case AssetType::Environment: {

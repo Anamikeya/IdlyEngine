@@ -5,7 +5,7 @@ the **Physics Shooter**, made entirely from data on top of the engine's reusable
 
 ![The Physics Shooter running inside the editor](docs/evidence/m4/02_arena_playing.jpg)
 
-**Status:** Windows x64 with MSVC is the built and tested platform. Linux GCC has a preset but is not verified. 409 CTest entries
+**Status:** Windows x64 with MSVC is the built and tested platform. Linux GCC has a preset but is not verified. 555 CTest entries
 pass, along with GPU smoke tests and scripted runs that use real mouse and keyboard input. Hosted CI is set up in
 `.github/workflows/ci.yml` and runs for the first time with this repository.
 
@@ -27,12 +27,14 @@ pass, along with GPU smoke tests and scripted runs that use real mouse and keybo
 |---|---|---|
 | Core | `Engine/Core` | Application loop, `Result` type, diagnostics |
 | ECS | `Engine/ECS` | Entity world on Flecs |
-| Scene | `Engine/Scene` | Entities and components, hierarchy, a versioned text scene format (versions 1 to 5 load) |
+| Scene | `Engine/Scene` | Entities and components, hierarchy, a versioned text scene format (versions 1 to 7 load) |
 | Commands | `Engine/Commands` | `CommandBus`: every scene edit is a typed command, with named undo steps and transactions |
-| Renderer | `Engine/Renderer` | Filament renderer: PBR materials, directional, spot and point lights, shadows, image-based lighting, skybox, tone mapping, bloom, ambient occlusion, thumbnails, and the ImGui renderer |
-| Physics | `Engine/Physics` | Box3D rigid bodies, colliders, raycasts, impulses, contact, hit and sensor events, and the bridge that keeps scene and physics in step |
-| Assets | `Engine/Assets` | Asset database with stable IDs and `.meta` files. Importers for `.glb`, `.obj`, `.png`, `.jpg`, `.tga`, `.ppm` and `.hdr`, run in the background |
-| Gameplay | `Engine/Gameplay` | Input actions, first-person movement, weapons, damage, targets, score, pickups, win and loss rules |
+| Renderer | `Engine/Renderer` | Filament renderer: PBR materials, directional, spot and point lights, shadows, image-based lighting, skybox, tone mapping, bloom, ambient occlusion, skinned meshes, particle batches, thumbnails, and the ImGui renderer |
+| Physics | `Engine/Physics` | Box3D rigid bodies, colliders, joints, raycasts, impulses, contact, hit and sensor events, ragdolls built from a skinned model, and the bridge that keeps scene and physics in step |
+| Animation | `Engine/Animation` | Skeletons and clips on ozz-animation: sampling, crossfades, an additive layer, clip events and two-bone IK |
+| Effects | `Engine/Effects` | Particle effects: `.effect` assets and a CPU simulation with bursts, looping, gravity, drag and floor bounces |
+| Assets | `Engine/Assets` | Asset database with stable IDs and `.meta` files. Importers for `.glb` (with skins and clips), `.obj`, `.png`, `.jpg`, `.tga`, `.ppm` and `.hdr`, run in the background. Unreal-style package names (`/Game/Textures/Brick`) and redirectors, resolved by a thread-safe virtual file system |
+| Gameplay | `Engine/Gameplay` | Input actions, first-person movement, weapons, damage, targets, enemies that patrol and flinch, score, pickups, win and loss rules |
 | Networking | `Engine/Networking` | Serialization, connection manager and a loopback transport. The GameNetworkingSockets backend is compile-checked only (see [Known limits](#known-limits)) |
 | Online services | `Engine/OnlineServices` | Online service interface and a null implementation |
 | Editor | `Engine/Editor` | The 3D editor (`engine_editor`), described below |
@@ -50,13 +52,17 @@ The editor's controls are modelled on Unreal Engine's:
 - **Viewport.** Fly with the right mouse button and `W` `A` `S` `D`, orbit with Alt, pan, dolly and zoom. There are perspective and
   orthographic views, lit, unlit and wireframe modes, a game view and camera bookmarks.
 - **Gizmos.** Move, rotate and scale in world or local axes. Snap to the grid, the floor or a vertex. Alt+drag makes a copy. You can
-  type exact amounts mid-drag, such as `x3` or `y90`.
+  type exact amounts mid-drag, such as `x3` or `y90`. What is selected is outlined around its silhouette, as in Unreal: no box, no
+  inner edges, and the outline shows even where something hides it.
 - **Panels.** The Details panel (labelled Inspector) is generated from property metadata, and editing several objects at once shows
   differing values as "Multiple Values". The Outliner (labelled Scene Hierarchy) has folders, lock, hide and filters. The Asset
-  Browser has thumbnails, rename and move with references kept. There is also a Material Editor, a Lighting panel, a drawer and named
+  Browser has thumbnails, and rename and move with references kept; a move leaves a redirector until **Fix Up Redirectors**, and assets can be named and typed as `/Game/...`. There is also a Material Editor, a Lighting panel, a drawer and named
   layouts.
 - **Workflow.** Play, simulate, leave the player and take it back. There is a command palette (`Ctrl+Shift+P`), quick open (`Ctrl+P`)
   and a console with console variables and suggestions.
+- **Characters and effects.** Imported characters play their clips in the editor and in Play. The Animation panel scrubs clips
+  and edits clip events, and the viewport can show the bones. Props attach to bones, characters turn into ragdolls, and the Effect Editor changes
+  particle effects while they play in the viewport.
 - **Feedback.** Notices pop up in the corner, and a Message Log can be filtered by severity, with links to the objects and assets
   named. Background tasks show progress and can be cancelled. Hold `F1` for a cheat sheet of the keys that work where the mouse is.
 
@@ -66,7 +72,7 @@ The editor's controls are modelled on Unreal Engine's:
 
 - Windows 10 or 11, x64
 - Visual Studio 2022 with **Desktop development with C++** (tested with MSVC 14.44 and Windows SDK 10.0.26100)
-- CMake 3.25 or later, and Ninja
+- CMake 3.30 or later, and Ninja
 - Python 3, to fetch the dependencies
 - Several GB of free disk space and a long first build, because Filament is built from source
 
@@ -76,7 +82,7 @@ The dependencies are not in this repository. They are checked out at the commits
 [`cmake/DependencyLock.cmake`](cmake/DependencyLock.cmake), into a folder of your choice:
 
 ```powershell
-python -I cmake/scripts/fetch_dependencies.py D:\deps\idly box3d GameNetworkingSockets flecs glm spdlog glfw imgui filament
+python -I cmake/scripts/fetch_dependencies.py D:\deps\idly box3d GameNetworkingSockets flecs glm spdlog glfw imgui filament ozz-animation
 $env:GAMEENGINE_RESOURCES_DIR = 'D:\deps\idly'
 ```
 
@@ -93,6 +99,7 @@ between them.
 | Dear ImGui (docking) | MIT | Editor UI |
 | GLM | MIT | Math |
 | spdlog | MIT | Logging |
+| ozz-animation | MIT | Skeletal animation (Milestone 5) |
 | GameNetworkingSockets | BSD-style | Networking backend, headers only for now |
 
 The full list, with commits, is in [`docs/build/dependencies.md`](docs/build/dependencies.md).
@@ -119,6 +126,7 @@ From a **Developer PowerShell for VS 2022**, run the commands directly. From any
 |---|---|---|
 | `GAMEENGINE_BUILD_EDITOR` | ON | Build GLFW, ImGui, Filament and the editor |
 | `GAMEENGINE_WITH_PHYSICS` | ON | Build Box3D and the physics module |
+| `GAMEENGINE_WITH_ANIMATION` | ON | Build ozz-animation. Needs CMake 3.30 |
 | `GAMEENGINE_BUILD_TESTS` | ON | Build the tests and register them with CTest |
 | `GAMEENGINE_WARNINGS_AS_ERRORS` | OFF | Treat warnings as errors on engine targets only |
 | `GAMEENGINE_WITH_GNS` | OFF | Build GameNetworkingSockets. Needs protobuf |
@@ -142,7 +150,8 @@ build\windows-msvc-release\bin\engine_editor.exe --sample
 | `--scene <file>` | Loads this scene at the start |
 | `--config-dir <folder>` | Keeps settings here instead of `%APPDATA%\GameEngine\` |
 | `--smoke` | GPU smoke test: opens a window for a few seconds and checks what was drawn |
-| `--render-test <folder>` | Pixel tests for materials, lights and shadows, with captures saved to the folder |
+| `--render-test <folder>` | Pixel tests for materials, lights, shadows, skinning and particles, with captures saved to the folder |
+| `--perf-run <seconds> --perf-log <file>` | With `--scene`: plays the scene for this long with nobody at the controls, then quits and writes frame timings |
 
 ## Use the editor
 
@@ -184,7 +193,8 @@ walkthrough, covering assets, materials, lighting, the console and where your fi
 
 Drop a file on the window, or type its path in the Asset Browser. Supported formats are `.glb`, `.obj`, `.png`, `.jpg`, `.tga`, `.ppm`
 and `.hdr`, up to 64 MB. Imported files are copied into the project's `Assets` folder, each with a `.meta` file that keeps its ID
-stable. Drag a model into the viewport to place it. **New material** creates a material, which you edit in the Material Editor.
+stable. Drag a model into the viewport to place it. **New material** creates a material, which you edit in the Material Editor, and
+**New effect** creates a particle effect, which you edit in the Effect Editor.
 
 ### Where things are kept
 
@@ -198,7 +208,7 @@ stable. Drag a model into the viewport to place it. **New material** creates a m
 ## Play the sample
 
 Open **Project... > Open Physics Shooter Sample**, or start the editor with `--sample`. Press **Play**, then click the view. You have
-90 seconds to destroy all 9 targets.
+90 seconds to destroy all 12 targets, three of them enemies walking the arena.
 
 | Input | Action |
 |---|---|
@@ -210,7 +220,8 @@ Open **Project... > Open Physics Shooter Sample**, or start the editor with `--s
 
 Shots push what they hit. Crates topple, a row of dominoes can knock over the last target, glass breaks, and a crate that lands in the
 green zone scores points. Static targets stay put, kinematic ones follow a path, and dynamic ones can also be destroyed by a hard fall.
-**Stop** puts the scene back exactly as it was.
+A shot enemy flinches, and a killed one falls as a ragdoll, pushed the way the shot went. **Stop** puts the scene back exactly as it
+was.
 
 Everything specific to the shooter is data in [`Samples/PhysicsShooter`](Samples/PhysicsShooter): the scenes, materials and a
 generator script. Its textures, HDR sky and model are CC0, listed in
@@ -225,8 +236,8 @@ folder and open the copy with `--project <copy> --scene <copy>\physics_shooter.s
 ./cmake/scripts/dev-shell.ps1 ctest --preset windows-msvc-debug -L smoke     # headless smoke tests
 ```
 
-There are **409 CTest entries**, covering physics, the scene bridge, gameplay, assets, networking, online services, the core, the
-renderer snapshot and the editor. The editor tests run without a window: the commands, the viewport camera, the panels, the workflow
+There are **555 CTest entries**, covering physics and ragdolls, the scene bridge, animation, particles, gameplay, assets and package names, networking,
+online services, the core, the renderer snapshot and the editor. The editor tests run without a window: the commands, the viewport camera, the panels, the workflow
 and the feedback. Each test case runs in its own process. The test framework in `Tests/Framework` has no third-party dependencies.
 
 **Real-input tests** in `Tests/RealInput` drive a Release editor with real mouse and keyboard input. They cover the Milestone 3
@@ -237,7 +248,8 @@ powershell -ExecutionPolicy Bypass -File Tests/RealInput/editor_ux_phase5.ps1 -E
 ```
 
 They wait for the desktop to be idle and stop if the editor loses focus, so don't use the PC while they run. A run that stops exits
-with code 2 and proves nothing either way.
+with code 2 and proves nothing either way. `Tests/Performance/milestone5_performance.ps1` measures the Release editor playing the
+sample and a stress scene; it sends no input, but also waits for an idle desktop.
 
 Details are in [`docs/testing/README.md`](docs/testing/README.md). Results and screenshots from every milestone and phase are in
 [`docs/evidence`](docs/evidence).
@@ -253,6 +265,7 @@ The engine was built in milestones. Each one has a plan, a report and saved evid
 | Milestone 3 | A working 3D editor: hierarchy, inspector, gizmos, Play mode with physics, assets, a scene format, DPI scaling. 146 tests | [`MILESTONE_3_REPORT.md`](docs/MILESTONE_3_REPORT.md) |
 | Milestone 4 | PBR materials, lighting, shadows, IBL, a Material Editor, gameplay systems and the Physics Shooter sample. 207 tests | [`MILESTONE_4_REPORT.md`](docs/MILESTONE_4_REPORT.md) |
 | Editor UX, phases 1 to 5 | The Unreal-style editor: command registry, rebinding, undo history, viewport feel, generated panels, Play, Simulate and Eject, palette and console, toasts, log and background tasks. 409 tests | [`EDITOR_UX_PLAN.md`](docs/EDITOR_UX_PLAN.md) |
+| Milestone 5 | Characters and effects: ozz-animation, skinned models, animators, clip events, bone attachments, ragdolls and debris, particles and the Effect Editor, enemies in the sample, performance runs; then package names, redirectors and a silhouette selection outline. 555 tests | [`MILESTONE_5_REPORT.md`](docs/MILESTONE_5_REPORT.md) |
 
 Design notes are in [`docs/architecture`](docs/architecture). For example, `006-scene-format.md` describes the scene file, and
 `008-editor-ux.md` explains how to add a command or an inspectable property.
@@ -267,7 +280,11 @@ Design notes are in [`docs/architecture`](docs/architecture). For example, `006-
 - **Some work still runs on the main thread:** saving and loading a scene, adding a finished import, and reading material thumbnails.
   The import progress bar shows that an import is running, not how far along it is.
 - **Large scenes are slow to edit.** One drag step takes about 32 ms in a 10,000-entity scene.
-- **Imported models have no animation.** Skinned models come in their bind pose. `.gltf` files must be re-exported as `.glb`.
+- **Animation is basic.** There are no blend trees or state machines, and one additive layer per character. Foot IK does not
+  follow the ground, and a ragdoll can't blend back into animation. `.gltf` files must be re-exported as `.glb`.
+- **Particles run on the CPU,** on the main thread, and are unlit.
+- **Enemies only patrol.** They don't see, chase or attack the player.
+- **No scripting yet.** Game behaviors are C++ with number settings. Scripting is the next milestone.
 - **Mouse gestures can't be rebound yet,** only keys.
 - **The sample was played by a script, not tested by people.** Its controls and rules work, but its feel and difficulty haven't had
   human playtesting.

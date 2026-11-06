@@ -1,0 +1,2 @@
+physics_shooter  fps   60.0 mean,   29.5 at p99 | frame 16.67 ms mean, 33.95 ms p99 | particles 114 peak | skinned 3 | animators 3 | idle yes
+stress_test      fps   60.0 mean,   44.3 at p99 | frame 16.66 ms mean, 22.58 ms p99 | particles 5154 peak | skinned 10 | animators 10 | idle yes

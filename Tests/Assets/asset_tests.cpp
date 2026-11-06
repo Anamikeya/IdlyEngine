@@ -805,8 +805,11 @@ ENGINE_TEST(glb_reports_ignored_features)
 	spec.material = R"("alphaMode":"BLEND")";
 	const auto result = import_glb(triangle_glb(spec));
 	ENGINE_REQUIRE(static_cast<bool>(result));
-	ENGINE_CHECK(has_warning(result.value(), "skinning"));
-	ENGINE_CHECK(has_warning(result.value(), "animations"));
+	// Since Milestone 5 skins and animations are read; this skin skins nothing and the animation moves nothing.
+	ENGINE_CHECK(has_warning(result.value(), "skins that no mesh"));
+	ENGINE_CHECK(has_warning(result.value(), "animations that move nothing"));
+	ENGINE_CHECK(result.value().skin.empty());
+	ENGINE_CHECK(result.value().clips.empty());
 	ENGINE_CHECK(has_warning(result.value(), "cameras"));
 	ENGINE_CHECK(result.value().submeshes[0].material.alpha_mode == AlphaMode::Blend); // Kept since Milestone 4, no longer a warning.
 }
@@ -1158,8 +1161,9 @@ ENGINE_TEST(glb_real_models)
 	if (fs::exists(fox)) {
 		const auto mesh = import_glb(read_bytes(fox));
 		ENGINE_REQUIRE(static_cast<bool>(mesh));
-		ENGINE_CHECK(has_warning(mesh.value(), "skinning"));
-		ENGINE_CHECK(has_warning(mesh.value(), "animations"));
+		// Its skeleton and clips are checked in skin_tests.cpp.
+		ENGINE_CHECK(!mesh.value().skin.empty());
+		ENGINE_CHECK_EQ(mesh.value().clips.size(), std::size_t{3});
 	}
 	const fs::path webp = models / "third_party/models/DamagedHelmet/DamagedHelmetWebp.glb";
 	if (fs::exists(webp)) {
@@ -1343,4 +1347,151 @@ ENGINE_TEST(import_file_handles_glb_and_png_through_the_database)
 	ENGINE_REQUIRE(!fake);
 	ENGINE_CHECK(!fs::exists(root / "fake.glb"));
 	ENGINE_CHECK(!fs::exists(root / "fake.glb.meta"));
+}
+
+// ---- Particle effects (.effect) -------------------------------------------------------------------
+
+ENGINE_TEST(effect_text_round_trips_exactly)
+{
+	EffectData e;
+	e.duration = 0.25;
+	e.rate = 0;
+	e.burst = 40;
+	e.lifetime = {0.1, 0.30000000000000004};
+	e.speed = {4, 12};
+	e.cone_degrees = 180;
+	e.spawn_radius = 0.05;
+	e.acceleration = {0, -4.5, 1};
+	e.drag = 2;
+	e.spin_degrees = {-90, 90};
+	e.stretch = 0.04;
+	e.size = {{0, 0.02}, {0.5, 0.05}, {1, 0}};
+	e.color = {{0, {1, 0.8, 0.4, 1}}, {1, {1, 0.2, 0, 0}}};
+	e.emissive_strength = 8;
+	e.blend = ParticleBlend::Alpha;
+	e.texture = {AssetId{7}, "textures/smoke \"puff\".png"};
+	e.collide_floor = true;
+	e.floor_height = -0.5;
+	e.bounce = 0.25;
+	e.world_space = false;
+	e.max_particles = 20000;
+	const std::string text = write_effect(e);
+	const auto parsed = parse_effect(text);
+	ENGINE_REQUIRE(static_cast<bool>(parsed));
+	ENGINE_CHECK(parsed.value() == e);
+	ENGINE_CHECK_EQ(write_effect(parsed.value()), text);
+	// Every key is optional.
+	const auto plain = parse_effect("ENGINE_EFFECT 1\n");
+	ENGINE_REQUIRE(static_cast<bool>(plain));
+	ENGINE_CHECK(plain.value() == EffectData{});
+	ENGINE_CHECK(asset_type_for("fx/Spark.EFFECT") == AssetType::Effect);
+	ENGINE_CHECK_EQ(std::string(to_string(AssetType::Effect)), std::string("effect"));
+}
+
+ENGINE_TEST(the_documented_effect_example_is_what_the_writer_emits)
+{
+	std::ifstream doc(std::string(GAMEENGINE_TEST_ASSETS_DIR) + "/../../docs/architecture/006-scene-format.md");
+	ENGINE_REQUIRE(static_cast<bool>(doc));
+	std::string line, example;
+	bool inside = false;
+	while (std::getline(doc, line)) {
+		if (line == "ENGINE_EFFECT 1") {
+			inside = true;
+		}
+		if (inside) {
+			if (line == "```") {
+				break;
+			}
+			example += line + "\n";
+		}
+	}
+	ENGINE_CHECK_EQ(example, write_effect(EffectData{}));
+}
+
+ENGINE_TEST(effect_parser_rejects_malformed_text)
+{
+	for (const char* text : {"", "ENGINE_EFFECT 2\n", "ENGINE_MATERIAL 1\n", "ENGINE_EFFECT 1\nnope 1\n", "ENGINE_EFFECT 1\nduration 0\n",
+			 "ENGINE_EFFECT 1\nduration 1\nduration 1\n", "ENGINE_EFFECT 1\nrate -1\n", "ENGINE_EFFECT 1\nburst 1.5\n", "ENGINE_EFFECT 1\nburst 20001\n",
+			 "ENGINE_EFFECT 1\nlifetime 0 1\n", "ENGINE_EFFECT 1\nlifetime 2 1\n", "ENGINE_EFFECT 1\nspeed 3 2\n", "ENGINE_EFFECT 1\nspeed 1\n",
+			 "ENGINE_EFFECT 1\ncone 181\n", "ENGINE_EFFECT 1\nacceleration 0 nan 0\n", "ENGINE_EFFECT 1\ndrag -1\n", "ENGINE_EFFECT 1\nspin 10 -10\n",
+			 "ENGINE_EFFECT 1\nsize\n", "ENGINE_EFFECT 1\nsize 0 1 0 2\n", "ENGINE_EFFECT 1\nsize 0 1 1.5 2\n", "ENGINE_EFFECT 1\nsize 0 1 1\n",
+			 "ENGINE_EFFECT 1\nsize 0 1 0.1 1 0.2 1 0.3 1 0.4 1 0.5 1 0.6 1 0.7 1 0.8 1\n", "ENGINE_EFFECT 1\ncolor 0 1 1 1\n",
+			 "ENGINE_EFFECT 1\ncolor 0 1 1 2 1\n", "ENGINE_EFFECT 1\nblend glow\n", "ENGINE_EFFECT 1\ntexture 0000000000000001\n",
+			 "ENGINE_EFFECT 1\ntexture zz \"a\"\n", "ENGINE_EFFECT 1\ncollide_floor 2\n", "ENGINE_EFFECT 1\nbounce 1.5\n",
+			 "ENGINE_EFFECT 1\nmax_particles 0\n", "ENGINE_EFFECT 1\nmax_particles 20001\n", "ENGINE_EFFECT 1\nemissive_strength -1\n"}) {
+		ENGINE_CHECK(!parse_effect(text));
+	}
+}
+
+ENGINE_TEST(effect_assets_are_created_saved_and_reloaded)
+{
+	const fs::path root = scratch("effects");
+	auto opened = AssetDatabase::open(root);
+	ENGINE_REQUIRE(static_cast<bool>(opened));
+	AssetDatabase& db = opened.value();
+	ENGINE_CHECK(!db.create_effect("effects/wrong.material", {}));
+	EffectData invalid;
+	invalid.max_particles = 0;
+	ENGINE_CHECK(!db.create_effect("effects/bad.effect", invalid));
+	ENGINE_CHECK(db.assets().empty());
+
+	EffectData e;
+	e.rate = 12;
+	const auto id = db.create_effect("effects/dust.effect", e);
+	ENGINE_REQUIRE(static_cast<bool>(id));
+	ENGINE_CHECK(fs::exists(root / "effects/dust.effect") && fs::exists(root / "effects/dust.effect.meta"));
+	ENGINE_CHECK(db.find(id.value())->type == AssetType::Effect);
+	const auto loaded = db.load_effect(id.value());
+	ENGINE_REQUIRE(static_cast<bool>(loaded));
+	ENGINE_CHECK_EQ(loaded.value().data->rate, 12.0);
+	const auto revision = loaded.value().revision;
+	ENGINE_CHECK(!db.load_material(id.value())); // The wrong type.
+
+	e.rate = 48;
+	ENGINE_REQUIRE(static_cast<bool>(db.save_effect(id.value(), e)));
+	const auto saved = db.load_effect(id.value());
+	ENGINE_CHECK_EQ(saved.value().data->rate, 48.0);
+	ENGINE_CHECK(saved.value().revision > revision);
+	ENGINE_CHECK(!db.save_effect(id.value(), invalid));
+	ENGINE_CHECK(!db.save_effect(AssetId{123}, e));
+
+	auto reopened = AssetDatabase::open(root);
+	ENGINE_REQUIRE(static_cast<bool>(reopened));
+	ENGINE_REQUIRE(static_cast<bool>(reopened.value().scan()));
+	const auto from_disk = reopened.value().load_effect(id.value());
+	ENGINE_REQUIRE(static_cast<bool>(from_disk));
+	ENGINE_CHECK(*from_disk.value().data == e);
+	ENGINE_CHECK(reopened.value().validate_all().empty());
+
+	// A corrupt file fails its load and validation, not the catalogue; dropping it frees the cache.
+	{
+		std::ofstream corrupt(root / "effects/dust.effect", std::ios::binary | std::ios::trunc);
+		corrupt << "ENGINE_EFFECT 1\nrate many\n";
+	}
+	auto third = AssetDatabase::open(root);
+	ENGINE_REQUIRE(static_cast<bool>(third) && static_cast<bool>(third.value().scan()));
+	ENGINE_CHECK(third.value().find(id.value()).has_value());
+	ENGINE_CHECK(!third.value().load_effect(id.value()));
+	ENGINE_CHECK_EQ(third.value().validate_all().size(), std::size_t{1});
+}
+
+ENGINE_TEST(an_effect_file_is_prepared_and_imported_like_any_asset)
+{
+	const fs::path root = scratch("effect_import");
+	const fs::path outside = scratch("effect_import_source");
+	EffectData e;
+	e.burst = 9;
+	{
+		std::ofstream file(outside / "sparks.effect", std::ios::binary);
+		file << write_effect(e);
+	}
+	const auto prepared = prepare_import(outside / "sparks.effect");
+	ENGINE_REQUIRE(static_cast<bool>(prepared));
+	ENGINE_REQUIRE(prepared.value().effect != nullptr);
+	ENGINE_CHECK_EQ(prepared.value().effect->burst, 9u);
+	auto opened = AssetDatabase::open(root);
+	ENGINE_REQUIRE(static_cast<bool>(opened));
+	const auto id = opened.value().commit_import(prepared.value());
+	ENGINE_REQUIRE(static_cast<bool>(id));
+	ENGINE_CHECK_EQ(opened.value().load_effect(id.value()).value().data->burst, 9u);
 }

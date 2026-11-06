@@ -204,6 +204,10 @@ void EditorUI::bind_console() {
     flag("r.ambient_occlusion", "Draw ambient occlusion in the viewport.", session.view_flags.ambient_occlusion);
     flag("r.bloom", "Draw bloom in the viewport.", session.view_flags.bloom);
     flag("r.skybox", "Draw the skybox in the viewport.", session.view_flags.skybox);
+    flag("r.effects", "Play particle emitters while editing.", session.view_flags.effects);
+    flag("r.animations", "Play animators whose preview is on while editing.", session.view_flags.animations);
+    flag("view.bones", "Draw the skeletons of skinned and animated models.", session.view_flags.bones);
+    flag("view.ragdolls", "Draw ragdolls' capsules: where the bodies would be, or are.", session.view_flags.ragdolls);
     flag("view.grid", "Draw the grid.", show_grid);
     flag("view.collision", "Draw collider outlines.", show_colliders);
     flag("view.markers", "Draw the markers for lights and cameras.", show_markers);
@@ -228,6 +232,14 @@ void EditorUI::bind_console() {
         show_colliders = !show_colliders;
         save_settings();
         return std::string("Collider outlines ") + (show_colliders ? "on" : "off");
+    });
+    console.add_action("asset.resolve", "Find the asset a /Game/... name means, through redirectors.", [this](std::string_view name) {
+        const auto found = session.resolve_package(name);
+        if (!found) return found.error().message;
+        const auto &r = found.value();
+        std::string text = std::string(name) + " is " + session.package_name_of(r.id) + ", " + r.asset_path + " (" + assets::to_string(r.type) + ")";
+        for (const auto &step : r.redirects) text += "\n  through the redirector " + step;
+        return text;
     });
     console.add_action("clear", "Empty the Console.", [this](std::string_view) { messages.clear(); return std::string{}; });
     console.add_action("help", "List everything the console knows, or what matches a word.", [this](std::string_view word) {
@@ -268,6 +280,11 @@ void EditorUI::draw_stats(ImVec2 origin, ImVec2 size) {
         const auto &timing = session.timing();
         const double ticks = double(std::max<std::uint64_t>(timing.ticks, 1));
         std::snprintf(text, sizeof text, "Physics %.3f ms  Gameplay %.3f ms a tick", std::chrono::duration<double, std::milli>(timing.physics).count() / ticks, std::chrono::duration<double, std::milli>(timing.gameplay).count() / ticks);
+        lines.emplace_back(text);
+        const double updates = double(std::max<std::uint64_t>(timing.effect_updates, 1));
+        std::snprintf(text, sizeof text, "Animation %.3f ms a tick  Particles %.3f ms", std::chrono::duration<double, std::milli>(timing.animation).count() / ticks, std::chrono::duration<double, std::milli>(timing.effects).count() / updates);
+        lines.emplace_back(text);
+        std::snprintf(text, sizeof text, "Skinned %zu  Particles %zu", stats.skinned, stats.particles);
         lines.emplace_back(text);
         std::snprintf(text, sizeof text, "Objects %zu  Lights %zu  Parts %zu", stats.objects, stats.lights, stats.parts);
         lines.emplace_back(text);

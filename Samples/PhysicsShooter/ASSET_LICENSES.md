@@ -14,13 +14,18 @@ Checked on 2026-10-30, from each publisher's own pages. Files were downloaded fr
 | `textures/wood_base.jpg`, `wood_normal.jpg`, `wood_arm.jpg` | Brown Planks 03 | Rob Tuytel (Poly Haven) | https://polyhaven.com/a/brown_planks_03 | Same |
 | `environments/sky_1k.hdr` | Kloofendal 48d Partly Cloudy (Pure Sky) | Greg Zaal, Jarod Guest (Poly Haven) | https://polyhaven.com/a/kloofendal_48d_partly_cloudy_puresky | Same |
 | `models/WaterBottle.glb` | Water Bottle | Microsoft (Khronos glTF Sample Assets) | https://github.com/KhronosGroup/glTF-Sample-Assets/tree/main/Models/WaterBottle | The model's `metadata.json`: `CC0-1.0`, owner "Public" |
+| `models/Mannequin.glb` | Universal Animation Library, Standard version: the mannequin with 45 animations | Quaternius | https://opengameart.org/node/174563 (from https://quaternius.com/packs/universalanimationlibrary.html) | The page: "All CC0 - Uploader: quaternius"; the archive's `License.txt`: "CC0 1.0 Universal (CC0 1.0) Public Domain Dedication". Checked 2026-11-04 |
+
+`models/Mannequin.glb` is `Animation Library[Standard]/Godot/AnimationLibrary_Godot_Standard.glb` from the archive
+`universal_animation_librarystandard.zip`, unchanged but for its name; `asset_manifest.json` has both checksums. Its
+`.meta` adds two footstep events to `Walk_Loop`. The archive's FBX files were not used: the engine imports glTF.
 
 Everything else (the `.material`, `.meta` and `.scene` files, and the gun, arena and targets built from primitives) was
 written for this project by `tools/generate_project.py`.
 
 ## Size and packaging
 
-The downloaded files total 16.6 MB, the largest being the 9.0 MB model. They are committed directly: this is small enough
+The downloaded files total 23.3 MB, the largest being the 9.0 MB bottle and the 6.7 MB mannequin. They are committed directly: this is small enough
 for a repository with no remote, and it keeps the sample playable offline. Git LFS is installed on the development machine
 but no remote exists to serve it. Move `*.glb` and `*.hdr` to LFS if a remote is added and the sample grows.
 

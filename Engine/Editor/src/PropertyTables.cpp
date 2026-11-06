@@ -34,6 +34,11 @@ template<class T, class E> Property<T> choice(std::string_view id, std::string_v
     member_enum(p, at, first, std::move(choices));
     return p;
 }
+template<class T> Property<T> text(std::string_view id, std::string_view name, std::string_view category, std::string_view tooltip, std::string T::*at, std::string_view suggestions) {
+    auto p = field<T>(id, name, category, tooltip, PropertyType::Text, at);
+    p.suggestions = suggestions;
+    return p;
+}
 template<class T> Property<T> asset(std::string_view id, std::string_view name, std::string_view category, std::string_view tooltip, AssetRef T::*at, std::string_view type) {
     auto p = field<T>(id, name, category, tooltip, PropertyType::Asset, at);
     p.asset_type = type;
@@ -160,6 +165,53 @@ PropertyTable<EnvironmentComponent> make_environment() {
         field<T>("shadow_distance", "Distance (m)", "Shadows", "How far from the camera directional shadows reach.", PropertyType::Number, &T::shadow_distance, {1, 1000, 1, "%.0f"}),
     }};
 }
+PropertyTable<ParticleEmitterComponent> make_emitter() {
+    using T = ParticleEmitterComponent;
+    return {"Particle Emitter", {
+        asset<T>("effect", "Effect", "Emitter", "A particle effect (.effect). Edit it in the Effect Editor.", &T::effect, "effect"),
+        field<T>("auto_play", "Play by itself", "Emitter", "Starts on its own in Play and in the editor's preview. Off: only gameplay fires it.", PropertyType::Bool, &T::auto_play),
+        field<T>("loop", "Loop", "Emitter", "Starts again each time the effect's duration ends.", PropertyType::Bool, &T::loop),
+        field<T>("rate_scale", "Rate scale", "Emitter", "Multiplies the effect's rate and bursts.", PropertyType::Number, &T::rate_scale, {0, 1000, 0.01}),
+    }};
+}
+PropertyTable<AnimatorComponent> make_animator() {
+    using T = AnimatorComponent;
+    return {"Animator", {
+        text<T>("clip", "Clip", "Animation", "Plays from the start time. Empty: the model rests until gameplay plays something.", &T::clip, "clip"),
+        field<T>("speed", "Speed", "Animation", "Multiplies time. Negative plays backwards.", PropertyType::Number, &T::speed, {-10, 10, 0.01}),
+        field<T>("loop", "Loop", "Animation", "Starts again at the end. Off: holds the last frame.", PropertyType::Bool, &T::loop),
+        field<T>("start_time", "Start time (s)", "Animation", "Where in the clip playing starts.", PropertyType::Number, &T::start_time, {0, 3600, 0.01}),
+        field<T>("preview", "Preview while editing", "Animation", "Plays in the editor while editing. Off: it holds still, and the Animation panel can still scrub it.", PropertyType::Bool, &T::preview),
+        asset<T>("clips", "Clips from", "Animation", "Another model whose clips play on the joints with matching names. Empty: this entity's own model.", &T::clips, "mesh"),
+    }};
+}
+PropertyTable<AttachToBoneComponent> make_attach() {
+    using T = AttachToBoneComponent;
+    return {"Attach To Bone", {
+        text<T>("bone", "Bone", "Attachment", "A joint of the parent's model. The transform is then relative to it, and the entity is drawn where the joint is.", &T::bone, "bone"),
+    }};
+}
+PropertyTable<RagdollComponent> make_ragdoll() {
+    using T = RagdollComponent;
+    return {"Ragdoll", {
+        choice<T>("trigger", "Falls", "Ragdoll", "When the model turns into jointed bodies that fall from its pose. On death: when gameplay kills it. On demand: only when gameplay or Play > Ragdoll Selected asks.", &T::trigger, 0, {"On death", "On demand", "Never"}),
+        field<T>("density", "Density (kg/m3)", "Ragdoll", "Of every part. Water's is 1000, close to a body's.", PropertyType::Number, &T::density, {1, 100000, 10, "%.0f"}),
+        field<T>("swing_degrees", "Swing (deg)", "Joints", "How far each bone may swing from its rest direction.", PropertyType::Number, &T::swing_degrees, {0, 180, 0.5, "%.1f"}),
+        field<T>("twist_degrees", "Twist (deg)", "Joints", "How far each bone may turn about itself, either way.", PropertyType::Number, &T::twist_degrees, {0, 178, 0.5, "%.1f"}),
+        field<T>("joint_friction", "Joint friction", "Joints", "How much the joints resist turning: 0 is limp; 1 holds each part against its own weight.", PropertyType::Number, &T::joint_friction, {0, 10, 0.01}),
+    }};
+}
+PropertyTable<RagdollBone> make_ragdoll_bone() {
+    using T = RagdollBone;
+    return {"Ragdoll Bone", {
+        text<T>("bone", "Bone", "Ragdoll Bone", "A joint of this entity's model.", &T::bone, "joint"),
+        choice<T>("body", "Body", "Ragdoll Bone", "As generated: long bones get one, and hands and feet ride on the bone above. Own body: a body of its own. None: it only follows its parent.", &T::body, 0, {"As generated", "Own body", "None"}),
+        field<T>("radius", "Radius (m)", "Ragdoll Bone", "Of its capsule. 0 sizes it from the skin.", PropertyType::Number, &T::radius, {0, 100, 0.001, "%.3f"}),
+        field<T>("density", "Density (kg/m3)", "Ragdoll Bone", "0 is the ragdoll's.", PropertyType::Number, &T::density, {0, 100000, 10, "%.0f"}),
+        field<T>("swing_degrees", "Swing (deg)", "Ragdoll Bone", "How far it may swing from its rest direction. -1 is the ragdoll's.", PropertyType::Number, &T::swing_degrees, {-1, 180, 0.5, "%.1f"}),
+        field<T>("twist_degrees", "Twist (deg)", "Ragdoll Bone", "How far it may turn about itself, either way. -1 is the ragdoll's.", PropertyType::Number, &T::twist_degrees, {-1, 178, 0.5, "%.1f"}),
+    }};
+}
 }
 std::string property_to_text(const PropertyValue &value) {
     std::ostringstream out;
@@ -172,6 +224,7 @@ std::string property_to_text(const PropertyValue &value) {
         else if constexpr (std::is_same_v<V, Quaternion>) out << "rotation " << v.x << ' ' << v.y << ' ' << v.z << ' ' << v.w;
         else if constexpr (std::is_same_v<V, int>) out << "choice " << v;
         else if constexpr (std::is_same_v<V, AssetRef>) out << "asset " << v.id << ' ' << v.path;
+        else if constexpr (std::is_same_v<V, std::string>) out << "text " << v;
         else out << "bits " << v;
     }, value);
     return out.str();
@@ -190,6 +243,13 @@ std::optional<PropertyValue> property_from_text(std::string_view text) {
         if (in >> v.id) { std::getline(in >> std::ws, v.path); return PropertyValue(v); }
         return std::nullopt;
     } else if (kind == "bits") { std::uint64_t v = 0; if (in >> v) return PropertyValue(v); }
+    else if (kind == "text") {
+        // The rest of the line, as it is: names may have spaces, even at the start.
+        const auto start = text.find("text") + 4;
+        std::string v(start < text.size() ? text.substr(start + 1) : std::string_view{});
+        if (v.find('\n') != std::string::npos) return std::nullopt;
+        return PropertyValue(std::move(v));
+    }
     return std::nullopt;
 }
 const PropertyTable<Transform> &transform_properties() { static const auto table = make_transform(); return table; }
@@ -199,4 +259,9 @@ const PropertyTable<LightComponent> &light_properties() { static const auto tabl
 const PropertyTable<RigidBodyComponent> &body_properties() { static const auto table = make_body(); return table; }
 const PropertyTable<ColliderComponent> &collider_properties() { static const auto table = make_collider(); return table; }
 const PropertyTable<EnvironmentComponent> &environment_properties() { static const auto table = make_environment(); return table; }
+const PropertyTable<ParticleEmitterComponent> &emitter_properties() { static const auto table = make_emitter(); return table; }
+const PropertyTable<AnimatorComponent> &animator_properties() { static const auto table = make_animator(); return table; }
+const PropertyTable<AttachToBoneComponent> &attach_properties() { static const auto table = make_attach(); return table; }
+const PropertyTable<RagdollComponent> &ragdoll_properties() { static const auto table = make_ragdoll(); return table; }
+const PropertyTable<RagdollBone> &ragdoll_bone_properties() { static const auto table = make_ragdoll_bone(); return table; }
 } // namespace engine::editor

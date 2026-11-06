@@ -1,0 +1,13 @@
+ENGINE_EFFECT 1
+duration 0.6
+rate 0
+burst 7
+lifetime 0.35 0.8
+speed 0.2 0.7
+cone 85
+acceleration 0 0.1 0
+drag 3
+size 0 0.04 1 0.22
+color 0 0.58 0.55 0.5 0.35 1 0.58 0.55 0.5 0
+blend alpha
+max_particles 300

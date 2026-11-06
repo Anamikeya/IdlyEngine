@@ -9,7 +9,7 @@ set_target_properties(engine_test_framework PROPERTIES FOLDER "Tests")
 if(GAMEENGINE_WITH_PHYSICS)
 	gameengine_add_test_executable(physics_tests
 		LABELS physics unit
-		SOURCES Physics/physics_world_tests.cpp
+		SOURCES Physics/physics_world_tests.cpp Physics/joint_tests.cpp
 		LIBRARIES engine::physics)
 endif()
 
@@ -17,7 +17,7 @@ endif()
 if(TARGET engine::physics_scene)
 	gameengine_add_test_executable(physics_scene_tests
 		LABELS physics integration
-		SOURCES Physics/scene_physics_tests.cpp
+		SOURCES Physics/scene_physics_tests.cpp Physics/ragdoll_scene_tests.cpp
 		LIBRARIES engine::physics_scene)
 endif()
 
@@ -28,6 +28,22 @@ if(TARGET engine::gameplay)
 		SOURCES Gameplay/gameplay_tests.cpp
 		LIBRARIES engine::gameplay)
 	target_compile_definitions(gameplay_tests PRIVATE "GAMEENGINE_SAMPLES_DIR=\"${CMAKE_SOURCE_DIR}/Samples\"")
+endif()
+
+# ozz-animation as the engine builds it, and Engine/Animation on it.
+if(TARGET engine::animation)
+	gameengine_add_test_executable(animation_tests
+		LABELS animation unit
+		SOURCES Animation/ozz_smoke_tests.cpp Animation/animation_tests.cpp
+		LIBRARIES gameengine::ozz engine::animation)
+	target_compile_definitions(animation_tests PRIVATE "GAMEENGINE_TEST_RESOURCES_DIR=\"${GAMEENGINE_RESOURCES_DIR}\"")
+endif()
+
+if(TARGET engine::effects)
+	gameengine_add_test_executable(effects_tests
+		LABELS effects unit
+		SOURCES Effects/particle_tests.cpp
+		LIBRARIES engine::effects)
 endif()
 
 if(TARGET engine::networking)
@@ -65,6 +81,29 @@ if(TARGET engine_editor_session)
 		LABELS editor unit
 		SOURCES Editor/editor_panels_tests.cpp
 		LIBRARIES engine_editor_session)
+	gameengine_add_test_executable(editor_effects_tests
+		LABELS editor effects unit
+		SOURCES Editor/editor_effects_tests.cpp
+		LIBRARIES engine_editor_session)
+	gameengine_add_test_executable(editor_animation_tests
+		LABELS editor animation unit
+		SOURCES Editor/editor_animation_tests.cpp
+		LIBRARIES engine_editor_session)
+	gameengine_add_test_executable(editor_ragdoll_tests
+		LABELS editor physics unit
+		SOURCES Editor/editor_ragdoll_tests.cpp
+		LIBRARIES engine_editor_session)
+	target_compile_definitions(editor_ragdoll_tests PRIVATE "GAMEENGINE_TEST_RESOURCES_DIR=\"${GAMEENGINE_RESOURCES_DIR}\"")
+	target_include_directories(editor_ragdoll_tests SYSTEM PRIVATE "${GAMEENGINE_RESOURCES_DIR}/glm")
+	gameengine_add_test_executable(editor_asset_path_tests
+		LABELS editor assets unit
+		SOURCES Editor/editor_asset_path_tests.cpp
+		LIBRARIES engine_editor_session)
+	gameengine_add_test_executable(editor_shooter_tests
+		LABELS editor gameplay unit
+		SOURCES Editor/editor_shooter_tests.cpp
+		LIBRARIES engine_editor_session)
+	target_compile_definitions(editor_shooter_tests PRIVATE "GAMEENGINE_TEST_SAMPLES_DIR=\"${CMAKE_SOURCE_DIR}/Samples\"")
 	target_compile_definitions(editor_panels_tests PRIVATE "GAMEENGINE_TEST_ASSETS_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/Assets\"")
 endif()
 
@@ -78,7 +117,7 @@ endif()
 if(TARGET engine::assets)
 	gameengine_add_test_executable(asset_tests
 		LABELS assets unit
-		SOURCES Assets/asset_tests.cpp
+		SOURCES Assets/asset_tests.cpp Assets/skin_tests.cpp Assets/virtual_path_tests.cpp
 		LIBRARIES engine::assets)
 	# Fixtures are read in place from the source tree; mutating cases copy them to the working directory.
 	target_compile_definitions(asset_tests PRIVATE "GAMEENGINE_TEST_ASSETS_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/Assets\""

@@ -74,4 +74,12 @@ public:
     }
     void unsubscribe(std::uint64_t token) { listeners_.erase(token); }
 };
+// The selection as Flecs tags on the entities of the scene being shown (Milestone 5, slice 7), for systems and queries
+// that work on the ECS. The SelectionSet stays the source of truth, since it keeps the order and the primary entity. The
+// session makes the tags match it before each frame, and the frame reads them to outline what is selected. They are not
+// scene components, so nothing saves, copies or undoes them.
+struct SelectedTag {};
+struct PrimarySelectedTag {}; // On the primary entity as well as SelectedTag.
+// Adds and removes the tags so that exactly the selected entities of `scene` carry them. Returns how many changed.
+std::size_t apply_selection_tags(Scene &scene, const SelectionSet &selection);
 } // namespace engine::editor

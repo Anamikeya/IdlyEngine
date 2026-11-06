@@ -61,6 +61,8 @@ void EditorUI::create_items() {
     for (const auto *id : {"Create.DirectionalLight", "Create.PointLight", "Create.SpotLight", "Create.Camera"}) command_item(id);
     ImGui::Separator();
     for (const auto *id : {"Create.FallingCube", "Create.FallingSphere", "Create.Floor"}) command_item(id);
+    ImGui::Separator();
+    command_item("Create.ParticleEmitter");
 }
 void EditorUI::create_menu() {
     if (!ImGui::BeginPopup("Create")) return;
@@ -76,6 +78,13 @@ std::string EditorUI::title() const {
 }
 LightComponent EditorUI::point_light() const { return LightComponent{LightType::Point, {1,1,1}, editor::EditorSession::point_light_lumens(session.environment().ev100), 10}; }
 void EditorUI::set_scene_path(const std::filesystem::path &path) { std::snprintf(scene_path.data(), scene_path.size(), "%s", path.string().c_str()); }
+void EditorUI::load_scene(const std::filesystem::path &file, bool keep_project) {
+    const auto project = keep_project ? std::filesystem::path{} : editor::EditorSession::project_of(file);
+    std::error_code ec;
+    const bool switching = !project.empty() && !std::filesystem::equivalent(project, session.project(), ec);
+    if (switching && !report(session.open_project(project), ("Opened the project " + project.generic_string()).c_str())) return;
+    announce(session.load(file), switching ? "Scene loaded, with the project it was saved in" : "Scene loaded (undoable)");
+}
 void EditorUI::open_sample() {
     if (!report(session.open_project(sample_project), "Opened the Physics Shooter sample project")) return;
     set_scene_path(sample_project / sample_scene);
@@ -99,7 +108,7 @@ void EditorUI::open_project(const std::filesystem::path &folder) {
 void EditorUI::perform(Pending action) {
     if (action == Pending::NewScene && report(session.new_scene(), "New scene"))
         std::snprintf(scene_path.data(), scene_path.size(), "%s", "Untitled.scene");
-    if (action == Pending::Load) announce(session.load(scene_path.data()), "Scene loaded (undoable)");
+    if (action == Pending::Load) load_scene(scene_path.data());
     if (action == Pending::OpenSample) open_sample();
     if (action == Pending::NewProject) create_project(utf8_path(project_path.data()));
     if (action == Pending::OpenProject) open_project(utf8_path(project_path.data()));
@@ -160,6 +169,7 @@ void EditorUI::docking() {
         ImGui::DockBuilderDockWindow("Inspector", right);
         ImGui::DockBuilderDockWindow("Lighting", right);
         ImGui::DockBuilderDockWindow("Material Editor", right);
+        ImGui::DockBuilderDockWindow("Effect Editor", right);
         ImGui::DockBuilderDockWindow("###3D Viewport", center);
         ImGui::DockBuilderDockWindow("Asset Browser", assets);
         ImGui::DockBuilderDockWindow("Message Log", messages_dock);
@@ -227,7 +237,7 @@ void EditorUI::draw() {
     finish_imports();
     main_menu();
     // Before the viewport: it extracts the frame, whose handles must be those of the latest import or reload.
-    docking(); toolbar(); hierarchy(); lighting(); material_editor(); inspector(); assets(); viewport();
+    docking(); toolbar(); hierarchy(); lighting(); material_editor(); effect_editor(); animation_panel(); inspector(); assets(); viewport();
     console_panel();
     message_log_panel();
     picker_window();

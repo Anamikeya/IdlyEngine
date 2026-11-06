@@ -54,6 +54,7 @@ While a text field has the keyboard, only Ctrl+P and Ctrl+Shift+P fire.
 | Reload |  | AssetBrowser | `Asset.Reload` |
 | Rename or Move | `F2` | AssetBrowser | `Asset.Rename` |
 | Favorite |  | AssetBrowser | `Asset.ToggleFavorite` |
+| Fix Up Redirectors |  | Global | `Assets.FixUpRedirectors` |
 
 ## Create
 
@@ -70,6 +71,7 @@ While a text field has the keyboard, only Ctrl+P and Ctrl+Shift+P fire.
 | Falling Cube |  | Global | `Create.FallingCube` |
 | Falling Sphere |  | Global | `Create.FallingSphere` |
 | Floor |  | Global | `Create.Floor` |
+| Particle Emitter |  | Global | `Create.ParticleEmitter` |
 | Child Empty |  | Outliner | `Create.ChildEmpty` |
 | Child Cube |  | Outliner | `Create.ChildCube` |
 | Child Sphere |  | Outliner | `Create.ChildSphere` |
@@ -87,6 +89,12 @@ While a text field has the keyboard, only Ctrl+P and Ctrl+Shift+P fire.
 | Show Shadows |  | Viewport | `Viewport.ShowShadows` |
 | Show Ambient Occlusion |  | Viewport | `Viewport.ShowAmbientOcclusion` |
 | Show Bloom |  | Viewport | `Viewport.ShowBloom` |
+| Play Effects |  | Viewport | `Viewport.ShowEffects` |
+| Restart Effects |  | Viewport | `Viewport.RestartEffects` |
+| Play Animations |  | Viewport | `Viewport.ShowAnimations` |
+| Restart Animations |  | Viewport | `Viewport.RestartAnimations` |
+| Show Bones |  | Viewport | `Viewport.ShowBones` |
+| Show Ragdolls |  | Viewport | `Viewport.ShowRagdolls` |
 | Game View | `G` | Viewport | `Viewport.GameView` |
 | Maximize Viewport | `F11` | Viewport | `Viewport.Maximize` |
 | Perspective | `Alt+G` | Viewport | `Viewport.Perspective` |
@@ -138,6 +146,8 @@ While a text field has the keyboard, only Ctrl+P and Ctrl+Shift+P fire.
 | Pause |  | Global | `Play.Pause` |
 | Step |  | Global | `Play.Step` |
 | Stop |  | Global | `Play.Stop` |
+| Ragdoll Selected |  | Global | `Play.Ragdoll` |
+| Drop Debris |  | Global | `Play.DropDebris` |
 
 ## Find
 
@@ -164,6 +174,8 @@ While a text field has the keyboard, only Ctrl+P and Ctrl+Shift+P fire.
 | Inspector |  | Global | `Window.Inspector` |
 | Lighting |  | Global | `Window.Lighting` |
 | Material Editor |  | Global | `Window.MaterialEditor` |
+| Effect Editor |  | Global | `Window.EffectEditor` |
+| Animation |  | Global | `Window.Animation` |
 | Asset Browser |  | Global | `Window.AssetBrowser` |
 | Console |  | Global | `Window.Console` |
 | Message Log |  | Global | `Window.MessageLog` |

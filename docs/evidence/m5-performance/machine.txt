@@ -1,0 +1,5 @@
+cpu AMD Ryzen 7 5800X 8-Core Processor
+memory_gb 127.9
+gpu Meta Virtual Monitor at  Hz, x
+gpu NVIDIA GeForce RTX 3080 at 59 Hz, 3840x2160
+os Microsoft Windows 10 Pro

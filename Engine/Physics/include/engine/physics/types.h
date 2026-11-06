@@ -41,6 +41,7 @@ enum class PhysicsError : std::uint8_t {
 	InvalidBody,
 	InvalidCollider,
 	InvalidArgument,
+	InvalidJoint,
 };
 
 const char* to_string(PhysicsError error) noexcept;
@@ -81,10 +82,60 @@ struct ColliderHandle {
 	friend bool operator==(const ColliderHandle&, const ColliderHandle&) = default;
 };
 
+struct JointHandle {
+	std::uint64_t value = 0;
+
+	[[nodiscard]] bool is_null() const noexcept { return value == 0; }
+	friend bool operator==(const JointHandle&, const JointHandle&) = default;
+};
+
 enum class BodyType : std::uint8_t {
 	Static,
 	Kinematic,
 	Dynamic,
+};
+
+enum class JointType : std::uint8_t {
+	// Ball and socket: body b turns about the shared point, within a cone and a twist range.
+	Spherical,
+	// Hinge: body b turns about the z axis of the frames, within the twist range.
+	Revolute,
+	// No constraint: the two bodies stop colliding with each other.
+	Filter,
+};
+
+// Two bodies held together (Milestone 5, D7). Each frame is in its body's local space; the joint is at rest when both
+// coincide in world space. Angles are radians.
+struct JointDesc {
+	JointType type = JointType::Spherical;
+	BodyHandle body_a;
+	BodyHandle body_b;
+	Pose frame_a;
+	Pose frame_b;
+	// Spherical: how far frame b's z axis may swing away from frame a's, within [0, pi].
+	bool limit_cone = true;
+	float cone = 0.7f;
+	// Spherical: turning of frame b about its own z axis. Revolute: the hinge angle. Within [-0.99 pi, 0.99 pi].
+	bool limit_twist = true;
+	float twist_lower = -0.35f;
+	float twist_upper = 0.35f;
+	// Torque in N*m that resists turning either way, like friction in the joint. 0 turns freely.
+	float friction_torque = 0.0f;
+	// A spring pulling the joint back towards rest; 0 Hz is none.
+	float spring_hertz = 0.0f;
+	float spring_damping = 0.7f;
+	// Whether the two bodies still collide with each other. Filter joints never let them.
+	bool collide_connected = false;
+};
+
+// Where a joint is now, for checking that limits hold.
+struct JointState {
+	JointType type = JointType::Spherical;
+	float cone = 0.0f;  // Spherical: the swing angle.
+	float twist = 0.0f; // Spherical: the twist angle. Revolute: the hinge angle.
+	// How far the frames' origins have drifted apart in meters, and their axes in radians beyond what the joint allows.
+	float linear_separation = 0.0f;
+	float angular_separation = 0.0f;
 };
 
 struct BodyDesc {

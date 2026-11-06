@@ -228,7 +228,9 @@ Result<void> write_scene(std::ostream &out, const SceneSnapshot &s) {
             components += e.components.mesh.has_value() + e.components.camera.has_value() +
                           e.components.light.has_value() + e.components.body.has_value() +
                           e.components.colliders.size() + e.components.environment.has_value() +
-                          e.components.behaviors.size() +
+                          e.components.behaviors.size() + e.components.emitter.has_value() +
+                          e.components.animator.has_value() + e.components.attach.has_value() +
+                          (e.components.ragdoll ? 1 + e.components.ragdoll->bones.size() : 0) +
                           (e.components.mesh ? e.components.mesh->material_slots.size() : 0);
         out << "COMPONENTS " << components << '\n';
         for (const auto &e : s.entities) {
@@ -288,6 +290,26 @@ Result<void> write_scene(std::ostream &out, const SceneSnapshot &s) {
                     out << ' ' << key << ' ' << value;
                 out << '\n';
             }
+            if (const auto &p = e.components.emitter) {
+                out << "EMITTER " << e.id << ' ';
+                write_ref(out, p->effect);
+                out << ' ' << (p->auto_play ? 1 : 0) << ' ' << (p->loop ? 1 : 0) << ' ' << p->rate_scale << '\n';
+            }
+            if (const auto &a = e.components.animator) {
+                out << "ANIMATOR " << e.id << ' ';
+                write_ref(out, a->clips);
+                out << ' ' << std::quoted(a->clip) << ' ' << a->speed << ' ' << (a->loop ? 1 : 0) << ' ' << a->start_time << ' '
+                    << (a->preview ? 1 : 0) << '\n';
+            }
+            if (const auto &b = e.components.attach)
+                out << "ATTACH " << e.id << ' ' << std::quoted(b->bone) << '\n';
+            if (const auto &r = e.components.ragdoll) {
+                out << "RAGDOLL " << e.id << ' ' << static_cast<int>(r->trigger) << ' ' << r->density << ' ' << r->swing_degrees << ' '
+                    << r->twist_degrees << ' ' << r->joint_friction << '\n';
+                for (const auto &b : r->bones)
+                    out << "RAGBONE " << e.id << ' ' << std::quoted(b.bone) << ' ' << static_cast<int>(b.body) << ' ' << b.radius << ' '
+                        << b.density << ' ' << b.swing_degrees << ' ' << b.twist_degrees << '\n';
+            }
         }
         if (!out)
             return fail(ErrorCode::ParseError, "Scene output stream failed");
@@ -330,8 +352,10 @@ Result<SceneSnapshot> read_scene(std::istream &in) {
                 return fail(ErrorCode::ParseError, "Missing or malformed COMPONENTS section");
             // Version 2 defined no component kinds; version 3 allows one MESH, CAMERA and LIGHT per entity;
             // version 4 adds one BODY and up to max_colliders_per_entity COLLIDER records; version 6 adds one
-            // ENVIRONMENT and up to max_material_slots MATSLOT and max_behaviors_per_entity BEHAVIOR records.
-            const std::size_t per_entity = version >= 6   ? 5 + max_colliders_per_entity + max_material_slots + max_behaviors_per_entity
+            // ENVIRONMENT and up to max_material_slots MATSLOT and max_behaviors_per_entity BEHAVIOR records;
+            // version 7 adds one EMITTER, ANIMATOR, ATTACH and RAGDOLL, and up to max_ragdoll_bones RAGBONE records.
+            const std::size_t per_entity = version >= 7   ? 9 + max_colliders_per_entity + max_material_slots + max_behaviors_per_entity + max_ragdoll_bones
+                                           : version >= 6 ? 5 + max_colliders_per_entity + max_material_slots + max_behaviors_per_entity
                                            : version >= 4 ? 4 + max_colliders_per_entity
                                            : version >= 3 ? 3
                                                           : 0;
@@ -348,8 +372,9 @@ Result<SceneSnapshot> read_scene(std::istream &in) {
                 const std::string kind = word;
                 const bool physics = kind == "BODY" || kind == "COLLIDER";
                 const bool v6_only = kind == "MATSLOT" || kind == "ENVIRONMENT" || kind == "BEHAVIOR";
-                if ((kind != "MESH" && kind != "CAMERA" && kind != "LIGHT" && !physics && !v6_only) || (physics && version < 4) ||
-                    (v6_only && version < 6))
+                const bool v7_only = kind == "EMITTER" || kind == "ANIMATOR" || kind == "ATTACH" || kind == "RAGDOLL" || kind == "RAGBONE";
+                if ((kind != "MESH" && kind != "CAMERA" && kind != "LIGHT" && !physics && !v6_only && !v7_only) ||
+                    (physics && version < 4) || (v6_only && version < 6) || (v7_only && version < 7))
                     return fail(ErrorCode::ParseError, "Unsupported component kind '" + kind + "'");
                 if (!reader.number(id) || !index.contains(id))
                     return fail(ErrorCode::ParseError, kind + " record names a missing entity");
@@ -451,6 +476,51 @@ Result<SceneSnapshot> read_scene(std::istream &in) {
                         b.values.push_back(std::move(entry));
                     }
                     c.behaviors.push_back(std::move(b));
+                } else if (kind == "EMITTER") {
+                    ParticleEmitterComponent p;
+                    int autoplay = -1, loop = -1;
+                    duplicate = c.emitter.has_value();
+                    parsed = reader.asset_ref(p.effect) && reader.number(autoplay) && reader.number(loop) &&
+                             reader.number(p.rate_scale) && (autoplay == 0 || autoplay == 1) && (loop == 0 || loop == 1);
+                    p.auto_play = autoplay == 1;
+                    p.loop = loop == 1;
+                    c.emitter = p;
+                } else if (kind == "ANIMATOR") {
+                    AnimatorComponent a;
+                    int loop = -1, preview = -1;
+                    duplicate = c.animator.has_value();
+                    parsed = reader.asset_ref(a.clips) && reader.name(a.clip, max_clip_name_bytes) && reader.number(a.speed) &&
+                             reader.number(loop) && reader.number(a.start_time) && reader.number(preview) && (loop == 0 || loop == 1) &&
+                             (preview == 0 || preview == 1);
+                    a.loop = loop == 1;
+                    a.preview = preview == 1;
+                    c.animator = a;
+                } else if (kind == "ATTACH") {
+                    AttachToBoneComponent b;
+                    duplicate = c.attach.has_value();
+                    parsed = reader.name(b.bone, max_clip_name_bytes);
+                    c.attach = b;
+                } else if (kind == "RAGDOLL") {
+                    RagdollComponent r;
+                    int trigger = -1;
+                    duplicate = c.ragdoll.has_value();
+                    parsed = reader.number(trigger) && trigger >= 0 && trigger <= 2 && reader.number(r.density) &&
+                             reader.number(r.swing_degrees) && reader.number(r.twist_degrees) && reader.number(r.joint_friction);
+                    r.trigger = static_cast<RagdollTrigger>(trigger);
+                    if (!duplicate)
+                        c.ragdoll = r;
+                } else if (kind == "RAGBONE") {
+                    // Settings for a bone of the RAGDOLL before it.
+                    if (!c.ragdoll)
+                        return fail(ErrorCode::ParseError, "RAGBONE record before its entity's RAGDOLL");
+                    RagdollBone b;
+                    int body = -1;
+                    duplicate = c.ragdoll->bones.size() >= max_ragdoll_bones;
+                    parsed = reader.name(b.bone, max_clip_name_bytes) && reader.number(body) && body >= 0 && body <= 2 &&
+                             reader.number(b.radius) && reader.number(b.density) && reader.number(b.swing_degrees) &&
+                             reader.number(b.twist_degrees);
+                    b.body = static_cast<RagdollBody>(body);
+                    c.ragdoll->bones.push_back(std::move(b));
                 } else {
                     LightComponent l;
                     int shadows = 0;
@@ -467,8 +537,8 @@ Result<SceneSnapshot> read_scene(std::istream &in) {
                     c.light = l;
                 }
                 if (duplicate)
-                    return fail(ErrorCode::ParseError, kind == "COLLIDER" ? "Too many COLLIDER records for one entity"
-                                                                         : "Duplicate " + kind + " record for one entity");
+                    return fail(ErrorCode::ParseError, kind == "COLLIDER" || kind == "RAGBONE" ? "Too many " + kind + " records for one entity"
+                                                                                               : "Duplicate " + kind + " record for one entity");
                 if (!parsed)
                     return fail(ErrorCode::ParseError, "Malformed " + kind + " record");
             }

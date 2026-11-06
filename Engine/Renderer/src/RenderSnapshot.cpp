@@ -42,19 +42,45 @@ bool unit(double value) {
 Result<Frame> extract_frame(const Scene &scene, FrameStamp stamp, const PerspectiveCamera &camera,
                             std::span<const MeshBinding> meshes,
                             std::span<const LightBinding> lights,
-                            const RenderEnvironment &environment, bool show_grid, double grid_spacing) {
+                            const RenderEnvironment &environment, bool show_grid, double grid_spacing,
+                            std::vector<RenderParticles> particles) {
     if (!scene.on_owner_thread())
         return fail(ErrorCode::WrongThread, "Frame extraction requires the scene owner thread");
     const auto camera_world = scene.world_transform(camera.entity);
     if (!camera_world)
         return fail(ErrorCode::NotFound, "Camera entity does not exist");
-    return extract_frame(scene, stamp, camera, *camera_world, meshes, lights, environment, show_grid, grid_spacing);
+    return extract_frame(scene, stamp, camera, *camera_world, meshes, lights, environment, show_grid, grid_spacing,
+                         std::move(particles));
+}
+std::vector<RenderParticles> clean_particles(std::vector<RenderParticles> particles) {
+    std::stable_sort(particles.begin(), particles.end(), [](const auto &a, const auto &b) { return a.key < b.key; });
+    std::vector<RenderParticles> out;
+    out.reserve(particles.size());
+    std::size_t total = 0;
+    const auto finite3 = [](const std::array<float, 3> &v) { return std::isfinite(v[0]) && std::isfinite(v[1]) && std::isfinite(v[2]); };
+    for (auto &batch : particles) {
+        if (!out.empty() && out.back().key == batch.key)
+            continue;
+        if ((batch.blend != ParticleBlendMode::Additive && batch.blend != ParticleBlendMode::Alpha) ||
+            !batch.texture.index != !batch.texture.generation || !nonnegative(batch.strength) || !nonnegative(batch.stretch))
+            continue;
+        std::erase_if(batch.particles, [&](const RenderParticle &p) {
+            return !finite3(p.position) || !finite3(p.velocity) || !std::isfinite(p.size) || p.size < 0 || !std::isfinite(p.rotation) ||
+                   !std::all_of(p.color.begin(), p.color.end(), [](float c) { return std::isfinite(c) && c >= 0; });
+        });
+        if (total + batch.particles.size() > max_frame_particles)
+            batch.particles.resize(max_frame_particles - total);
+        total += batch.particles.size();
+        out.push_back(std::move(batch));
+    }
+    return out;
 }
 Result<Frame> extract_frame(const Scene &scene, FrameStamp stamp, const PerspectiveCamera &camera,
                             const WorldTransform &camera_world,
                             std::span<const MeshBinding> meshes,
                             std::span<const LightBinding> lights,
-                            const RenderEnvironment &environment, bool show_grid, double grid_spacing) {
+                            const RenderEnvironment &environment, bool show_grid, double grid_spacing,
+                            std::vector<RenderParticles> particles) {
     if (!scene.on_owner_thread())
         return fail(ErrorCode::WrongThread, "Frame extraction requires the scene owner thread");
     if (!stamp.scene || meshes.size() > Scene::max_entities || lights.size() > Scene::max_entities)
@@ -101,13 +127,24 @@ Result<Frame> extract_frame(const Scene &scene, FrameStamp stamp, const Perspect
         for (const auto &part : binding.parts)
             if (!part.material.index || !part.material.generation)
                 return fail(ErrorCode::InvalidArgument, "Invalid part material handle");
-        const auto transform = scene.world_transform(binding.entity);
+        if (binding.pose && (binding.pose->size() > max_pose_joints ||
+                             !std::all_of(binding.pose->begin(), binding.pose->end(), [](const JointMatrix &m) {
+                                 return std::all_of(m.begin(), m.end(), [](float v) { return std::isfinite(v); });
+                             })))
+            return fail(ErrorCode::InvalidArgument, "Joint pose is too large or not finite");
+        // Something the run owns has no scene transform: it says where it is.
+        const bool owned = binding.entity >= runtime_object_base;
+        if (owned && !binding.world)
+            return fail(ErrorCode::InvalidArgument, "A runtime object needs its world transform");
+        auto transform = owned ? binding.world : scene.world_transform(binding.entity);
         if (!transform)
             return fail(ErrorCode::NotFound, "Mesh entity does not exist");
+        if (binding.world)
+            transform = binding.world;
         if (!finite(*transform))
             return fail(ErrorCode::InvalidArgument, "Non-finite mesh world transform");
         if (binding.visible)
-            frame.objects.push_back({binding.entity, binding.mesh, binding.material, *transform, binding.surface, binding.parts});
+            frame.objects.push_back({binding.entity, binding.mesh, binding.material, *transform, binding.surface, binding.parts, binding.pose, binding.outline});
     }
     seen.clear();
     for (const auto &binding : lights) {
@@ -119,9 +156,11 @@ Result<Frame> extract_frame(const Scene &scene, FrameStamp stamp, const Perspect
             (binding.kind == LightKind::Spot && (!nonnegative(binding.inner_cone_radians) || binding.outer_cone_radians < binding.inner_cone_radians ||
                                                  !std::isfinite(binding.outer_cone_radians) || binding.outer_cone_radians > std::numbers::pi / 2 + 1e-9)))
             return fail(ErrorCode::InvalidArgument, "Duplicate light entity or invalid light parameters");
-        const auto transform = scene.world_transform(binding.entity);
+        auto transform = scene.world_transform(binding.entity);
         if (!transform)
             return fail(ErrorCode::NotFound, "Light entity does not exist");
+        if (binding.world)
+            transform = binding.world;
         if (!finite(*transform))
             return fail(ErrorCode::InvalidArgument, "Non-finite light world transform");
         const auto &m = transform->matrix;
@@ -137,6 +176,7 @@ Result<Frame> extract_frame(const Scene &scene, FrameStamp stamp, const Perspect
               [](const auto &a, const auto &b) { return a.entity < b.entity; });
     std::sort(frame.lights.begin(), frame.lights.end(),
               [](const auto &a, const auto &b) { return a.entity < b.entity; });
+    frame.particles = clean_particles(std::move(particles));
     return Frame(std::make_shared<const FrameSnapshot>(std::move(frame)));
 }
 } // namespace engine::renderer

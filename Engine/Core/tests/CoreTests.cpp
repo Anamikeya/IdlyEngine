@@ -42,7 +42,7 @@ void creation_and_flecs() {
         ++count;
     });
     check(count == 1, "Entity not stored in Flecs");
-    check(registry().size() == 14, "Registry incomplete");
+    check(registry().size() == 18, "Registry incomplete");
     check(describe(Command{DeleteEntity{id}}).name == "entity.delete", "Typed registry mismatch");
 }
 void permissions_and_revision() {
@@ -225,7 +225,7 @@ void physics_components() {
     check(parsed.value().entities[0].components.colliders.size() == 2 && parsed.value().entities[0].components.body,
           "Several colliders and one body per entity");
     // The example in docs/architecture/006-scene-format.md, verbatim: it loads and is what the writer emits.
-    const std::string documented = "ENGINE_SCENE 6 5 4\n"
+    const std::string documented = "ENGINE_SCENE 7 5 4\n"
                                    "ENTITY 1 0 \"Ball\" 0 0.5 0 0 0 0 1 1 1 1\n"
                                    "ENTITY 2 0 \"Sun\" 0 4 0 0 0 0 1 1 1 1\n"
                                    "ENTITY 3 0 \"Camera\" 0 1.5 6 0 0 0 1 1 1 1\n"
@@ -456,7 +456,7 @@ void format_v6() {
     std::ostringstream out;
     ok(write_scene(out, scene.snapshot()));
     const std::string text = out.str();
-    for (const char *expected : {"ENGINE_SCENE 6 ", "MATSLOT 1 3 0000000000000002 \"materials/two.material\"\n",
+    for (const char *expected : {"ENGINE_SCENE 7 ", "MATSLOT 1 3 0000000000000002 \"materials/two.material\"\n",
                                  "LIGHT 1 spot 1 1 1 100000 10 10 20 1\n", " 1 0 1\n", "ENVIRONMENT 1 image 0000000000000009 \"environments/sky.hdr\" ",
                                  " 7.5 pbr_neutral high 60 1 0\n", "BEHAVIOR 1 health 2 max 50 regen 0.25\n", "BEHAVIOR 1 target 0\n", " 0 0 4 3\n"})
         check(text.find(expected) != std::string::npos, expected);
@@ -553,7 +553,7 @@ void malformed_serialization() {
     for (const auto *text :
          {"WRONG 1 1 0", "ENGINE_SCENE 2 1 0", "ENGINE_SCENE 1 0 0", "ENGINE_SCENE 1 1 100001",
           "ENGINE_SCENE 1 1 0 trailing", "ENGINE_SCENE 1 2 1 ENTITY 1 0 \"x\" 0 0",
-          "ENGINE_SCENE 0 1 0", "ENGINE_SCENE 7 1 0 COMPONENTS 0", "ENGINE_SCENE 2 1 0 COMPONENTS",
+          "ENGINE_SCENE 0 1 0", "ENGINE_SCENE 8 1 0 COMPONENTS 0", "ENGINE_SCENE 2 1 0 COMPONENTS",
           "ENGINE_SCENE 2 1 0 COMPONENTS -1", "ENGINE_SCENE 2 1 0 COMPONENTS 1 MESH 1",
           "ENGINE_SCENE 2 1 0 COMPONENTS 0 trailing", "ENGINE_SCENE 1 1 0 COMPONENTS 0"}) {
         std::istringstream in(text);
@@ -812,11 +812,183 @@ void timing_extremes() {
     error(invalid.start(), ErrorCode::InvalidArgument);
 }
 
+// Version 7: one EMITTER per entity. Older versions refuse it; values are checked.
+void format_v7() {
+    Scene scene;
+    CommandBus b(scene);
+    Components all;
+    all.emitter = ParticleEmitterComponent{{0x00000000000000ab, "effects/spark s.effect"}, false, true, 2.5};
+    auto created = b.execute(owner, 0, CreateEntity{"Sparks", {}, 0, 0, all});
+    ok(created);
+    const auto id = created.value().created.front();
+    check(scene.inspect(id)->components == all, "The emitter is stored");
+    std::ostringstream out;
+    ok(write_scene(out, scene.snapshot()));
+    const std::string text = out.str();
+    check(text.find("EMITTER 1 00000000000000ab \"effects/spark s.effect\" 0 1 2.5\n") != std::string::npos, text.c_str());
+    std::istringstream in(text);
+    auto parsed = read_scene(in);
+    ok(parsed);
+    check(parsed.value().entities[0].components == all, "Format 7 round trip");
+    // Changed and removed through its command, with undo.
+    auto changed = all.emitter;
+    changed->rate_scale = 0;
+    ok(b.execute(owner, b.revision(), SetParticleEmitter{id, changed}));
+    check(scene.inspect(id)->components.emitter->rate_scale == 0, "The emitter command changes it");
+    ok(b.execute(owner, b.revision(), SetParticleEmitter{id, std::nullopt}));
+    check(!scene.inspect(id)->components.emitter, "An empty emitter command removes it");
+    ok(b.undo(owner, b.revision()));
+    check(scene.inspect(id)->components.emitter == changed, "Undo restores it");
+    const std::string head = " 2 1 ENTITY 1 0 \"A\" 0 0 0 0 0 0 1 1 1 1 COMPONENTS ";
+    for (const std::string bad : {"ENGINE_SCENE 6" + head + "1 EMITTER 1 - 1 1 1",
+                                  "ENGINE_SCENE 7" + head + "2 EMITTER 1 - 1 1 1 EMITTER 1 - 1 1 1",
+                                  "ENGINE_SCENE 7" + head + "1 EMITTER 1 - 2 1 1",
+                                  "ENGINE_SCENE 7" + head + "1 EMITTER 1 - 1 1 -1",
+                                  "ENGINE_SCENE 7" + head + "1 EMITTER 1 - 1 1 1001",
+                                  "ENGINE_SCENE 7" + head + "1 EMITTER 1 0000000000000001 1 1 1"}) {
+        std::istringstream rejected(bad);
+        check(!read_scene(rejected), bad.c_str());
+    }
+    std::istringstream empty_effect("ENGINE_SCENE 7" + head + "1 EMITTER 1 - 1 0 0");
+    auto plain = read_scene(empty_effect);
+    ok(plain);
+    check(plain.value().entities[0].components.emitter == ParticleEmitterComponent{{}, true, false, 0},
+          "An emitter without an effect is allowed");
+}
+
+// Version 7 also has one ANIMATOR and one ATTACH per entity (Milestone 5 slice 3).
+void format_v7_animation() {
+    Scene scene;
+    CommandBus b(scene);
+    Components character;
+    character.animator = AnimatorComponent{{0x00000000000000cd, "chars/walk \"cycle\".glb"}, "Walk \"fast\"", -1.5, false, 0.25, false};
+    auto made = b.execute(owner, 0, CreateEntity{"Hero", {}, 0, 0, character});
+    ok(made);
+    const auto hero = made.value().created.front();
+    Components sword;
+    sword.attach = AttachToBoneComponent{"hand.R"};
+    auto held = b.execute(owner, b.revision(), CreateEntity{"Sword", {}, hero, 0, sword});
+    ok(held);
+    const auto blade = held.value().created.front();
+    check(scene.inspect(hero)->components == character && scene.inspect(blade)->components == sword, "Animator and attachment are stored");
+    std::ostringstream out;
+    ok(write_scene(out, scene.snapshot()));
+    const std::string text = out.str();
+    check(text.find("ANIMATOR 1 00000000000000cd \"chars/walk \\\"cycle\\\".glb\" \"Walk \\\"fast\\\"\" -1.5 0 0.25 0\n") != std::string::npos, text.c_str());
+    check(text.find("ATTACH 2 \"hand.R\"\n") != std::string::npos, text.c_str());
+    std::istringstream in(text);
+    auto parsed = read_scene(in);
+    ok(parsed);
+    check(parsed.value() == scene.snapshot(), "Animator and attachment round trip");
+    // The defaults: the model's own clips, no clip yet, speed 1, looping, from the start, previewed.
+    auto plain_animator = AnimatorComponent{};
+    ok(b.execute(owner, b.revision(), SetAnimator{hero, plain_animator}));
+    check(scene.inspect(hero)->components.animator == plain_animator, "The animator command changes it");
+    ok(b.execute(owner, b.revision(), SetAttachToBone{blade, std::nullopt}));
+    check(!scene.inspect(blade)->components.attach, "An empty attach command removes it");
+    ok(b.undo(owner, b.revision()));
+    check(scene.inspect(blade)->components.attach == sword.attach, "Undo restores it");
+    std::ostringstream again;
+    ok(write_scene(again, scene.snapshot()));
+    check(again.str().find("ANIMATOR 1 - \"\" 1 1 0 1\n") != std::string::npos, again.str().c_str());
+    // Invalid values are refused by the command and by the reader.
+    auto fast = plain_animator;
+    fast.speed = 11;
+    error(b.execute(owner, b.revision(), SetAnimator{hero, fast}), ErrorCode::InvalidArgument);
+    error(b.execute(owner, b.revision(), SetAttachToBone{blade, AttachToBoneComponent{""}}), ErrorCode::InvalidArgument);
+    const std::string head = " 2 1 ENTITY 1 0 \"A\" 0 0 0 0 0 0 1 1 1 1 COMPONENTS ";
+    for (const std::string bad : {"ENGINE_SCENE 6" + head + "1 ANIMATOR 1 - \"\" 1 1 0 1",
+                                  "ENGINE_SCENE 6" + head + "1 ATTACH 1 \"hand\"",
+                                  "ENGINE_SCENE 7" + head + "2 ANIMATOR 1 - \"\" 1 1 0 1 ANIMATOR 1 - \"\" 1 1 0 1",
+                                  "ENGINE_SCENE 7" + head + "2 ATTACH 1 \"a\" ATTACH 1 \"b\"",
+                                  "ENGINE_SCENE 7" + head + "1 ANIMATOR 1 - \"\" 1 2 0 1",
+                                  "ENGINE_SCENE 7" + head + "1 ANIMATOR 1 - \"\" 1 1 -1 1",
+                                  "ENGINE_SCENE 7" + head + "1 ANIMATOR 1 - \"\" -10.5 1 0 1",
+                                  "ENGINE_SCENE 7" + head + "1 ANIMATOR 1 - Walk 1 1 0 1",
+                                  "ENGINE_SCENE 7" + head + "1 ATTACH 1 \"\"",
+                                  "ENGINE_SCENE 7" + head + "1 ATTACH 1"}) {
+        std::istringstream rejected(bad);
+        check(!read_scene(rejected), bad.c_str());
+    }
+}
+
+void format_v7_ragdoll() {
+    Scene scene;
+    CommandBus b(scene);
+    Components character;
+    RagdollComponent ragdoll;
+    ragdoll.trigger = RagdollTrigger::OnDemand;
+    ragdoll.density = 985;
+    ragdoll.swing_degrees = 35;
+    ragdoll.twist_degrees = 17.5;
+    ragdoll.joint_friction = 0.25;
+    ragdoll.bones = {{"hand \"L\"", RagdollBody::Own, 0.0625, 0, -1, -1}, {"tail", RagdollBody::None, 0, 0, -1, -1},
+                     {"spine", RagdollBody::Auto, 0, 1200, 30, 10}};
+    character.ragdoll = ragdoll;
+    auto made = b.execute(owner, 0, CreateEntity{"Hero", {}, 0, 0, character});
+    ok(made);
+    const auto hero = made.value().created.front();
+    check(scene.inspect(hero)->components == character, "The ragdoll is stored");
+    std::ostringstream out;
+    ok(write_scene(out, scene.snapshot()));
+    const std::string text = out.str();
+    check(text.find("COMPONENTS 4\n") != std::string::npos, text.c_str());
+    check(text.find("RAGDOLL 1 1 985 35 17.5 0.25\n") != std::string::npos, text.c_str());
+    check(text.find("RAGBONE 1 \"hand \\\"L\\\"\" 1 0.0625 0 -1 -1\nRAGBONE 1 \"tail\" 2 0 0 -1 -1\nRAGBONE 1 \"spine\" 0 0 1200 30 10\n") !=
+              std::string::npos, text.c_str());
+    std::istringstream in(text);
+    auto parsed = read_scene(in);
+    ok(parsed);
+    check(parsed.value() == scene.snapshot(), "Ragdoll and its bones round trip");
+    // The defaults: on death, water's density, 40 degrees of swing, 20 of twist, friction 0.5, no bone settings.
+    ok(b.execute(owner, b.revision(), SetRagdoll{hero, RagdollComponent{}}));
+    check(scene.inspect(hero)->components.ragdoll == RagdollComponent{}, "The ragdoll command changes it");
+    std::ostringstream plain;
+    ok(write_scene(plain, scene.snapshot()));
+    check(plain.str().find("RAGDOLL 1 0 1000 40 20 0.5\n") != std::string::npos && plain.str().find("RAGBONE") == std::string::npos, plain.str().c_str());
+    ok(b.execute(owner, b.revision(), SetRagdoll{hero, std::nullopt}));
+    check(!scene.inspect(hero)->components.ragdoll, "An empty ragdoll command removes it");
+    ok(b.undo(owner, b.revision()));
+    check(scene.inspect(hero)->components.ragdoll == RagdollComponent{}, "Undo restores it");
+    // Invalid values are refused by the command and by the reader.
+    const auto refused = [&](auto change) {
+        auto bad = ragdoll;
+        change(bad);
+        error(b.execute(owner, b.revision(), SetRagdoll{hero, bad}), ErrorCode::InvalidArgument);
+    };
+    refused([](RagdollComponent &r) { r.density = 0; });
+    refused([](RagdollComponent &r) { r.swing_degrees = 181; });
+    refused([](RagdollComponent &r) { r.twist_degrees = 179; });
+    refused([](RagdollComponent &r) { r.joint_friction = -1; });
+    refused([](RagdollComponent &r) { r.trigger = static_cast<RagdollTrigger>(7); });
+    refused([](RagdollComponent &r) { r.bones.push_back(r.bones.front()); });
+    refused([](RagdollComponent &r) { r.bones.front().bone.clear(); });
+    refused([](RagdollComponent &r) { r.bones.front().radius = -0.1; });
+    refused([](RagdollComponent &r) { r.bones.front().swing_degrees = -2; });
+    refused([](RagdollComponent &r) { r.bones.front().body = static_cast<RagdollBody>(3); });
+    refused([](RagdollComponent &r) { r.bones.resize(max_ragdoll_bones + 1, RagdollBone{"x"}); });
+    const std::string head = " 2 1 ENTITY 1 0 \"A\" 0 0 0 0 0 0 1 1 1 1 COMPONENTS ";
+    for (const std::string bad : {"ENGINE_SCENE 6" + head + "1 RAGDOLL 1 0 1000 40 20 0.5",
+                                  "ENGINE_SCENE 7" + head + "1 RAGBONE 1 \"a\" 0 0 0 -1 -1",
+                                  "ENGINE_SCENE 7" + head + "2 RAGDOLL 1 0 1000 40 20 0.5 RAGDOLL 1 0 1000 40 20 0.5",
+                                  "ENGINE_SCENE 7" + head + "1 RAGDOLL 1 3 1000 40 20 0.5",
+                                  "ENGINE_SCENE 7" + head + "1 RAGDOLL 1 0 1000 40 20",
+                                  "ENGINE_SCENE 7" + head + "2 RAGDOLL 1 0 1000 40 20 0.5 RAGBONE 1 \"a\" 3 0 0 -1 -1",
+                                  "ENGINE_SCENE 7" + head + "3 RAGDOLL 1 0 1000 40 20 0.5 RAGBONE 1 \"a\" 0 0 0 -1 -1 RAGBONE 1 \"a\" 0 0 0 -1 -1",
+                                  "ENGINE_SCENE 7" + head + "2 RAGDOLL 1 0 1000 40 20 0.5 RAGBONE 1 a 0 0 0 -1 -1"}) {
+        std::istringstream rejected(bad);
+        check(!read_scene(rejected), bad.c_str());
+    }
+}
+
 } // namespace
 int main() {
     const std::pair<const char *, std::function<void()>> tests[] = {
         {"creation_and_flecs", creation_and_flecs},
         {"format_v6", format_v6},
+        {"format_v7", format_v7},
+        {"format_v7_animation", format_v7_animation},
+        {"format_v7_ragdoll", format_v7_ragdoll},
         {"permissions_and_revision", permissions_and_revision},
         {"atomic_batch", atomic_batch},
         {"hierarchy_and_cycles", hierarchy_and_cycles},

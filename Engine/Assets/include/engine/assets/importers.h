@@ -36,9 +36,13 @@ Result<TextureData> import_ppm(std::span<const std::uint8_t> bytes, const Import
 
 // Self-contained binary glTF 2.0. All primitives of the default scene become one mesh with node transforms
 // baked in and one SubMesh per primitive. Factors, the five metallic-roughness maps, alpha mode and
-// double-sidedness are kept. Ignored features (skins, animation, morph targets, secondary UV sets, texture
-// transforms, non-triangle primitives) and unusable secondary maps are listed in MeshData::warnings.
+// double-sidedness are kept. Ignored features (morph targets, secondary UV sets, texture transforms,
+// non-triangle primitives, unused skins) and unusable secondary maps are listed in MeshData::warnings.
 // External files, Draco and other required extensions are errors.
+// Skins and animated nodes give the mesh a skeleton (MeshData::skin): skinned primitives keep their bind-space
+// vertices, every other part is baked as it rests and follows the nearest joint above it. Each animation becomes
+// an AnimationClip. More than 4 influences keep the strongest 4; a model needing more than max_skin_bindings bones
+// is refused. ImportSettings::mesh_scale scales joint, key and inverse bind translations along with the vertices.
 Result<MeshData> import_glb(std::span<const std::uint8_t> bytes, const ImportSettings& settings = {},
 	const ImportLimits& limits = {});
 
@@ -63,6 +67,13 @@ Result<MaterialData> parse_material(std::string_view text);
 // The same range checks parse_material applies.
 Result<void> validate_material(const MaterialData& material);
 
+// Particle effects (.effect): a versioned key/value text file, like materials. Unknown or repeated keys are errors;
+// missing keys keep their defaults.
+Result<EffectData> parse_effect(std::string_view text);
+[[nodiscard]] std::string write_effect(const EffectData& effect);
+// The same range checks parse_effect applies.
+Result<void> validate_effect(const EffectData& effect);
+
 // Sidecar "<asset>.meta", version 1:
 //   version = 1
 //   id = 0123456789abcdef      (optional)
@@ -72,7 +83,12 @@ Result<void> validate_material(const MaterialData& material);
 struct MetaFile {
 	std::optional<AssetId> id;
 	ImportSettings settings;
+	std::vector<ClipEvent> events; // One line each: event = <time> <name> "<clip>".
 };
+
+// Checks names, times and the count, and sorts by clip, time and name. Two events of one clip at one time with one
+// name are refused.
+Result<std::vector<ClipEvent>> normalize_clip_events(std::vector<ClipEvent> events);
 
 Result<MetaFile> parse_meta(std::string_view text);
 [[nodiscard]] std::string write_meta(const MetaFile& meta);

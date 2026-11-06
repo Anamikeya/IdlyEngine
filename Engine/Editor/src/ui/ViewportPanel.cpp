@@ -74,6 +74,9 @@ void EditorUI::viewport() {
     if (game && game_input.captured) session.select(0); // The view belongs to the player: no gizmo, no picking.
     update_camera(hovered, size.y);
     session.view_flags.grid = show_grid && !game_view;
+    // The renderer outlines what is selected around its silhouette (slice 7); the game's own view shows none.
+    session.view_flags.outlines = !game && !game_view;
+    renderer.set_outline_width(px(2) * io.DisplayFramebufferScale.x);
     session.grid_spacing = snap.grid_size;
     auto snapshot = session.frame(double(size.x) / size.y);
     if (!snapshot) { log(snapshot.error().message); ImGui::End(); return; }
@@ -82,7 +85,8 @@ void EditorUI::viewport() {
     ImGuizmo::SetOrthographic(frame->camera.lens.orthographic_half_height > 0);
     gizmo(origin, size);
     if (show_colliders && !game && !game_view) collider_outlines(origin, size);
-    if (!game && !game_view) selection_outlines(origin, size);
+    if (session.view_flags.bones && !game && !game_view) bone_overlay(origin, size);
+    if (session.view_flags.ragdolls && !game && !game_view) ragdoll_overlay(origin, size);
     report_physics();
     report_assets();
     if (const auto problem = session.take_view_state_problem(); !problem.empty()) log_error(problem);
@@ -227,7 +231,9 @@ void EditorUI::viewport_overlay(ImVec2 origin, ImVec2 size) {
     if (ImGui::BeginPopup("##view-mode")) {
         for (const auto *id : {"Viewport.Lit", "Viewport.Wireframe", "Viewport.Unlit"}) command_item(id);
         ImGui::SeparatorText("Show");
-        for (const auto *id : {"Viewport.ShowGrid", "Viewport.ToggleColliders", "Viewport.ShowMarkers", "Viewport.ShowSkybox", "Viewport.ShowShadows", "Viewport.ShowAmbientOcclusion", "Viewport.ShowBloom"}) command_item(id);
+        for (const auto *id : {"Viewport.ShowGrid", "Viewport.ToggleColliders", "Viewport.ShowMarkers", "Viewport.ShowSkybox", "Viewport.ShowShadows", "Viewport.ShowAmbientOcclusion", "Viewport.ShowBloom", "Viewport.ShowEffects", "Viewport.ShowAnimations", "Viewport.ShowBones"}) command_item(id);
+        command_item("Viewport.RestartEffects");
+        command_item("Viewport.RestartAnimations");
         ImGui::EndPopup();
     }
     // ---- Top right: snapping and camera speed, each a toggle and a value ----
@@ -278,7 +284,8 @@ void EditorUI::viewport_overlay(ImVec2 origin, ImVec2 size) {
 }
 void EditorUI::gizmo(ImVec2 origin, ImVec2 size) {
     const auto &io = ImGui::GetIO();
-    const auto world = session.scene().world_transform(session.selection());
+    // Where the selection is drawn: on its joint, when it is attached to one.
+    const auto world = session.drawn_world(session.selection());
     if (!world || possessed() || game_view) {
         if (gizmo_active && session.dragging()) (void)session.end_drag();
         if (gizmo_active) ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
@@ -419,23 +426,6 @@ void EditorUI::gizmo(ImVec2 origin, ImVec2 size) {
     if (gizmo_active && !using_now) ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     gizmo_active = using_now;
 }
-void EditorUI::selection_outlines(ImVec2 origin, ImVec2 size) {
-    auto *draw = ImGui::GetWindowDrawList();
-    for (const auto id : session.selected().items()) {
-        const auto bounds = session.local_bounds(id);
-        const auto world = session.scene().world_transform(id);
-        if (!bounds || !world) continue;
-        const auto m = glm::make_mat4(world->matrix.data());
-        const auto &[low, high] = *bounds;
-        std::array<std::optional<ImVec2>, 8> corners;
-        for (int i = 0; i < 8; ++i)
-            corners[std::size_t(i)] = project(glm::dvec3(m * glm::dvec4(i & 1 ? high.x : low.x, i & 2 ? high.y : low.y, i & 4 ? high.z : low.z, 1)), origin, size);
-        const ImU32 color = id == session.selection() ? IM_COL32(255, 170, 40, 255) : IM_COL32(255, 210, 120, 200);
-        for (int a = 0; a < 8; ++a)
-            for (const int bit : {1, 2, 4})
-                if (!(a & bit) && corners[std::size_t(a)] && corners[std::size_t(a | bit)]) draw->AddLine(*corners[std::size_t(a)], *corners[std::size_t(a | bit)], color, px(1.5f));
-    }
-}
 void EditorUI::game_overlay(gameplay::Game &game, ImVec2 origin, ImVec2 size, bool hovered) {
     const auto hud = game.hud();
     const auto clicked_view = hovered && !game_input.captured && ImGui::IsMouseReleased(0);
@@ -477,6 +467,28 @@ std::optional<ImVec2> EditorUI::project(glm::dvec3 p, ImVec2 origin, ImVec2 size
     if (clip.w <= 1e-6) return std::nullopt;
     return ImVec2(origin.x + float((clip.x / clip.w + 1) / 2) * size.x, origin.y + float((1 - clip.y / clip.w) / 2) * size.y);
 }
+void EditorUI::bone_overlay(ImVec2 origin, ImVec2 size) {
+    auto *draw = ImGui::GetWindowDrawList();
+    for (const auto &line : session.bone_lines()) {
+        const auto a = project({line.from.x, line.from.y, line.from.z}, origin, size), b = project({line.to.x, line.to.y, line.to.z}, origin, size);
+        if (!a || !b) continue;
+        const bool selected = session.selected().contains(line.entity);
+        const ImU32 color = selected ? IM_COL32(120, 230, 255, 255) : IM_COL32(150, 190, 210, 170);
+        draw->AddLine(*a, *b, color, px(selected ? 2.0f : 1.5f));
+        draw->AddCircleFilled(*b, px(selected ? 3.0f : 2.0f), color);
+    }
+}
+void EditorUI::ragdoll_overlay(ImVec2 origin, ImVec2 size) {
+    auto *draw = ImGui::GetWindowDrawList();
+    const auto c = physics::default_color(physics::DebugCategory::Ragdoll);
+    const ImU32 color = ImGui::ColorConvertFloat4ToU32({c[0], c[1], c[2], 0.75f}), chosen = ImGui::ColorConvertFloat4ToU32({c[0], c[1], c[2], 1});
+    for (const auto &line : session.ragdoll_lines()) {
+        const auto a = project({line.a.x, line.a.y, line.a.z}, origin, size), b = project({line.b.x, line.b.y, line.b.z}, origin, size);
+        if (!a || !b) continue;
+        const bool selected = session.selected().contains(line.entity);
+        draw->AddLine(*a, *b, selected ? chosen : color, px(selected ? 1.5f : 1.0f));
+    }
+}
 void EditorUI::collider_outlines(ImVec2 origin, ImVec2 size) {
     auto *draw = ImGui::GetWindowDrawList();
     for (const auto &line : session.physics_bridge().debug_geometry().lines) {
@@ -495,7 +507,7 @@ EntityId EditorUI::markers(ImVec2 origin, ImVec2 size) {
         if (!e.components.light && !e.components.camera) continue;
         if (!playing() && session.hidden(e.id)) continue;
         if (e.id == session.view_camera()) continue; // The camera being looked through sits at the eye.
-        const auto m = glm::make_mat4(session.scene().world_transform(e.id)->matrix.data());
+        const auto m = glm::make_mat4(session.drawn_world(e.id)->matrix.data());
         const glm::dvec3 at(m[3]);
         const auto screen = project(at);
         if (!screen) continue;

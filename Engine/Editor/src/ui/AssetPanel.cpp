@@ -39,6 +39,7 @@ ImU32 type_color(assets::AssetType type) {
     case assets::AssetType::Texture: return IM_COL32(85, 180, 95, 255);
     case assets::AssetType::Material: return IM_COL32(230, 150, 60, 255);
     case assets::AssetType::Environment: return IM_COL32(165, 105, 215, 255);
+    case assets::AssetType::Effect: return IM_COL32(55, 185, 200, 255);
     default: return IM_COL32(120, 120, 120, 255);
     }
 }
@@ -48,6 +49,7 @@ const char *type_label(assets::AssetType type) {
     case assets::AssetType::Texture: return "IMAGE";
     case assets::AssetType::Material: return "MATERIAL";
     case assets::AssetType::Environment: return "HDR";
+    case assets::AssetType::Effect: return "EFFECT";
     default: return "?";
     }
 }
@@ -56,6 +58,7 @@ assets::AssetType type_from_name(std::string_view name) {
     if (name == "texture") return assets::AssetType::Texture;
     if (name == "material") return assets::AssetType::Material;
     if (name == "environment") return assets::AssetType::Environment;
+    if (name == "effect") return assets::AssetType::Effect;
     return assets::AssetType::Unknown;
 }
 bool has_text(std::string_view text, std::string_view wanted) {
@@ -84,6 +87,7 @@ void EditorUI::update_thumbnails() {
         if (thumbnail_task) tasks.set_name(thumbnail_task, "Making thumbnails: " + std::to_string(++thumbnails_made) + " done");
         auto &state = thumbnails[data.id];
         state.vertices = data.vertices; state.triangles = data.triangles;
+        state.joints = data.joints; state.clips = data.clips;
         state.width = data.source_width; state.height = data.source_height;
         if (data.failed) { state.failed = true; continue; }
         if (data.type == assets::AssetType::Mesh) renderer.request_thumbnail(data.id.value, data.mesh, renderer::builtin_lit);
@@ -129,12 +133,21 @@ void EditorUI::draw_asset_picture(const assets::AssetMetadata &meta, ImVec2 at, 
 }
 void EditorUI::asset_tooltip(const assets::AssetMetadata &meta) {
     if (!ImGui::BeginItemTooltip()) return;
-    ImGui::TextUnformatted(meta.path.c_str());
+    // Its package name first, as Unreal shows it, then where the file is.
+    const auto package = session.package_name_of(meta.id);
+    ImGui::TextUnformatted(package.empty() ? meta.path.c_str() : package.c_str());
+    if (!package.empty()) ImGui::TextDisabled("%s", meta.path.c_str());
     ImGui::TextDisabled("%s, %s, %s", assets::to_string(meta.type), readable_size(meta.source_bytes).c_str(), assets::to_string(session.asset_state(meta.id)));
     const auto found = thumbnails.find(meta.id);
     if (found != thumbnails.end()) {
         if (found->second.width) ImGui::TextDisabled("%u x %u pixels", found->second.width, found->second.height);
         if (found->second.triangles) ImGui::TextDisabled("%zu triangles, %zu vertices", found->second.triangles, found->second.vertices);
+        if (found->second.joints) ImGui::TextDisabled("Skeleton of %zu joints", found->second.joints);
+        if (!found->second.clips.empty()) {
+            std::string names;
+            for (const auto &clip : found->second.clips) names += (names.empty() ? "" : ", ") + clip;
+            ImGui::TextDisabled("%zu animation%s: %s", found->second.clips.size(), found->second.clips.size() == 1 ? "" : "s", names.c_str());
+        }
     }
     ImGui::EndTooltip();
 }
@@ -149,12 +162,12 @@ void EditorUI::asset_item_input(const assets::AssetMetadata &meta) {
     if (ImGui::IsItemClicked(ImGuiMouseButton_Left)) selected_asset = meta.id;
     if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
         if (meta.type == assets::AssetType::Mesh) report(session.place_asset(meta.id), "Model added to the scene");
-        else if (meta.type == assets::AssetType::Material) registry.run("Asset.Edit");
+        else if (meta.type == assets::AssetType::Material || meta.type == assets::AssetType::Effect) registry.run("Asset.Edit");
     }
     if (ImGui::BeginDragDropSource()) {
         ImGui::SetDragDropPayload(asset_payload, &meta.id.value, sizeof meta.id.value);
         ImGui::Text("%s", file_name_of(meta.path).c_str());
-        ImGui::TextDisabled(meta.type == assets::AssetType::Mesh ? "Drop on the view to place it, or on a field" : "Drop on a matching field");
+        ImGui::TextDisabled(meta.type == assets::AssetType::Mesh || meta.type == assets::AssetType::Effect ? "Drop on the view to place it, or on a field" : "Drop on a matching field");
         ImGui::EndDragDropSource();
     }
     asset_tooltip(meta);
@@ -191,16 +204,40 @@ bool EditorUI::asset_field(std::string_view type_name, AssetRef &ref, bool mixed
     if (ImGui::BeginCombo("##pick", preview.c_str(), ImGuiComboFlags_HeightLarge)) {
         if (ImGui::IsWindowAppearing()) { asset_field_search[0] = 0; ImGui::SetKeyboardFocusHere(); }
         ImGui::SetNextItemWidth(-FLT_MIN);
-        ImGui::InputTextWithHint("##search", "Search", asset_field_search.data(), asset_field_search.size());
+        const bool entered = ImGui::InputTextWithHint("##search", "Search, or type a /Game/... name", asset_field_search.data(), asset_field_search.size(),
+                                                      ImGuiInputTextFlags_EnterReturnsTrue);
         mark("Field.Search");
-        if (ImGui::Selectable("(none)", ref.empty() && !mixed)) { ref = {}; changed = true; }
         const std::string_view wanted(asset_field_search.data());
+        // A package name typed in full, followed through redirectors (slice 7). Enter takes it.
+        if (wanted.starts_with('/')) {
+            const auto found = session.resolve_package(wanted);
+            if (!found) ImGui::TextDisabled("%s", found.error().message.c_str());
+            else if (found.value().type != type) ImGui::TextDisabled("%s is a %s", std::string(wanted).c_str(), assets::to_string(found.value().type));
+            else {
+                std::string label = session.package_name_of(found.value().id);
+                if (const auto hops = found.value().redirects.size()) label += "  (through " + std::to_string(hops) + (hops == 1 ? " redirector)" : " redirectors)");
+                if (ImGui::Selectable(label.c_str()) || entered) {
+                    ref = {found.value().id.value, found.value().asset_path};
+                    changed = true;
+                    ImGui::CloseCurrentPopup();
+                }
+                mark("Field.Resolved");
+            }
+        }
+        if (ImGui::Selectable("(none)", ref.empty() && !mixed)) { ref = {}; changed = true; }
         for (const auto &meta : catalogue) {
-            if (meta.type != type || !has_text(meta.path, wanted)) continue;
-            if (ImGui::Selectable(meta.path.c_str(), !mixed && ref.id == meta.id.value)) { ref = {meta.id.value, meta.path}; changed = true; }
+            if (meta.type != type) continue;
+            const auto package = session.package_name_of(meta.id);
+            if (!has_text(meta.path, wanted) && !has_text(package, wanted)) continue;
+            if (ImGui::Selectable((package.empty() ? meta.path : package).c_str(), !mixed && ref.id == meta.id.value)) { ref = {meta.id.value, meta.path}; changed = true; }
+            ImGui::SetItemTooltip("%s", meta.path.c_str());
             mark("Field.Item." + meta.path);
         }
         ImGui::EndCombo();
+    }
+    if (!mixed && !ref.empty()) {
+        const auto package = session.package_name_of(assets::AssetId{ref.id});
+        ImGui::SetItemTooltip("%s", (package.empty() ? ref.path : package).c_str());
     }
     mark("Field.Combo");
     if (ImGui::BeginDragDropTarget()) {
@@ -268,13 +305,20 @@ void EditorUI::asset_browser_contents() {
     }
     ImGui::SameLine();
     if (tip_button("Rescan", "Look through the asset folder again for changed files")) report(session.rescan_assets(), "Asset folder rescanned");
-    ImGui::SetNextItemWidth(px(110)); ImGui::InputText("##material-name", new_material_name.data(), new_material_name.size());
+    ImGui::SetNextItemWidth(px(110)); ImGui::InputTextWithHint("##material-name", "Name", new_material_name.data(), new_material_name.size());
+    mark("Asset.NewName");
     flow(button_width("New material"));
     if (tip_button("New material", "Make a material with the name to the left")) {
         const auto created = session.create_material(new_material_name.data());
         if (report(created, "Material created")) { selected_asset = created.value(); asset_scroll_to = selected_asset; }
     }
     mark("Asset.NewMaterial");
+    flow(button_width("New effect"));
+    if (tip_button("New effect", "Make a particle effect with the name to the left")) {
+        const auto created = session.create_effect(new_material_name.data(), starter_effect());
+        if (report(created, "Effect created")) { selected_asset = created.value(); asset_scroll_to = selected_asset; }
+    }
+    mark("Asset.NewEffect");
     flow(button_width("Duplicate"));
     ImGui::BeginDisabled(!have_material);
     if (ImGui::Button("Duplicate")) {
@@ -292,11 +336,18 @@ void EditorUI::asset_browser_contents() {
     mark("Asset.AddToScene");
     flow(button_width("Reload"));
     command_button("Asset.Reload", "Reload");
+    // Moves leave redirectors behind; while there are any, a button offers to fix up what still names them.
+    if (const auto redirectors = session.redirectors().size()) {
+        const std::string label = "Fix Up Redirectors (" + std::to_string(redirectors) + ")";
+        flow(button_width(label.c_str()));
+        command_button("Assets.FixUpRedirectors", label.c_str());
+        mark("Asset.FixUpRedirectors");
+    }
     ImGui::SetNextItemWidth(px(140));
     ImGui::InputTextWithHint("##asset-search", "Search assets", asset_search.data(), asset_search.size());
     mark("Asset.Search");
-    constexpr const char *chip_names[] = {"Model", "Image", "Material", "HDR"};
-    constexpr assets::AssetType chip_types[] = {assets::AssetType::Mesh, assets::AssetType::Texture, assets::AssetType::Material, assets::AssetType::Environment};
+    constexpr const char *chip_names[] = {"Model", "Image", "Material", "HDR", "Effect"};
+    constexpr assets::AssetType chip_types[] = {assets::AssetType::Mesh, assets::AssetType::Texture, assets::AssetType::Material, assets::AssetType::Environment, assets::AssetType::Effect};
     for (std::size_t i = 0; i < std::size(chip_names); ++i) {
         flow(button_width(chip_names[i]));
         if (asset_chips[i]) ImGui::PushStyleColor(ImGuiCol_Button, ImGui::ColorConvertU32ToFloat4(type_color(chip_types[i])));
@@ -427,7 +478,8 @@ void EditorUI::asset_browser_contents() {
 void EditorUI::rename_asset_dialog() {
     if (std::exchange(rename_asset_prompt, false)) ImGui::OpenPopup("Rename asset");
     if (!ImGui::BeginPopupModal("Rename asset", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) return;
-    ImGui::TextUnformatted("New path inside the asset folder. Slashes move it to another folder.");
+    ImGui::TextUnformatted("New path inside the asset folder, or a name such as /Game/Textures/Walls/Brick. Slashes move it\n"
+                           "to another folder. A redirector is left at the old path until Fix Up Redirectors.");
     if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
     ImGui::SetNextItemWidth(px(420));
     const bool entered = ImGui::InputText("##path", rename_asset_path.data(), rename_asset_path.size(), ImGuiInputTextFlags_EnterReturnsTrue);

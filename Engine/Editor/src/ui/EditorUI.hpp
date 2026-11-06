@@ -117,6 +117,8 @@ struct EditorUI {
     GLFWwindow *window;
     assets::MaterialData material_edit; // The Material Editor's working copy of the chosen material.
     assets::AssetId material_edit_id;
+    assets::EffectData effect_edit; // The Effect Editor's working copy of the chosen effect.
+    assets::AssetId effect_edit_id;
     std::array<char, 128> new_material_name{};
     std::array<char, 1024> project_path{};
     bool project_prompt = false, project_create = true;
@@ -172,6 +174,7 @@ struct EditorUI {
     void save_settings();
     // The UI's state, for the --game-log line.
     std::string log_fields() const;
+    std::string effect_fields() const;
     // Registers every command and binds its behavior; throws if the table and the bindings disagree.
     void bind_commands();
     void load_keymap();
@@ -243,6 +246,9 @@ struct EditorUI {
     std::string title() const;
     LightComponent point_light() const;
     void set_scene_path(const std::filesystem::path &path);
+    // Loads a scene file. A scene saved in another project (see EditorSession::project_of) opens that project first, so its
+    // assets come from where it was saved, unless `keep_project`: --project named the project.
+    void load_scene(const std::filesystem::path &file, bool keep_project = false);
     void open_sample();
     // A folder with an Assets folder and an empty scene: nothing of the sample comes along.
     void create_project(const std::filesystem::path &folder);
@@ -306,6 +312,26 @@ struct EditorUI {
     // One texture slot of the material: a combo of the project's textures. True when it changed.
     bool texture_slot(const char *label, assets::MaterialTexture &slot);
     void material_editor();
+    void effect_editor();
+    static assets::EffectData starter_effect();
+    // The Animation panel (Milestone 5): the selected animator's clips, a timeline to scrub, crossfades and layered
+    // clips to try, and the clip events kept in its model's .meta.
+    void animation_panel();
+    std::optional<std::pair<std::size_t, float>> event_drag; // An event's time being dragged: its index and value.
+    std::array<char, 33> event_name{'s', 't', 'e', 'p'};
+    float animation_blend = 0.2f;
+    // Names the Details panel offers for a text property: "clip" (the entity's clips) or "bone" (its parent's joints).
+    std::vector<std::string> name_suggestions(std::string_view kind, EntityId id) const;
+    std::array<char, 257> name_typed{};
+    // Lines between joints of the shown skeletons (View > Show Bones).
+    void bone_overlay(ImVec2 origin, ImVec2 size);
+    std::string animation_fields() const;
+    // Capsules of the shown ragdolls (View > Show Ragdolls).
+    void ragdoll_overlay(ImVec2 origin, ImVec2 size);
+    std::string ragdoll_fields() const;
+    // Play > Ragdoll Selected and Drop Debris.
+    void ragdoll_selected();
+    void drop_debris();
     // Puts physics problems in the Console once, when they appear.
     void report_physics();
     // Puts asset problems in the Console once, when they appear.
@@ -327,14 +353,13 @@ struct EditorUI {
     // Lights and cameras have no mesh, so they get clickable screen-space markers. Returns the hovered one.
     EntityId markers(ImVec2 origin, ImVec2 size);
     // A box around each selected entity, so a multi-selection shows without a gizmo on each.
-    void selection_outlines(ImVec2 origin, ImVec2 size);
     void gizmo(ImVec2 origin, ImVec2 size);
     // ---- Asset Browser ----
     enum class AssetSource { All, Favorites, Folder, Builtin, Scenes };
     AssetSource asset_source = AssetSource::All;
     std::string asset_folder;
     std::array<char, 128> asset_search{}, asset_field_search{};
-    std::array<bool, 4> asset_chips{};
+    std::array<bool, 5> asset_chips{};
     bool asset_list_view = false;
     assets::AssetId asset_scroll_to;
     bool asset_drawer_open = false, asset_drawer_focus = false;
@@ -345,7 +370,8 @@ struct EditorUI {
         bool requested = false, failed = false;
         renderer::MaterialHandle material;
         std::uint32_t width = 0, height = 0;
-        std::size_t vertices = 0, triangles = 0;
+        std::size_t vertices = 0, triangles = 0, joints = 0;
+        std::vector<std::string> clips;
     };
     std::map<assets::AssetId, AssetThumbnail> thumbnails;
     int thumbnail_cooldown = 0;
@@ -392,11 +418,13 @@ struct EditorUI {
     bool possessed() const { return session.game() && !session.ejected(); }
     // ---- Panels and layouts ----
     bool show_toolbar = true, show_hierarchy = true, show_inspector = true, show_lighting = true, show_material = true, show_assets = true, show_console = true;
+    // The Animation panel floats, closed until asked for: the right-hand dock's tabs would no longer fit.
+    bool show_effect = true, show_animation = false, focus_animation = false;
     bool layout_reset_requested = false, layout_prompt = false;
     std::array<char, 128> layout_name{};
     std::string pending_layout; // ImGui settings to load before the next frame.
     std::string saved_panels;   // Which panels were open when settings were last saved.
-    std::array<bool *, 8> panel_flags();
+    std::array<bool *, 10> panel_flags();
     void layout_dialog();
     std::vector<std::string> saved_layouts() const;
     void apply_pending_layout();

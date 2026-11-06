@@ -88,6 +88,51 @@ Result<void> validate_components(const Components &c) {
                     return fail(ErrorCode::InvalidArgument, "A behavior key appears twice");
         }
     }
+    if (const auto &p = c.emitter) {
+        if (!valid_ref(p->effect))
+            return fail(ErrorCode::InvalidArgument, "An asset reference needs both an ID and a short path, or neither");
+        if (!std::isfinite(p->rate_scale) || p->rate_scale < 0 || p->rate_scale > 1000)
+            return fail(ErrorCode::InvalidArgument, "Emitter rate scale must be within [0, 1000]");
+    }
+    // Clip and bone names: what a model file may call them, without control characters.
+    const auto joint_name = [](const std::string &text, bool allow_empty) {
+        return (allow_empty || !text.empty()) && text.size() <= max_clip_name_bytes &&
+               std::none_of(text.begin(), text.end(), [](char ch) { return static_cast<unsigned char>(ch) < 32 || ch == 127; });
+    };
+    if (const auto &a = c.animator) {
+        if (!valid_ref(a->clips))
+            return fail(ErrorCode::InvalidArgument, "An asset reference needs both an ID and a short path, or neither");
+        if (!joint_name(a->clip, true))
+            return fail(ErrorCode::InvalidArgument, "A clip name is at most 256 bytes, without control characters");
+        if (!std::isfinite(a->speed) || std::abs(a->speed) > 10 || !std::isfinite(a->start_time) || a->start_time < 0 || a->start_time > 3600)
+            return fail(ErrorCode::InvalidArgument, "Animator speed must be within [-10, 10] and start time within [0, 3600] s");
+    }
+    if (const auto &b = c.attach; b && !joint_name(b->bone, false))
+        return fail(ErrorCode::InvalidArgument, "A bone name is 1 to 256 bytes, without control characters");
+    if (const auto &r = c.ragdoll) {
+        const auto within = [](double v, double lo, double hi) { return std::isfinite(v) && v >= lo && v <= hi; };
+        if (r->trigger != RagdollTrigger::OnDeath && r->trigger != RagdollTrigger::OnDemand && r->trigger != RagdollTrigger::Never)
+            return fail(ErrorCode::InvalidArgument, "Unknown ragdoll trigger");
+        if (!within(r->density, 1, 100000) || !within(r->swing_degrees, 0, 180) || !within(r->twist_degrees, 0, 178) ||
+            !within(r->joint_friction, 0, 10))
+            return fail(ErrorCode::InvalidArgument,
+                        "Ragdoll density must be within [1, 100000], swing [0, 180], twist [0, 178] and joint friction [0, 10]");
+        if (r->bones.size() > max_ragdoll_bones)
+            return fail(ErrorCode::InvalidArgument, "A ragdoll has settings for at most 256 bones");
+        for (std::size_t i = 0; i < r->bones.size(); ++i) {
+            const auto &b = r->bones[i];
+            if (!joint_name(b.bone, false))
+                return fail(ErrorCode::InvalidArgument, "A bone name is 1 to 256 bytes, without control characters");
+            for (std::size_t k = 0; k < i; ++k)
+                if (r->bones[k].bone == b.bone)
+                    return fail(ErrorCode::InvalidArgument, "A ragdoll has settings for bone '" + b.bone + "' twice");
+            if ((b.body != RagdollBody::Auto && b.body != RagdollBody::Own && b.body != RagdollBody::None) || !within(b.radius, 0, 100) ||
+                !within(b.density, 0, 100000) || !(b.swing_degrees == -1 || within(b.swing_degrees, 0, 180)) ||
+                !(b.twist_degrees == -1 || within(b.twist_degrees, 0, 178)))
+                return fail(ErrorCode::InvalidArgument, "Ragdoll bone '" + b.bone +
+                                                            "': radius within [0, 100], density [0, 100000], swing -1 or [0, 180], twist -1 or [0, 178]");
+        }
+    }
     if (const auto &b = c.body) {
         if (b->kind != BodyKind::Static && b->kind != BodyKind::Kinematic && b->kind != BodyKind::Dynamic)
             return fail(ErrorCode::InvalidArgument, "Unknown rigid body kind");
@@ -221,6 +266,10 @@ Scene::Scene() {
     w.component<ColliderList>();
     w.component<EnvironmentComponent>();
     w.component<BehaviorList>();
+    w.component<ParticleEmitterComponent>();
+    w.component<AnimatorComponent>();
+    w.component<AttachToBoneComponent>();
+    w.component<RagdollComponent>();
 }
 std::optional<EntityRecord> Scene::inspect(EntityId id) const {
     if (!on_owner_thread())
@@ -231,7 +280,9 @@ std::optional<EntityRecord> Scene::inspect(EntityId id) const {
     const auto e = world_.native().entity(it->second);
     return EntityRecord{id, e.get<Name>().value, e.get<Parent>().value, e.get<Transform>(),
                         {read<MeshComponent>(e), read<CameraComponent>(e), read<LightComponent>(e),
-                         read<RigidBodyComponent>(e), read_colliders(e), read<EnvironmentComponent>(e), read_behaviors(e)}};
+                         read<RigidBodyComponent>(e), read_colliders(e), read<EnvironmentComponent>(e), read_behaviors(e),
+                         read<ParticleEmitterComponent>(e), read<AnimatorComponent>(e), read<AttachToBoneComponent>(e),
+                         read<RagdollComponent>(e)}};
 }
 SceneSnapshot Scene::snapshot() const {
     if (!on_owner_thread())
@@ -304,6 +355,10 @@ Result<void> Scene::commit(const SceneSnapshot &s) {
         mirror(e, record.components.colliders);
         mirror(e, record.components.environment);
         mirror(e, record.components.behaviors);
+        mirror(e, record.components.emitter);
+        mirror(e, record.components.animator);
+        mirror(e, record.components.attach);
+        mirror(e, record.components.ragdoll);
         const auto &desired_transform = transforms.value().at(record.id);
         if (!e.has<WorldTransform>() || e.get<WorldTransform>().matrix != desired_transform.matrix)
             e.set<WorldTransform>(desired_transform);

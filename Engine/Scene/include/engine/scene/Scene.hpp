@@ -141,6 +141,59 @@ struct BehaviorComponent {
     bool operator==(const BehaviorComponent &) const = default;
 };
 inline constexpr std::size_t max_behaviors_per_entity = 16, max_behavior_values = 32;
+// Plays a particle effect asset (.effect) at the entity. Particles are visual only: they never touch physics,
+// gameplay or the scene, so a run plays the same with or without them.
+struct ParticleEmitterComponent {
+    AssetRef effect;       // Empty: nothing is emitted.
+    bool auto_play = true; // Starts by itself in Play and in the editor's preview. Off: only gameplay fires it.
+    bool loop = true;      // Starts again each time the effect's duration ends.
+    double rate_scale = 1; // Multiplies the effect's rate and bursts; within [0, 1000].
+    bool operator==(const ParticleEmitterComponent &) const = default;
+};
+// Plays a clip of a skinned or animated model on the entity's own model. The pose is visual and lives in the animation
+// runtime, never in the scene (Milestone 5, D1); gameplay changes clips at run time without editing this.
+struct AnimatorComponent {
+    AssetRef clips;        // The model whose clips play. Empty: the entity's own model. Another model's clips play on
+                           // the joints whose names match.
+    std::string clip;      // Played from the start. Empty: the model rests until gameplay plays something.
+    double speed = 1;      // Multiplies time; within [-10, 10]. Negative plays backwards.
+    bool loop = true;
+    double start_time = 0; // Seconds into the clip where playing starts; within [0, 3600].
+    bool preview = true;   // Plays in the editor while editing. Off: it holds still (at its start when first shown).
+    bool operator==(const AnimatorComponent &) const = default;
+};
+inline constexpr std::size_t max_clip_name_bytes = 256;
+// Draws the entity, and what is under it, on a joint of its parent's skeleton: its transform is relative to that joint.
+// Resolved when a frame is drawn, never written to the scene (D2). Physics and gameplay see the plain parent transform.
+struct AttachToBoneComponent {
+    std::string bone; // A joint name of the parent's model: 1 to 256 bytes. Unknown names leave it on the parent.
+    bool operator==(const AttachToBoneComponent &) const = default;
+};
+// How one bone of a ragdoll is treated, over what is generated for it (D7).
+enum class RagdollBody { Auto, Own, None };
+struct RagdollBone {
+    std::string bone;              // A joint of the entity's model: 1 to 256 bytes.
+    RagdollBody body = RagdollBody::Auto; // Own: a body of its own. None: neither body nor capsule; it follows its parent.
+    double radius = 0;             // Of its capsule, meters within [0, 100]. 0: sized from the skin.
+    double density = 0;            // kg/m^3 within [0, 100000]. 0: the ragdoll's.
+    double swing_degrees = -1;     // How far it swings from its rest direction, within [0, 180]. -1: the ragdoll's.
+    double twist_degrees = -1;     // How far it turns about itself either way, within [0, 178]. -1: the ragdoll's.
+    bool operator==(const RagdollBone &) const = default;
+};
+inline constexpr std::size_t max_ragdoll_bones = 256;
+enum class RagdollTrigger { OnDeath, OnDemand, Never };
+// Turns the entity's skinned model into jointed bodies that fall from its pose (Milestone 5, D7). The bodies are
+// generated from the skeleton when it happens and live in the run's physics, never in the scene: a capsule per long
+// enough bone, ball joints with cone and twist limits. Hands and feet ride on the bones above them.
+struct RagdollComponent {
+    RagdollTrigger trigger = RagdollTrigger::OnDeath; // On demand: only when gameplay or the editor asks.
+    double density = 1000;       // kg/m^3 of every part, within [1, 100000]: water's, which a body is close to.
+    double swing_degrees = 40;   // Within [0, 180].
+    double twist_degrees = 20;   // Within [0, 178].
+    double joint_friction = 0.5; // How much the joints resist turning, within [0, 10]: a fraction of each part's weight.
+    std::vector<RagdollBone> bones; // Settings for single bones, each at most once.
+    bool operator==(const RagdollComponent &) const = default;
+};
 struct Components {
     std::optional<MeshComponent> mesh;
     std::optional<CameraComponent> camera;
@@ -149,6 +202,10 @@ struct Components {
     std::vector<ColliderComponent> colliders;
     std::optional<EnvironmentComponent> environment;
     std::vector<BehaviorComponent> behaviors; // Each type at most once.
+    std::optional<ParticleEmitterComponent> emitter;
+    std::optional<AnimatorComponent> animator;
+    std::optional<AttachToBoneComponent> attach;
+    std::optional<RagdollComponent> ragdoll;
     bool operator==(const Components &) const = default;
 };
 struct EntityRecord {
@@ -188,6 +245,9 @@ class Scene final {
     ecs::World &ecs() noexcept {
         return world_;
     } // Trusted engine systems only.
+    const ecs::World &ecs() const noexcept {
+        return world_;
+    }
     // The Flecs entity of a stable ID, for trusted systems attaching runtime components; 0 when there is none.
     flecs::entity_t native(EntityId id) const noexcept {
         const auto it = entities_.find(id);
@@ -196,7 +256,7 @@ class Scene final {
     static Result<void> validate(const SceneSnapshot &);
 };
 // Text scene format, docs/architecture/006-scene-format.md. Writes the current version; reads 1..current.
-inline constexpr unsigned scene_format_version = 6;
+inline constexpr unsigned scene_format_version = 7;
 Result<void> write_scene(std::ostream &, const SceneSnapshot &);
 Result<SceneSnapshot> read_scene(std::istream &);
 } // namespace engine

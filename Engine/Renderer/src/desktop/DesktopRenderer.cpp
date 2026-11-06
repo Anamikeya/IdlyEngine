@@ -1,5 +1,6 @@
 #include <engine/renderer/DesktopRenderer.hpp>
 #include <engine/renderer/ResourceRegistry.hpp>
+#include <engine/assets/skeleton.h>
 #include "FilamentUtilities.hpp"
 #include "ImGuiRenderer.hpp"
 #include <filament/Camera.h>
@@ -29,6 +30,7 @@
 #include <array>
 #include <cmath>
 #include <map>
+#include <limits>
 #include <numbers>
 #include <optional>
 #include <set>
@@ -73,13 +75,48 @@ struct Part {
     bool own_material = false;
     Parameters own;
 };
+// Bone indices and weights, in a vertex buffer of their own beside the main one.
+struct SkinVertex { ushort4 bones; float4 weights; };
 struct GpuMesh : Mesh {
     uint32_t generation = 1;
     std::vector<Part> parts;
     std::vector<Texture *> images;
+    // Skinned meshes: the skeleton and bones without per-vertex data, the rest pose's palette and its box.
+    assets::MeshSkin rig;
+    std::vector<mat4f> rest_palette;
+    bool skinned() const { return !rest_palette.empty(); }
 };
+mat4f matrix(const std::array<float, 16> &m) {
+    mat4f out;
+    for (int c = 0; c < 4; ++c) for (int r = 0; r < 4; ++r) out[c][r] = m[std::size_t(c * 4 + r)];
+    return out;
+}
+std::vector<mat4f> matrices(const std::vector<assets::Matrix4> &palette) {
+    std::vector<mat4f> out;
+    out.reserve(palette.size());
+    for (const auto &m : palette) out.push_back(matrix(m));
+    return out;
+}
+Box box(const assets::Bounds &b) {
+    Box out;
+    out.set(float3{b.min[0], b.min[1], b.min[2]}, float3{b.max[0], b.max[1], b.max[2]});
+    out.halfExtent = max(out.halfExtent, float3(0.001f)); // A flat model still needs a volume to pass culling.
+    return out;
+}
 // A standalone image, uploaded once per color space it is used in.
 struct GpuTexture { Texture *srgb = nullptr, *linear = nullptr; uint32_t generation = 0; };
+struct ParticleVertex { float3 position; float4 color; float2 uv; };
+// One particle batch on the GPU: a quad per particle, rewritten every frame. Capacity grows by doubling.
+struct GpuParticles {
+    utils::Entity entity;
+    VertexBuffer *vertices = nullptr;
+    IndexBuffer *indices = nullptr;
+    uint32_t capacity = 0;
+    MaterialInstance *instance = nullptr;
+    ParticleBlendMode blend = ParticleBlendMode::Additive;
+    Texture *image = nullptr;
+    float strength = -1;
+};
 Mesh mesh(Engine &engine, const std::vector<Vertex> &vertices, const std::vector<uint16_t> &indices, Box bounds) {
     Mesh result;
     result.vertices = VertexBuffer::Builder().vertexCount(static_cast<uint32_t>(vertices.size())).bufferCount(1)
@@ -178,7 +215,8 @@ const ToneMapper *new_tone_mapper(ToneMapping tone) {
 }
 struct DesktopRenderer::Impl {
     struct PartState { MaterialInstance *instance = nullptr; Parameters applied; bool written = false; };
-    struct Object { utils::Entity entity; std::vector<PartState> parts; MeshHandle mesh; bool shadows = true; };
+    // `pose`: what its bones were last set from; null is the rest pose it is built with.
+    struct Object { utils::Entity entity; std::vector<PartState> parts; MeshHandle mesh; bool shadows = true; bool skinned = false; Pose pose; };
     struct Light { utils::Entity entity; LightKind kind; bool shadows = false; };
     using Key = std::pair<std::uint64_t, EntityId>; // Frame scene identity, entity.
     Engine *engine = nullptr;
@@ -190,6 +228,10 @@ struct DesktopRenderer::Impl {
     Skybox *flat_sky = nullptr, *image_sky = nullptr;
     Material *grid_material = nullptr;
     std::array<Material *, 3> pbr{}; // By AlphaMode.
+    std::array<Material *, 2> particle_materials{}; // By ParticleBlendMode.
+    Texture *particle_dot = nullptr;
+    std::map<std::uint64_t, GpuParticles> particles; // By batch key.
+    std::size_t particles_drawn = 0;
     Texture *color = nullptr, *depth = nullptr;
     std::array<Texture *, SlotCount> fallbacks{};
     RenderTarget *target = nullptr;
@@ -241,6 +283,22 @@ struct DesktopRenderer::Impl {
     utils::Entity thumbnail_camera_entity, thumbnail_light, thumbnail_object;
     std::vector<MaterialInstance *> thumbnail_instances;
     std::optional<ThumbnailRequest> thumbnail_drawing; // In case the frame that should draw it is skipped.
+    // The selection outline (slice 7). Outlined objects are drawn again, as flat values, into a mask the viewport's size,
+    // sharing their meshes and bones; then a full-screen pass over the viewport's image draws what lies just outside the
+    // mask. Both views use the main camera.
+    struct MaskObject { utils::Entity entity; MeshHandle mesh; Outline outline = Outline::None; Pose pose; };
+    std::map<Key, MaskObject> masks;
+    filament::Scene *mask_scene = nullptr, *outline_scene = nullptr;
+    View *mask_view = nullptr, *outline_view = nullptr;
+    Skybox *mask_sky = nullptr; // Black: what clears the mask each frame.
+    Material *mask_material = nullptr, *outline_material = nullptr;
+    std::array<MaterialInstance *, 2> mask_instances{}; // Selected, Primary.
+    MaterialInstance *outline_instance = nullptr;
+    Texture *mask_color = nullptr, *mask_depth = nullptr;
+    RenderTarget *mask_target = nullptr;
+    Mesh outline_mesh;
+    utils::Entity outline_object;
+    float outline_width = 0;
 
     // Null when the GPU cannot take the image; the caller falls back to white, so the asset still draws.
     Texture *upload(const assets::TextureData &data, bool srgb) {
@@ -271,19 +329,33 @@ struct DesktopRenderer::Impl {
         }
         GpuMesh result;
         result.generation = generation;
-        result.vertices = VertexBuffer::Builder().vertexCount(static_cast<uint32_t>(vertices.size())).bufferCount(1)
+        const bool skinned = !data.skin.empty() && !data.skin.bindings.empty() && data.skin.bindings.size() <= assets::max_skin_bindings &&
+                             data.skin.influences.size() == data.vertices.size();
+        auto builder = VertexBuffer::Builder().vertexCount(static_cast<uint32_t>(vertices.size())).bufferCount(skinned ? 2 : 1)
             .attribute(VertexAttribute::POSITION, 0, VertexBuffer::AttributeType::FLOAT3, offsetof(Vertex, position), sizeof(Vertex))
             .attribute(VertexAttribute::TANGENTS, 0, VertexBuffer::AttributeType::FLOAT4, offsetof(Vertex, tangent), sizeof(Vertex))
             .attribute(VertexAttribute::COLOR, 0, VertexBuffer::AttributeType::FLOAT4, offsetof(Vertex, color), sizeof(Vertex))
-            .attribute(VertexAttribute::UV0, 0, VertexBuffer::AttributeType::FLOAT2, offsetof(Vertex, uv), sizeof(Vertex)).build(*engine);
+            .attribute(VertexAttribute::UV0, 0, VertexBuffer::AttributeType::FLOAT2, offsetof(Vertex, uv), sizeof(Vertex));
+        if (skinned)
+            builder.attribute(VertexAttribute::BONE_INDICES, 1, VertexBuffer::AttributeType::USHORT4, offsetof(SkinVertex, bones), sizeof(SkinVertex))
+                .attribute(VertexAttribute::BONE_WEIGHTS, 1, VertexBuffer::AttributeType::FLOAT4, offsetof(SkinVertex, weights), sizeof(SkinVertex));
+        result.vertices = builder.build(*engine);
         result.indices = IndexBuffer::Builder().indexCount(static_cast<uint32_t>(data.indices.size())).bufferType(IndexBuffer::IndexType::UINT).build(*engine);
         result.count = static_cast<uint32_t>(data.indices.size());
         result.vertices->setBufferAt(*engine, 0, detail::upload(vertices.data(), vertices.size() * sizeof(Vertex)));
         result.indices->setBuffer(*engine, detail::upload(data.indices.data(), data.indices.size() * sizeof(uint32_t)));
-        const auto &b = data.bounds;
-        const float3 low{b.min[0], b.min[1], b.min[2]}, high{b.max[0], b.max[1], b.max[2]};
-        result.bounds.set(low, high);
-        result.bounds.halfExtent = max(result.bounds.halfExtent, float3(0.001f)); // A flat model still needs a volume to pass culling.
+        if (skinned) {
+            std::vector<SkinVertex> skin; skin.reserve(data.vertices.size());
+            for (const auto &influence : data.skin.influences) {
+                const auto &b = influence.binding; const auto &w = influence.weight;
+                skin.push_back({ushort4{b[0], b[1], b[2], b[3]}, float4{w[0], w[1], w[2], w[3]}});
+            }
+            result.vertices->setBufferAt(*engine, 1, detail::upload(skin.data(), skin.size() * sizeof(SkinVertex)));
+            result.rig.joints = data.skin.joints;
+            result.rig.bindings = data.skin.bindings;
+            result.rest_palette = matrices(assets::skinning_palette(result.rig, assets::rest_pose(result.rig)));
+        }
+        result.bounds = box(data.bounds); // As it rests; a pose replaces it with the box of that pose.
         for (const auto &image : data.images) result.images.push_back(upload(*image, image->srgb));
         const auto own_image = [&](int index) { return index >= 0 ? result.images.at(static_cast<std::size_t>(index)) : nullptr; };
         for (const auto &source : data.submeshes) {
@@ -389,6 +461,22 @@ struct DesktopRenderer::Impl {
         pbr[size_t(AlphaMode::Mask)] = detail::material(*engine, materials / "pbr_masked.filamat");
         pbr[size_t(AlphaMode::Blend)] = detail::material(*engine, materials / "pbr_transparent.filamat");
         grid_material = detail::material(*engine, materials / "grid.filamat");
+        particle_materials[size_t(ParticleBlendMode::Additive)] = detail::material(*engine, materials / "particle_add.filamat");
+        particle_materials[size_t(ParticleBlendMode::Alpha)] = detail::material(*engine, materials / "particle_transparent.filamat");
+        {
+            // A soft round dot: alpha falls smoothly from the middle to nothing at the edge.
+            constexpr uint32_t size = 64;
+            std::vector<uint8_t> pixels(std::size_t(size) * size * 4);
+            for (uint32_t y = 0; y < size; ++y) for (uint32_t x = 0; x < size; ++x) {
+                const float dx = (float(x) + 0.5f) / size * 2 - 1, dy = (float(y) + 0.5f) / size * 2 - 1;
+                const float d = std::min(std::sqrt(dx * dx + dy * dy), 1.f);
+                const float a = (1 - d * d) * (1 - d * d);
+                uint8_t *p = pixels.data() + (std::size_t(y) * size + x) * 4;
+                p[0] = p[1] = p[2] = 255; p[3] = uint8_t(std::lround(a * 255));
+            }
+            assets::TextureData dot{size, size, assets::TextureFormat::Rgba8, true, std::move(pixels)};
+            particle_dot = upload(dot, true);
+        }
         meshes.emplace(builtin_cube.index, builtin(cube(*engine)));
         meshes.emplace(builtin_sphere.index, builtin(sphere(*engine)));
         meshes.emplace(builtin_plane.index, builtin(plane(*engine)));
@@ -424,7 +512,91 @@ struct DesktopRenderer::Impl {
         scene->addEntity(sun); scene->addEntity(fill);
         init_preview();
         init_thumbnails();
+        init_outline(materials);
         ui = std::make_unique<detail::ImGuiRenderer>(*engine, materials);
+    }
+    void init_outline(const std::filesystem::path &materials) {
+        mask_material = detail::material(*engine, materials / "selection_mask.filamat");
+        outline_material = detail::material(*engine, materials / "selection_outline.filamat");
+        for (std::size_t i = 0; i < mask_instances.size(); ++i) {
+            mask_instances[i] = mask_material->createInstance();
+            mask_instances[i]->setParameter("value", i == 0 ? 0.5f : 1.0f);
+        }
+        mask_scene = engine->createScene(); mask_view = engine->createView();
+        mask_view->setScene(mask_scene); mask_view->setCamera(camera);
+        mask_view->setPostProcessingEnabled(false); mask_view->setShadowingEnabled(false);
+        mask_sky = Skybox::Builder().color({0, 0, 0, 1}).build(*engine);
+        mask_scene->setSkybox(mask_sky);
+        outline_scene = engine->createScene(); outline_view = engine->createView();
+        outline_view->setScene(outline_scene); outline_view->setCamera(camera);
+        outline_view->setPostProcessingEnabled(false); outline_view->setShadowingEnabled(false);
+        outline_view->setBlendMode(View::BlendMode::TRANSLUCENT);
+        outline_instance = outline_material->createInstance();
+        // Display values, as the image under them holds: the orange the bounding boxes were drawn in before.
+        outline_instance->setParameter("primaryColor", float3{1.0f, 0.667f, 0.157f});
+        outline_instance->setParameter("otherColor", float3{1.0f, 0.824f, 0.471f});
+        set_outline_width(2);
+        // One triangle that covers the whole view, in clip space.
+        const std::vector<Vertex> corners{{{-1, -1, 0}, {}, {1, 1, 1, 1}, {0, 0}}, {{3, -1, 0}, {}, {1, 1, 1, 1}, {2, 0}}, {{-1, 3, 0}, {}, {1, 1, 1, 1}, {0, 2}}};
+        outline_mesh = mesh(*engine, corners, {0, 1, 2}, {{0, 0, 0}, {1, 1, 1}});
+        outline_object = utils::EntityManager::get().create();
+        RenderableManager::Builder(1).boundingBox(outline_mesh.bounds).culling(false).castShadows(false).receiveShadows(false)
+            .geometry(0, RenderableManager::PrimitiveType::TRIANGLES, outline_mesh.vertices, outline_mesh.indices, 0, outline_mesh.count)
+            .material(0, outline_instance).build(*engine, outline_object);
+        outline_scene->addEntity(outline_object);
+    }
+    void set_outline_width(float pixels) {
+        pixels = std::clamp(pixels, 1.f, 8.f);
+        if (pixels == outline_width) return;
+        outline_width = pixels;
+        outline_instance->setParameter("width", pixels);
+    }
+    void remove_mask(const MaskObject &m) { mask_scene->remove(m.entity); remove(m.entity); }
+    // Mask copies of the frame's outlined objects, kept like the objects themselves. Called before meshes replaced this
+    // sync are freed, since the copies draw from the same buffers.
+    void sync_masks(const FrameSnapshot &frame, const ResourceRegistry &registry) {
+        auto &rm = engine->getRenderableManager();
+        auto &tm = engine->getTransformManager();
+        std::set<Key> live;
+        for (const auto &object : frame.objects) {
+            if (object.outline == Outline::None) continue;
+            const GpuMesh *gpu = geometry(object.mesh, registry);
+            if (!gpu) continue;
+            const Key key{frame.stamp.scene, object.entity};
+            live.insert(key);
+            auto it = masks.find(key);
+            if (it != masks.end() && it->second.mesh != object.mesh) { remove_mask(it->second); masks.erase(it); it = masks.end(); }
+            auto *instance = mask_instances[object.outline == Outline::Primary ? 1 : 0];
+            if (it == masks.end()) {
+                MaskObject fresh{utils::EntityManager::get().create(), object.mesh, object.outline, {}};
+                RenderableManager::Builder builder(gpu->parts.size());
+                builder.boundingBox(gpu->bounds).culling(false).castShadows(false).receiveShadows(false);
+                if (gpu->skinned()) builder.skinning(gpu->rest_palette.size(), gpu->rest_palette.data());
+                for (std::size_t i = 0; i < gpu->parts.size(); ++i)
+                    builder.geometry(i, RenderableManager::PrimitiveType::TRIANGLES, gpu->vertices, gpu->indices, gpu->parts[i].first, gpu->parts[i].count)
+                        .material(i, instance);
+                builder.build(*engine, fresh.entity);
+                mask_scene->addEntity(fresh.entity);
+                it = masks.emplace(key, std::move(fresh)).first;
+            }
+            auto &mask = it->second;
+            const auto renderable = rm.getInstance(mask.entity);
+            if (mask.outline != object.outline) {
+                for (std::size_t i = 0; i < gpu->parts.size(); ++i) rm.setMaterialInstanceAt(renderable, i, instance);
+                mask.outline = object.outline;
+            }
+            tm.setTransform(tm.getInstance(mask.entity), matrix(object.world));
+            if (gpu->skinned()) pose(mask.pose, *gpu, object.pose, renderable);
+        }
+        for (auto it = masks.begin(); it != masks.end();)
+            if (!live.contains(it->first)) { remove_mask(it->second); it = masks.erase(it); } else ++it;
+    }
+    // The viewport's views: the outline's mask first when anything is outlined, then the scene, then the outline over it.
+    void draw_viewport() {
+        const bool outlined = !masks.empty();
+        if (outlined) renderer->render(mask_view);
+        renderer->render(view);
+        if (outlined) renderer->render(outline_view);
     }
     void init_preview() {
         preview_scene = engine->createScene(); preview_view = engine->createView();
@@ -497,7 +669,8 @@ struct DesktopRenderer::Impl {
             thumbnail_object = utils::EntityManager::get().create();
             RenderableManager::Builder builder(gpu->parts.size());
             builder.boundingBox(gpu->bounds).castShadows(false).receiveShadows(false);
-            const RenderObject probe{0, request.mesh, request.material, {}, Surface{}, {}};
+            if (gpu->skinned()) builder.skinning(gpu->rest_palette.size(), gpu->rest_palette.data());
+            const RenderObject probe{0, request.mesh, request.material, {}, Surface{}, {}, {}};
             for (std::size_t i = 0; i < gpu->parts.size(); ++i) {
                 const Parameters wanted = parameters(probe, gpu->parts[i], static_cast<std::uint32_t>(i), registry, used);
                 auto *instance = pbr[size_t(wanted.alpha_mode)]->createInstance();
@@ -537,6 +710,12 @@ struct DesktopRenderer::Impl {
     }
     void destroy(Texture *texture) { if (texture) engine->destroy(texture); }
     void destroy(const GpuTexture &gpu) { destroy(gpu.srgb); destroy(gpu.linear); }
+    void destroy(const GpuParticles &gpu) {
+        scene->remove(gpu.entity); remove(gpu.entity);
+        if (gpu.instance) engine->destroy(gpu.instance);
+        if (gpu.vertices) engine->destroy(gpu.vertices);
+        if (gpu.indices) engine->destroy(gpu.indices);
+    }
     void destroy_environment() {
         if (indirect) { scene->setIndirectLight(nullptr); preview_scene->setIndirectLight(nullptr); thumbnail_scene->setIndirectLight(nullptr); engine->destroy(indirect); indirect = nullptr; }
         if (image_sky) { scene->setSkybox(flat_sky); engine->destroy(image_sky); image_sky = nullptr; }
@@ -548,6 +727,14 @@ struct DesktopRenderer::Impl {
         engine->flushAndWait();
         ui.reset();
         engine->destroy(view);
+        for (const auto &[key, mask] : masks) { (void)key; remove_mask(mask); }
+        engine->destroy(mask_view); engine->destroy(outline_view);
+        outline_scene->remove(outline_object); remove(outline_object); destroy(outline_mesh);
+        for (auto *instance : mask_instances) engine->destroy(instance);
+        engine->destroy(outline_instance);
+        engine->destroy(mask_target); engine->destroy(mask_color); engine->destroy(mask_depth);
+        engine->destroy(mask_scene); engine->destroy(outline_scene); engine->destroy(mask_sky);
+        engine->destroy(mask_material); engine->destroy(outline_material);
         clear_thumbnail_object();
         for (const auto &[key, image] : thumbnails) { (void)key; retire(image); }
         destroy_retired_thumbnails();
@@ -561,6 +748,7 @@ struct DesktopRenderer::Impl {
         engine->destroyCameraComponent(preview_camera_entity); utils::EntityManager::get().destroy(preview_camera_entity);
         for (const auto &[key, object] : objects) { (void)key; remove(object); }
         for (const auto &[key, light] : lights) { (void)key; remove(light); }
+        for (const auto &[key, gpu] : particles) { (void)key; destroy(gpu); }
         destroy_environment();
         ibl_context.reset();
         // After destroy_environment(), which takes the indirect light back from all three scenes.
@@ -576,6 +764,8 @@ struct DesktopRenderer::Impl {
         for (auto *texture : fallbacks) engine->destroy(texture);
         if (grading) engine->destroy(grading);
         for (auto *material : pbr) engine->destroy(material);
+        destroy(particle_dot);
+        for (auto *material : particle_materials) engine->destroy(material);
         engine->destroy(grid_material); engine->destroy(flat_sky);
         engine->destroy(renderer); engine->destroy(swap);
         engine->flushAndWait(); Engine::destroy(&engine);
@@ -593,9 +783,10 @@ struct DesktopRenderer::Impl {
             auto it = objects.find(key);
             if (it != objects.end() && it->second.mesh != object.mesh) { remove(it->second); objects.erase(it); it = objects.end(); }
             if (it == objects.end()) {
-                Object fresh{utils::EntityManager::get().create(), {}, object.mesh, true};
+                Object fresh{utils::EntityManager::get().create(), {}, object.mesh, true, gpu->skinned(), {}};
                 RenderableManager::Builder builder(gpu->parts.size());
                 builder.boundingBox(gpu->bounds).castShadows(true).receiveShadows(true);
+                if (gpu->skinned()) builder.skinning(gpu->rest_palette.size(), gpu->rest_palette.data());
                 fresh.parts.resize(gpu->parts.size());
                 for (std::size_t i = 0; i < gpu->parts.size(); ++i) {
                     fresh.parts[i].instance = pbr[size_t(AlphaMode::Opaque)]->createInstance();
@@ -628,23 +819,154 @@ struct DesktopRenderer::Impl {
             if (shadows != record.shadows) { rm.setCastShadows(renderable, shadows); record.shadows = shadows; }
             auto &tm = engine->getTransformManager();
             tm.setTransform(tm.getInstance(record.entity), matrix(object.world));
+            if (gpu->skinned()) pose(record.pose, *gpu, object.pose, renderable);
         }
         for (auto it = objects.begin(); it != objects.end();)
             if (!live.contains(it->first)) { remove(it->second); it = objects.erase(it); } else ++it;
+        sync_masks(frame, registry);
         // No object draws these now.
         for (const auto &gpu : retired_meshes) destroy(gpu);
         retired_meshes.clear();
         for (auto *texture : retired_textures) destroy(texture);
         retired_textures.clear();
         if (preview_material.index) update_preview(registry, used_textures);
+        sync_particles(frame, registry, used_textures);
         for (auto it = meshes.begin(); it != meshes.end();)
             if (it->first >= ResourceRegistry::first_index && !used_meshes.contains(it->first)) { destroy(it->second); it = meshes.erase(it); } else ++it;
         for (auto it = textures.begin(); it != textures.end();)
             if (!used_textures.contains(it->first)) { destroy(it->second); it = textures.erase(it); } else ++it;
     }
+    // Sets a skinned renderable's bones and box from its pose when the pose changes; `applied` is what it was last set
+    // from. A pose that does not fit the skeleton draws the rest pose, as a missing one does.
+    void pose(Pose &applied, const GpuMesh &gpu, const Pose &wanted, RenderableManager::Instance renderable) {
+        const Pose usable = wanted && wanted->size() == gpu.rig.joints.size() ? wanted : nullptr;
+        if (applied == usable) return;
+        auto &rm = engine->getRenderableManager();
+        if (!usable) {
+            rm.setBones(renderable, gpu.rest_palette.data(), gpu.rest_palette.size());
+            rm.setAxisAlignedBoundingBox(renderable, gpu.bounds);
+        } else {
+            const auto palette = assets::skinning_palette(gpu.rig, *usable);
+            const auto bones = matrices(palette);
+            rm.setBones(renderable, bones.data(), bones.size());
+            rm.setAxisAlignedBoundingBox(renderable, box(assets::skinned_bounds(gpu.rig, palette)));
+        }
+        applied = usable;
+    }
+    // Builds each batch's quads on the CPU and hands them to its renderable. Alpha batches are sorted back to front.
+    // Textures the batches use are added to `used`, so the texture sweep keeps them.
+    void sync_particles(const FrameSnapshot &frame, const ResourceRegistry &registry, std::set<uint32_t> &used) {
+        const auto &w = frame.camera.world.matrix;
+        const float3 eye{float(w[12]), float(w[13]), float(w[14])};
+        const float3 right = normalize(float3{float(w[0]), float(w[1]), float(w[2])});
+        const float3 up = normalize(float3{float(w[4]), float(w[5]), float(w[6])});
+        auto &rm = engine->getRenderableManager();
+        std::set<std::uint64_t> live;
+        particles_drawn = 0;
+        std::vector<ParticleVertex> vertices;
+        std::vector<uint32_t> order;
+        for (const auto &batch : frame.particles) {
+            if (batch.particles.empty()) continue;
+            live.insert(batch.key);
+            auto &gpu = particles[batch.key];
+            const auto count = uint32_t(batch.particles.size());
+            if (!gpu.entity) gpu.entity = utils::EntityManager::get().create();
+            const bool grow = count > gpu.capacity;
+            if (grow) {
+                uint32_t capacity = std::max<uint32_t>(gpu.capacity * 2, 64);
+                while (capacity < count) capacity *= 2;
+                if (rm.hasComponent(gpu.entity)) { scene->remove(gpu.entity); rm.destroy(gpu.entity); }
+                if (gpu.vertices) engine->destroy(gpu.vertices);
+                if (gpu.indices) engine->destroy(gpu.indices);
+                gpu.vertices = VertexBuffer::Builder().vertexCount(capacity * 4).bufferCount(1)
+                    .attribute(VertexAttribute::POSITION, 0, VertexBuffer::AttributeType::FLOAT3, offsetof(ParticleVertex, position), sizeof(ParticleVertex))
+                    .attribute(VertexAttribute::COLOR, 0, VertexBuffer::AttributeType::FLOAT4, offsetof(ParticleVertex, color), sizeof(ParticleVertex))
+                    .attribute(VertexAttribute::UV0, 0, VertexBuffer::AttributeType::FLOAT2, offsetof(ParticleVertex, uv), sizeof(ParticleVertex)).build(*engine);
+                std::vector<uint32_t> indices(std::size_t(capacity) * 6);
+                for (uint32_t q = 0; q < capacity; ++q) {
+                    const uint32_t corner[6]{0, 1, 2, 0, 2, 3};
+                    for (int k = 0; k < 6; ++k) indices[std::size_t(q) * 6 + k] = q * 4 + corner[k];
+                }
+                gpu.indices = IndexBuffer::Builder().indexCount(uint32_t(indices.size())).bufferType(IndexBuffer::IndexType::UINT).build(*engine);
+                gpu.indices->setBuffer(*engine, detail::upload(indices.data(), indices.size() * sizeof(uint32_t)));
+                gpu.capacity = capacity;
+            }
+            if (!gpu.instance || gpu.blend != batch.blend) {
+                if (gpu.instance) engine->destroy(gpu.instance);
+                gpu.instance = particle_materials[size_t(batch.blend)]->createInstance();
+                gpu.blend = batch.blend;
+                gpu.image = nullptr;
+                gpu.strength = -1;
+                if (rm.hasComponent(gpu.entity)) rm.setMaterialInstanceAt(rm.getInstance(gpu.entity), 0, gpu.instance);
+            }
+            Texture *image = this->image(batch.texture, true, registry, used);
+            if (!image) image = particle_dot;
+            if (image != gpu.image) {
+                gpu.instance->setParameter("image", image, TextureSampler(TextureSampler::MinFilter::LINEAR_MIPMAP_LINEAR, TextureSampler::MagFilter::LINEAR));
+                gpu.image = image;
+            }
+            if (float(batch.strength) != gpu.strength) { gpu.strength = float(batch.strength); gpu.instance->setParameter("strength", gpu.strength); }
+            // Back to front for alpha; additive light needs no order.
+            order.resize(count);
+            for (uint32_t i = 0; i < count; ++i) order[i] = i;
+            if (batch.blend == ParticleBlendMode::Alpha) {
+                std::vector<float> distance(count);
+                for (uint32_t i = 0; i < count; ++i) {
+                    const auto &p = batch.particles[i].position;
+                    distance[i] = length(float3{p[0], p[1], p[2]} - eye);
+                }
+                std::sort(order.begin(), order.end(), [&](uint32_t a, uint32_t b) { return distance[a] > distance[b]; });
+            }
+            vertices.resize(std::size_t(count) * 4);
+            float3 low{std::numeric_limits<float>::max()}, high{-std::numeric_limits<float>::max()};
+            for (uint32_t i = 0; i < count; ++i) {
+                const auto &p = batch.particles[order[i]];
+                const float3 position{p.position[0], p.position[1], p.position[2]};
+                const float3 velocity{p.velocity[0], p.velocity[1], p.velocity[2]};
+                const float4 tint{p.color[0], p.color[1], p.color[2], p.color[3]};
+                const float half = p.size * 0.5f;
+                float3 corners[4];
+                const float speed = length(velocity);
+                if (batch.stretch > 0 && speed > 1e-4f) {
+                    // A streak: from the particle back along its path, as wide as its size, turned to face the eye.
+                    const float3 along = velocity / speed;
+                    float3 side = cross(along, eye - position);
+                    const float side_length = length(side);
+                    side = side_length > 1e-6f ? side / side_length * half : right * half;
+                    const float3 back = position - along * std::max(speed * float(batch.stretch), p.size);
+                    corners[0] = back - side; corners[1] = position - side; corners[2] = position + side; corners[3] = back + side;
+                } else {
+                    const float c = std::cos(p.rotation), s = std::sin(p.rotation);
+                    const float3 r = (right * c + up * s) * half, u = (up * c - right * s) * half;
+                    corners[0] = position - r + u; corners[1] = position + r + u; corners[2] = position + r - u; corners[3] = position - r - u;
+                }
+                const float2 uv[4]{{0, 0}, {1, 0}, {1, 1}, {0, 1}};
+                for (int k = 0; k < 4; ++k) {
+                    vertices[std::size_t(i) * 4 + k] = {corners[k], tint, uv[k]};
+                    low = min(low, corners[k]); high = max(high, corners[k]);
+                }
+            }
+            gpu.vertices->setBufferAt(*engine, 0, detail::upload(vertices.data(), vertices.size() * sizeof(ParticleVertex)));
+            Box bounds; bounds.set(low, high);
+            bounds.halfExtent = max(bounds.halfExtent, float3(0.001f));
+            if (!rm.hasComponent(gpu.entity)) {
+                RenderableManager::Builder(1).boundingBox(bounds).castShadows(false).receiveShadows(false)
+                    .geometry(0, RenderableManager::PrimitiveType::TRIANGLES, gpu.vertices, gpu.indices, 0, count * 6)
+                    .material(0, gpu.instance).build(*engine, gpu.entity);
+                scene->addEntity(gpu.entity);
+            } else {
+                const auto renderable = rm.getInstance(gpu.entity);
+                rm.setGeometryAt(renderable, 0, RenderableManager::PrimitiveType::TRIANGLES, gpu.vertices, gpu.indices, 0, count * 6);
+                rm.setAxisAlignedBoundingBox(renderable, bounds);
+            }
+            particles_drawn += count;
+        }
+        for (auto it = particles.begin(); it != particles.end();)
+            if (!live.contains(it->first)) { destroy(it->second); it = particles.erase(it); } else ++it;
+    }
     // The preview sphere uses the chosen material; its textures count as used so the sweep above keeps them.
     void update_preview(const ResourceRegistry &registry, std::set<uint32_t> &used) {
-        const RenderObject probe{0, builtin_sphere, preview_material, {}, Surface{}, {}};
+        const RenderObject probe{0, builtin_sphere, preview_material, {}, Surface{}, {}, {}};
         const Parameters wanted = parameters(probe, Part{}, 0, registry, used);
         if (preview_applied && *preview_applied == wanted) return;
         auto *instance = preview_instances[size_t(wanted.alpha_mode)];
@@ -801,8 +1123,9 @@ void DesktopRenderer::resize_viewport(unsigned width, unsigned height) {
     auto &p = *impl_; width = std::clamp(width, 1u, 4096u); height = std::clamp(height, 1u, 4096u);
     if (p.viewport_width == width && p.viewport_height == height) return;
     p.engine->flushAndWait();
-    p.view->setRenderTarget(nullptr);
+    p.view->setRenderTarget(nullptr); p.mask_view->setRenderTarget(nullptr); p.outline_view->setRenderTarget(nullptr);
     p.engine->destroy(p.target); p.engine->destroy(p.color); p.engine->destroy(p.depth);
+    p.engine->destroy(p.mask_target); p.engine->destroy(p.mask_color); p.engine->destroy(p.mask_depth);
     p.color = Texture::Builder().width(width).height(height).levels(1).sampler(Texture::Sampler::SAMPLER_2D)
         .format(Texture::InternalFormat::RGBA8).usage(Texture::Usage::COLOR_ATTACHMENT | Texture::Usage::SAMPLEABLE | Texture::Usage::BLIT_SRC).build(*p.engine);
     p.depth = Texture::Builder().width(width).height(height).levels(1).sampler(Texture::Sampler::SAMPLER_2D)
@@ -810,8 +1133,19 @@ void DesktopRenderer::resize_viewport(unsigned width, unsigned height) {
     p.target = RenderTarget::Builder().texture(RenderTarget::AttachmentPoint::COLOR, p.color)
         .texture(RenderTarget::AttachmentPoint::DEPTH, p.depth).build(*p.engine);
     p.view->setRenderTarget(p.target); p.view->setViewport({0,0,width,height});
+    // The outline's mask matches the viewport pixel for pixel, and the outline draws over the viewport's own image.
+    p.mask_color = Texture::Builder().width(width).height(height).levels(1).sampler(Texture::Sampler::SAMPLER_2D)
+        .format(Texture::InternalFormat::RGBA8).usage(Texture::Usage::COLOR_ATTACHMENT | Texture::Usage::SAMPLEABLE).build(*p.engine);
+    p.mask_depth = Texture::Builder().width(width).height(height).levels(1).sampler(Texture::Sampler::SAMPLER_2D)
+        .format(Texture::InternalFormat::DEPTH24).usage(Texture::Usage::DEPTH_ATTACHMENT).build(*p.engine);
+    p.mask_target = RenderTarget::Builder().texture(RenderTarget::AttachmentPoint::COLOR, p.mask_color)
+        .texture(RenderTarget::AttachmentPoint::DEPTH, p.mask_depth).build(*p.engine);
+    p.mask_view->setRenderTarget(p.mask_target); p.mask_view->setViewport({0,0,width,height});
+    p.outline_view->setRenderTarget(p.target); p.outline_view->setViewport({0,0,width,height});
+    p.outline_instance->setParameter("mask", p.mask_color, TextureSampler(TextureSampler::MinFilter::NEAREST, TextureSampler::MagFilter::NEAREST));
     p.viewport_width = width; p.viewport_height = height;
 }
+void DesktopRenderer::set_outline_width(float pixels) { impl_->set_outline_width(pixels); }
 std::uint64_t DesktopRenderer::viewport_texture() const { return reinterpret_cast<std::uint64_t>(impl_->color); }
 void DesktopRenderer::set_material_preview(MaterialHandle handle) { impl_->preview_material = handle; }
 std::uint64_t DesktopRenderer::preview_texture() const { return reinterpret_cast<std::uint64_t>(impl_->preview_color); }
@@ -843,9 +1177,13 @@ RendererStats DesktopRenderer::stats() const {
     RendererStats s;
     const auto &p = *impl_;
     s.objects = p.objects.size(); s.lights = p.lights.size();
-    for (const auto &[key, object] : p.objects) { (void)key; s.parts += object.parts.size(); s.material_instances += object.parts.size(); }
+    for (const auto &[key, object] : p.objects) {
+        (void)key; s.parts += object.parts.size(); s.material_instances += object.parts.size();
+        s.skinned += object.skinned ? 1 : 0; s.posed += object.pose ? 1 : 0;
+    }
     s.meshes = asset_mesh_count(); s.textures = p.textures.size();
     s.environment_builds = p.environment_builds;
+    s.particle_batches = p.particles.size(); s.particles = p.particles_drawn;
     for (const auto &info : p.renderer->getFrameInfoHistory(4))
         if (info.gpuFrameDuration > 0) { s.gpu_frame_ms = double(info.gpuFrameDuration) / 1e6; break; }
     return s;
@@ -875,7 +1213,7 @@ bool DesktopRenderer::render(const FrameSnapshot &frame, const ResourceRegistry 
     }
     if (draw_thumbnail) p.renderer->render(p.thumbnail_view);
     if (p.preview_material.index) p.renderer->render(p.preview_view);
-    p.renderer->render(p.view);
+    p.draw_viewport();
     p.renderer->render(p.ui->view());
     p.renderer->endFrame();
     p.destroy_retired_thumbnails();
@@ -887,7 +1225,7 @@ std::vector<std::uint8_t> DesktopRenderer::readback(unsigned width, unsigned hei
     std::atomic<bool> done = false;
     p.engine->flushAndWait();
     if (!p.renderer->beginFrame(p.swap)) throw std::runtime_error("Capture frame skipped");
-    p.renderer->render(p.view); p.renderer->render(p.ui->view());
+    p.draw_viewport(); p.renderer->render(p.ui->view());
     p.renderer->readPixels(0, 0, width, height, Texture::PixelBufferDescriptor(pixels.data(), pixels.size(),
         Texture::Format::RGBA, Texture::Type::UBYTE, [](void *, std::size_t, void *user) { static_cast<std::atomic<bool> *>(user)->store(true); }, &done));
     p.renderer->endFrame(); p.engine->flushAndWait();

@@ -1,4 +1,5 @@
 #include "EditorUI.hpp"
+#include <cstdio>
 #include <cstring>
 #include "FileDialog.hpp"
 #include <engine/editor/EditorPrefs.hpp>
@@ -196,10 +197,17 @@ void EditorUI::bind_commands() {
     }, [entity_material] { return !entity_material().empty(); });
     bind("Asset.Assign", [this, selected_asset_meta] {
         const auto meta = selected_asset_meta();
-        report(meta->type == assets::AssetType::Material ? session.assign_material(session.selection(), selected_asset) : session.assign_asset(session.selection(), selected_asset), "Asset assigned to the selected entity");
+        if (meta->type == assets::AssetType::Effect) report(session.assign_effect(session.selection(), selected_asset), "Effect assigned to the selected entity");
+        else report(meta->type == assets::AssetType::Material ? session.assign_material(session.selection(), selected_asset) : session.assign_asset(session.selection(), selected_asset), "Asset assigned to the selected entity");
     }, [this, selected_asset_meta] { const auto meta = selected_asset_meta(); return meta && session.selection() && meta->type != assets::AssetType::Environment; });
-    bind("Asset.AddToScene", [this] { report(session.place_asset(selected_asset), "Model added to the scene"); }, [selected_asset_meta] { const auto meta = selected_asset_meta(); return meta && meta->type == assets::AssetType::Mesh; });
-    bind("Asset.Edit", [this] { show_material = true; ImGui::SetWindowFocus("Material Editor"); }, [selected_asset_meta] { const auto meta = selected_asset_meta(); return meta && meta->type == assets::AssetType::Material; });
+    bind("Asset.AddToScene", [this] { report(session.place_asset(selected_asset), "Added to the scene"); }, [selected_asset_meta] {
+        const auto meta = selected_asset_meta();
+        return meta && (meta->type == assets::AssetType::Mesh || meta->type == assets::AssetType::Effect);
+    });
+    bind("Asset.Edit", [this, selected_asset_meta] {
+        if (selected_asset_meta()->type == assets::AssetType::Effect) { show_effect = true; ImGui::SetWindowFocus("Effect Editor"); }
+        else { show_material = true; ImGui::SetWindowFocus("Material Editor"); }
+    }, [selected_asset_meta] { const auto meta = selected_asset_meta(); return meta && (meta->type == assets::AssetType::Material || meta->type == assets::AssetType::Effect); });
     bind("Asset.Reload", [this] {
         report(session.reload_asset(selected_asset), "Asset re-imported from disk");
         thumbnails.erase(selected_asset);
@@ -209,6 +217,18 @@ void EditorUI::bind_commands() {
         std::snprintf(rename_asset_path.data(), rename_asset_path.size(), "%s", selected_asset_meta()->path.c_str());
         rename_asset_prompt = true;
     }, [this, selected_asset_meta] { return !playing() && selected_asset_meta().has_value(); });
+    bind("Assets.FixUpRedirectors", [this] {
+        const auto fixed = session.fix_up_redirectors();
+        if (!fixed) { log_error(fixed.error().message); return; }
+        const auto &r = fixed.value();
+        const auto count = [](std::size_t n, const char *one, const char *many) { return std::to_string(n) + " " + (n == 1 ? one : many); };
+        std::string text = "Fixed up " + count(r.redirectors, "redirector", "redirectors") + ": " + count(r.references, "reference", "references") +
+                           " in " + count(r.scenes.size(), "scene file", "scene files");
+        if (r.open_scene) text += " and the open scene (save it to keep the change)";
+        if (r.assets) text += ", and " + count(r.assets, "material or effect", "materials or effects");
+        notify(Severity::Success, text);
+        for (const auto &kept : r.kept) notify(Severity::Warning, "Redirector kept: " + kept);
+    }, [this] { return !playing() && !session.redirectors().empty(); });
     bind("Asset.ToggleFavorite", [this] {
         settings.set("asset.favorite." + assets::to_string(selected_asset), !asset_is_favorite(selected_asset));
         save_settings();
@@ -233,6 +253,14 @@ void EditorUI::bind_commands() {
     bind("Create.Camera", [this] { spawn("Camera", {{}, CameraComponent{}, {}}, aimed({0,1.5,6}, -8, 0)); });
     bind("Create.FallingCube", [this] { spawn("Falling Cube", physical(BuiltinMesh::Cube), {{0,3,0}, {}, {1,1,1}}); });
     bind("Create.FallingSphere", [this] { spawn("Falling Sphere", physical(BuiltinMesh::Sphere), {{0,3,0}, {}, {1,1,1}}); });
+    bind("Create.ParticleEmitter", [this] {
+        Components c;
+        c.emitter = ParticleEmitterComponent{};
+        const auto catalogue = session.assets();
+        const auto chosen = std::ranges::find_if(catalogue, [&](const assets::AssetMetadata &meta) { return meta.id == selected_asset; });
+        if (chosen != catalogue.end() && chosen->type == assets::AssetType::Effect) c.emitter->effect = {chosen->id.value, chosen->path};
+        spawn("Particle Emitter", std::move(c), {{0,1,0}, {}, {1,1,1}});
+    });
     bind("Create.Floor", [this] {
         Components floor{MeshComponent{BuiltinMesh::Plane}, {}, {}};
         floor.colliders = {fitted_collider(BuiltinMesh::Plane)};
@@ -255,6 +283,12 @@ void EditorUI::bind_commands() {
     toggle("Viewport.ShowShadows", session.view_flags.shadows);
     toggle("Viewport.ShowAmbientOcclusion", session.view_flags.ambient_occlusion);
     toggle("Viewport.ShowBloom", session.view_flags.bloom);
+    toggle("Viewport.ShowEffects", session.view_flags.effects);
+    bind("Viewport.RestartEffects", [this] { session.restart_effects(); });
+    toggle("Viewport.ShowAnimations", session.view_flags.animations);
+    bind("Viewport.RestartAnimations", [this] { session.restart_animations(); });
+    toggle("Viewport.ShowBones", session.view_flags.bones);
+    toggle("Viewport.ShowRagdolls", session.view_flags.ragdolls);
     bind("Viewport.GameView", [this] { game_view = !game_view; }, {}, [this] { return game_view; });
     bind("Viewport.Maximize", [this] { viewport_maximized = !viewport_maximized; }, {}, [this] { return viewport_maximized; });
     constexpr const char *views[] = {"Viewport.Perspective", "Viewport.Front", "Viewport.Top", "Viewport.Side"};
@@ -318,6 +352,13 @@ void EditorUI::bind_commands() {
     bind("Play.Pause", [this] { report(session.pause(), "Paused"); }, [this] { return session.play_state() == PlayState::Playing; });
     bind("Play.Step", [this] { report(session.step(), "Stepped one tick"); }, [this] { return session.play_state() == PlayState::Paused; });
     bind("Play.Stop", [this] { stop_play(); }, [this] { return playing(); });
+    bind("Play.Ragdoll", [this] { ragdoll_selected(); }, [this] {
+        return playing() && std::ranges::any_of(session.selected().items(), [this](EntityId id) { const auto r = session.scene().inspect(id); return r && r->components.ragdoll; });
+    });
+    bind("Play.DropDebris", [this] { drop_debris(); }, [this] {
+        const auto r = session.scene().inspect(session.selection());
+        return playing() && r && r->components.mesh;
+    });
     // ---- Window ----
     bind("Window.UndoHistory", [this] { show_history = !show_history; }, {}, [this] { return show_history; });
     bind("Window.KeyboardShortcuts", [this] { show_shortcuts = !show_shortcuts; }, {}, [this] { return show_shortcuts; });
@@ -327,12 +368,15 @@ void EditorUI::bind_commands() {
     panel("Window.Inspector", show_inspector);
     panel("Window.Lighting", show_lighting);
     panel("Window.MaterialEditor", show_material);
+    panel("Window.EffectEditor", show_effect);
+    bind("Window.Animation", [this] { show_animation = !show_animation; focus_animation = show_animation; }, {}, [this] { return show_animation; });
     panel("Window.AssetBrowser", show_assets);
     panel("Window.Console", show_console);
     panel("Window.MessageLog", show_message_log);
     bind("Window.SaveLayout", [this] { layout_prompt = true; }, [this] { return !config_folder.empty(); });
     bind("Window.ResetLayout", [this] {
-        show_toolbar = show_hierarchy = show_inspector = show_lighting = show_material = show_assets = show_console = show_message_log = true;
+        show_toolbar = show_hierarchy = show_inspector = show_lighting = show_material = show_assets = show_console = show_message_log = show_effect = true;
+        show_animation = false;
         layout_reset_requested = true;
     });
 }
@@ -422,7 +466,8 @@ void EditorUI::main_menu() {
         ImGui::Separator();
         for (const auto *id : {"Viewport.Lit", "Viewport.Wireframe", "Viewport.Unlit"}) command_item(id);
         ImGui::Separator();
-        for (const auto *id : {"Viewport.ShowGrid", "Viewport.ToggleColliders", "Viewport.ShowMarkers", "Viewport.ShowSkybox", "Viewport.ShowShadows", "Viewport.ShowAmbientOcclusion", "Viewport.ShowBloom"}) command_item(id);
+        for (const auto *id : {"Viewport.ShowGrid", "Viewport.ToggleColliders", "Viewport.ShowMarkers", "Viewport.ShowSkybox", "Viewport.ShowShadows", "Viewport.ShowAmbientOcclusion", "Viewport.ShowBloom", "Viewport.ShowEffects", "Viewport.ShowAnimations", "Viewport.ShowBones", "Viewport.ShowRagdolls"}) command_item(id);
+        for (const auto *id : {"Viewport.RestartEffects", "Viewport.RestartAnimations"}) command_item(id);
         if (ImGui::BeginMenu("Bookmarks")) {
             for (int slot = 0; slot < 10; ++slot) command_item(("Bookmark.Go" + std::to_string(slot)).c_str());
             ImGui::Separator();
@@ -445,6 +490,8 @@ void EditorUI::main_menu() {
         for (const auto *id : {"Play.Play", "Play.Simulate", "Play.Pause", "Play.Step", "Play.Stop"}) command_item(id);
         ImGui::Separator();
         for (const auto *id : {"Play.Eject", "Play.FreeMouse", "Play.Escape"}) command_item(id);
+        ImGui::Separator();
+        for (const auto *id : {"Play.Ragdoll", "Play.DropDebris"}) command_item(id);
         ImGui::EndMenu();
     }
     const bool open_window = ImGui::BeginMenu("Window");
@@ -657,7 +704,11 @@ void EditorUI::load_settings() {
     session.view_flags.shadows = settings.flag("view.shadows", session.view_flags.shadows);
     session.view_flags.ambient_occlusion = settings.flag("view.ambient_occlusion", session.view_flags.ambient_occlusion);
     session.view_flags.bloom = settings.flag("view.bloom", session.view_flags.bloom);
-    constexpr const char *panel_keys[] = {"toolbar", "hierarchy", "inspector", "lighting", "material", "assets", "console", "message_log"};
+    session.view_flags.effects = settings.flag("view.effects", session.view_flags.effects);
+    session.view_flags.animations = settings.flag("view.animations", session.view_flags.animations);
+    session.view_flags.bones = settings.flag("view.bones", session.view_flags.bones);
+    session.view_flags.ragdolls = settings.flag("view.ragdolls", session.view_flags.ragdolls);
+    constexpr const char *panel_keys[] = {"toolbar", "hierarchy", "inspector", "lighting", "material", "assets", "console", "message_log", "effect", "animation"};
     const auto flags = panel_flags();
     for (std::size_t i = 0; i < flags.size(); ++i) *flags[i] = settings.flag(std::string("panel.") + panel_keys[i], *flags[i]);
     saved_panels.clear();
@@ -695,7 +746,11 @@ void EditorUI::save_settings() {
     settings.set("view.shadows", session.view_flags.shadows);
     settings.set("view.ambient_occlusion", session.view_flags.ambient_occlusion);
     settings.set("view.bloom", session.view_flags.bloom);
-    constexpr const char *panel_keys[] = {"toolbar", "hierarchy", "inspector", "lighting", "material", "assets", "console", "message_log"};
+    settings.set("view.effects", session.view_flags.effects);
+    settings.set("view.animations", session.view_flags.animations);
+    settings.set("view.bones", session.view_flags.bones);
+    settings.set("view.ragdolls", session.view_flags.ragdolls);
+    constexpr const char *panel_keys[] = {"toolbar", "hierarchy", "inspector", "lighting", "material", "assets", "console", "message_log", "effect", "animation"};
     const auto flags = panel_flags();
     saved_panels.clear();
     for (std::size_t i = 0; i < flags.size(); ++i) {
@@ -731,7 +786,86 @@ std::string EditorUI::log_fields() const {
            " primary_scale=" + primary_scale + " primary_rot=" + primary_rot +
            " gizmo_typed=" + (gizmo_entry.active() ? gizmo_entry.text() : std::string("-")) + " tooltip=" + tooltip_for_log(shown_tooltip) +
            " thumbnails=" + std::to_string(std::ranges::count_if(thumbnails, [this](const auto &entry) { return renderer.thumbnail(entry.first.value).texture != 0; })) +
-           " selected_asset=" + assets::to_string(selected_asset);
+           " selected_asset=" + assets::to_string(selected_asset) + effect_fields() + animation_fields() + ragdoll_fields();
+}
+// Ragdolls and debris for real-input runs: the selected entity's Ragdoll and plan, what lies as a ragdoll, how high the
+// selected skeleton reaches, and the pieces of debris.
+std::string EditorUI::ragdoll_fields() const {
+    const auto id = session.selection();
+    const auto record = session.scene().inspect(id);
+    const auto &ragdoll = record ? record->components.ragdoll : std::nullopt;
+    std::size_t with = 0;
+    for (const auto &e : session.scene().snapshot().entities) with += e.components.ragdoll.has_value();
+    const auto plan = ragdoll ? session.ragdoll_plan(id) : std::nullopt;
+    double top = -1e9;
+    for (const auto &line : session.bone_lines(id)) top = std::max({top, line.from.y, line.to.y});
+    char height[32] = "-";
+    if (top > -1e9) std::snprintf(height, sizeof height, "%.3f", top);
+    const auto d = session.physics_bridge().diagnostics();
+    return " ragdolls=" + std::to_string(with) + " ragdoll_trigger=" + (ragdoll ? std::to_string(int(ragdoll->trigger)) : std::string("-")) +
+           " ragdoll_bones=" + (ragdoll ? std::to_string(ragdoll->bones.size()) : std::string("-")) +
+           " ragdoll_bodies=" + (plan ? std::to_string(plan->bodies.size()) : std::string("-")) +
+           " ragdolled=" + std::to_string(session.ragdolled_entities().size()) + " ragdoll_parts=" + std::to_string(d.ragdoll_parts) +
+           " skeleton_top=" + height + " debris=" + std::to_string(d.debris) + " debris_spawned=" + std::to_string(d.debris_spawned) +
+           " ragdolls_on=" + std::to_string(session.view_flags.ragdolls ? 1 : 0);
+}
+void EditorUI::ragdoll_selected() {
+    std::size_t fell = 0, stood = 0;
+    for (const auto id : session.selected().items()) {
+        const auto record = session.scene().inspect(id);
+        if (!record || !record->components.ragdoll) continue;
+        if (session.ragdolled(id)) {
+            if (session.stop_ragdoll(id)) ++stood;
+        } else if (const auto started = session.start_ragdoll(id); started) ++fell;
+        else log_error(started.error().message);
+    }
+    if (fell) log(std::to_string(fell) + (fell == 1 ? " entity falls" : " entities fall") + " as a ragdoll");
+    if (stood) log(std::to_string(stood) + (stood == 1 ? " entity stands" : " entities stand") + " up again");
+}
+void EditorUI::drop_debris() {
+    const auto id = session.selection();
+    const auto world = session.drawn_world(id);
+    if (!world) return;
+    const auto &m = world->matrix;
+    // Eight pieces in a ring a metre above it, flung outwards and turning, the same way every time.
+    std::size_t dropped = 0;
+    for (int i = 0; i < 8; ++i) {
+        const double angle = i * 0.785398163397448, c = std::cos(angle), s = std::sin(angle);
+        const auto piece = session.spawn_debris(id, {m[12] + 0.3 * c, m[13] + 1.0 + 0.1 * (i % 3), m[14] + 0.3 * s}, {0, std::sin(angle / 2), 0, std::cos(angle / 2)},
+                                                {1.5 * c, 2.0, 1.5 * s}, {3.0 * s, 4.0, 3.0 * c});
+        if (piece) ++dropped;
+        else { log_error(piece.error().message); break; }
+    }
+    if (dropped) log("Dropped " + std::to_string(dropped) + " pieces of debris");
+}
+// Animation for real-input runs: the selected animator's clip and time, the shown animators, and the model's events.
+std::string EditorUI::animation_fields() const {
+    const auto id = session.selection();
+    const auto status = session.animation().status(id);
+    const auto stats = session.animation().stats();
+    const auto events = session.clip_events(session.clip_source(id));
+    std::string clip = status && !status->clip.empty() ? status->clip : "-";
+    std::ranges::replace(clip, ' ', '_');
+    char time[32] = "-";
+    if (status) std::snprintf(time, sizeof time, "%.3f", status->time);
+    const auto gpu = renderer.stats();
+    return " animators=" + std::to_string(stats.animators) + " anim_clip=" + clip + " anim_time=" + time +
+           " anim_paused=" + std::to_string(status && status->paused ? 1 : 0) + " anim_fading=" + std::to_string(status && !status->fading_from.empty() ? 1 : 0) +
+           " anim_layered=" + std::to_string(status && !status->layered.empty() ? 1 : 0) + " clip_events=" + std::to_string(events.size()) +
+           " anim_events_seen=" + std::to_string(session.animation_events().size()) + " animations_on=" + std::to_string(session.view_flags.animations ? 1 : 0) +
+           " bones_on=" + std::to_string(session.view_flags.bones ? 1 : 0) + " animation_panel=" + std::to_string(show_animation ? 1 : 0) +
+           " gpu_posed=" + std::to_string(gpu.posed);
+}
+// Particles for real-input runs: what the shown scene's system holds, what the GPU drew, and the chosen effect's values.
+std::string EditorUI::effect_fields() const {
+    const auto stats = session.effect_stats();
+    const auto effect = session.effect(selected_asset);
+    const auto gpu = renderer.stats();
+    return " particles=" + std::to_string(stats.particles) + " particle_emitters=" + std::to_string(stats.emitters) +
+           " one_shots=" + std::to_string(stats.one_shots) + " gpu_particles=" + std::to_string(gpu.particles) +
+           " effects_on=" + std::to_string(session.view_flags.effects ? 1 : 0) + " effect_panel=" + std::to_string(show_effect ? 1 : 0) +
+           " effect_rate=" + (effect ? std::to_string(effect->rate) : std::string("-")) +
+           " effect_burst=" + (effect ? std::to_string(effect->burst) : std::string("-"));
 }
 std::vector<std::string> EditorUI::saved_layouts() const {
     std::vector<std::string> names;
@@ -811,7 +945,7 @@ void EditorUI::cheat_sheet_overlay() {
     }
     ImGui::End();
 }
-std::array<bool *, 8> EditorUI::panel_flags() { return {&show_toolbar, &show_hierarchy, &show_inspector, &show_lighting, &show_material, &show_assets, &show_console, &show_message_log}; }
+std::array<bool *, 10> EditorUI::panel_flags() { return {&show_toolbar, &show_hierarchy, &show_inspector, &show_lighting, &show_material, &show_assets, &show_console, &show_message_log, &show_effect, &show_animation}; }
 void EditorUI::layout_dialog() {
     if (std::exchange(layout_prompt, false)) ImGui::OpenPopup("Save layout");
     if (!ImGui::BeginPopupModal("Save layout", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) return;

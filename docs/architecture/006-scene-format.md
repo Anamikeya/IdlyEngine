@@ -1,15 +1,15 @@
 # Scene file format
 
 Implemented in `Engine/Scene/src/Serialization.cpp` (`write_scene`, `read_scene`). The writer always emits the
-current version, `engine::scene_format_version` (6). The reader accepts versions 1 to 6.
+current version, `engine::scene_format_version` (7). The reader accepts versions 1 to 7.
 
-## Version 6
+## Version 7
 
 Line-based UTF-8 text, tokens separated by whitespace, numbers in the classic C locale. Doubles are written with
 `max_digits10`, so a save/load round trip is exact.
 
 ```
-ENGINE_SCENE 6 <next_id> <entity_count>
+ENGINE_SCENE 7 <next_id> <entity_count>
 ENTITY <id> <parent> "<name>" <px> <py> <pz> <qx> <qy> <qz> <qw> <sx> <sy> <sz>
 ...                                    (exactly entity_count ENTITY lines)
 COMPONENTS <component_count>
@@ -19,10 +19,11 @@ COMPONENTS <component_count>
 - `next_id`: the next stable entity ID the scene will allocate. IDs are never recycled.
 - `ENTITY`: stable ID, parent ID (0 = root), quoted name (`\"` and `\\` escapes, at most 256 bytes, no control
   characters), local translation, rotation quaternion (x, y, z, w) and scale.
-- `COMPONENTS`: at most one `MESH`, `CAMERA`, `LIGHT`, `BODY` and `ENVIRONMENT` per entity, and up to 64 `COLLIDER`,
-  64 `MATSLOT` and 16 `BEHAVIOR` records per entity. The writer sorts them by entity, then `MESH` with its `MATSLOT`s,
-  `CAMERA`, `LIGHT`, `BODY`, `COLLIDER`, `ENVIRONMENT`, `BEHAVIOR`; the reader accepts any order, keeping colliders
-  and behaviors in file order and slots sorted.
+- `COMPONENTS`: at most one `MESH`, `CAMERA`, `LIGHT`, `BODY`, `ENVIRONMENT`, `EMITTER`, `ANIMATOR`, `ATTACH` and `RAGDOLL` per
+  entity, and up to 64 `COLLIDER`, 64 `MATSLOT`, 16 `BEHAVIOR` and 256 `RAGBONE` records per entity. The writer sorts them by
+  entity, then `MESH` with its `MATSLOT`s, `CAMERA`, `LIGHT`, `BODY`, `COLLIDER`, `ENVIRONMENT`, `BEHAVIOR`, `EMITTER`, `ANIMATOR`,
+  `ATTACH`, `RAGDOLL` with its `RAGBONE`s; the reader accepts any order, keeping colliders, behaviors and ragdoll bones in file
+  order and slots sorted, except that a `RAGBONE` must come after its entity's `RAGDOLL`.
 
 ### Component records
 
@@ -38,6 +39,11 @@ Colors are sRGB in [0, 1], as picked in the editor. Renderers convert them to li
 | `COLLIDER <entity> <shape> <cx> <cy> <cz> <qx> <qy> <qz> <qw> <hx> <hy> <hz> <radius> <half_height> <density> <friction> <restitution> <sensor> <events> <category> <mask>` | `shape`: `sphere`, `box` or `capsule`; local center and unit rotation; half extents and radius > 0, half height ≥ 0; density and friction ≥ 0; restitution in [0, 1]; flags `0` or `1`; category and mask: 64-bit unsigned integers | Collision shape in the entity's unscaled local frame; world scale is applied when the body is built. A box uses the half extents, a sphere the radius, a capsule the radius and half height (segment along local Y). Every field is written for every shape. `sensor` detects overlaps without colliding; `events` reports contact, hit and sensor events. Two colliders touch when each one's mask has a bit of the other's category |
 | `ENVIRONMENT <entity> <source> <image> <sky r g b> <horizon r g b> <ground r g b> <intensity> <rotation> <skybox> <ev100> <tone> <shadows> <distance> <occlusion> <bloom>` | `source`: `none`, `procedural` or `image`; `image`: asset reference, required for `image`; colors in [0, 1]; intensity ≥ 0; rotation in degrees; EV100 in [−20, 30]; `tone`: `aces`, `filmic`, `agx`, `pbr_neutral` or `linear`; `shadows`: `off`, `low`, `medium` or `high`; distance > 0 m; flags `0` or `1` | How the scene is lit and exposed. The first by entity ID applies. Without one, a procedural sky at EV100 15 is used. An image that cannot be used is reported, and the procedural sky lights the scene instead |
 | `BEHAVIOR <entity> <type> <count> [<key> <value>]...` | type and keys: 1–32 of `[a-z0-9_]`, each at most once; at most 32 finite values | Named numbers a runtime system reads when Play starts. The scene gives them no meaning. See `Engine/Gameplay/include/engine/gameplay/game.h` for the ones the gameplay module understands |
+| `EMITTER <entity> <effect> <auto_play> <loop> <rate_scale>` | `effect`: asset reference to a `.effect` file, or `-`; flags `0` or `1`; rate scale in [0, 1000] | Plays a particle effect at the entity. `auto_play` starts it by itself in Play and in the editor's preview; otherwise only gameplay fires it. `loop` starts it again when the effect's duration ends. The rate scale multiplies its rate and bursts. Particles are visual only and never change the scene |
+| `ANIMATOR <entity> <clips> "<clip>" <speed> <loop> <start> <preview>` | `clips`: asset reference to a model, or `-`; clip name quoted like an entity name, at most 256 bytes, empty allowed; speed in [−10, 10]; start in [0, 3600] seconds; flags `0` or `1` | Plays a clip of the entity's model (its `MESH` model) from `start`. `clips` names another model whose clips play on the joints with the same names; `-` uses the entity's own model. An empty or unknown clip leaves the model in its rest pose. `preview` plays it in the editor while editing. Poses live in the animation runtime and are never written to a scene |
+| `ATTACH <entity> "<bone>"` | joint name quoted, 1 to 256 bytes | Draws the entity, and what is under it, on that joint of its parent's model: its transform is then relative to the joint. A joint the parent's model does not have leaves it on the parent. Physics and gameplay see the plain parent transform |
+| `RAGDOLL <entity> <trigger> <density> <swing> <twist> <friction>` | `trigger`: `0` on death, `1` on demand, `2` never; density in [1, 100000] kg/m³; swing in [0, 180] and twist in [0, 178] degrees; friction in [0, 10] | Turns the entity's skinned model into jointed bodies that fall from its pose. The bodies are generated from the skeleton when it falls and live in the run's physics, never in a scene: a capsule per long enough bone, sized from the skin, and ball joints that let each bone swing up to `swing` from its rest direction and turn up to `twist` about itself. `friction` is how much the joints resist turning, as a fraction of each part's own weight |
+| `RAGBONE <entity> "<bone>" <body> <radius> <density> <swing> <twist>` | joint name quoted, 1 to 256 bytes, each at most once per entity; `body`: `0` as generated, `1` a body of its own, `2` none; radius in [0, 100] m, `0` sized from the skin; density in [0, 100000], `0` the ragdoll's; swing `-1` or [0, 180], twist `-1` or [0, 178], `-1` the ragdoll's | Settings for one bone of the entity's `RAGDOLL`, over what is generated for it. With `body` none the bone has neither a body nor a capsule and only follows its parent |
 
 An asset reference is `-` (none), or the 16 hex digit asset ID followed by the quoted path inside the project's
 `Assets` folder (at most 1024 bytes, no control characters): `MESH 1 cube 1 1 1 0.65 0 6a1f0c3e9b2d4a01 "models/helmet.glb" - - 1 1`.
@@ -53,7 +59,7 @@ exists, only scene lights are used.
 Example:
 
 ```
-ENGINE_SCENE 6 5 4
+ENGINE_SCENE 7 5 4
 ENTITY 1 0 "Ball" 0 0.5 0 0 0 0 1 1 1 1
 ENTITY 2 0 "Sun" 0 4 0 0 0 0 1 1 1 1
 ENTITY 3 0 "Camera" 0 1.5 6 0 0 0 1 1 1 1
@@ -96,8 +102,47 @@ emissive_map -
 Colors are sRGB in [0, 1] (alpha is linear). `alpha_mode` is `opaque`, `mask` or `blend`. Metallic-roughness maps read green
 as roughness and blue as metalness, multiplied by the factors; occlusion maps read red.
 
+## Effect files
+
+A `.effect` file in the asset folder (`engine::assets::write_effect`, `parse_effect`) is text like a material: the line
+`ENGINE_EFFECT 1`, then one `key values` line per field. Every key is optional and at most once; unknown keys and
+out-of-range values are errors.
+
+```
+ENGINE_EFFECT 1
+duration 1
+rate 30
+burst 0
+lifetime 0.6 1
+speed 1 2
+cone 20
+spawn_radius 0
+acceleration 0 -9.81 0
+drag 0
+spin 0 0
+stretch 0
+size 0 0.1 1 0.1
+color 0 1 1 1 1 1 1 1 1 0
+emissive_strength 1
+blend additive
+texture -
+collide_floor 0
+floor_height 0
+bounce 0.3
+world_space 1
+max_particles 500
+```
+
+Pairs are min and max (`lifetime`, `speed`, `spin` in degrees per second). Directions spread around the emitter's +Y
+axis, or the direction a one-shot effect is fired along, within the `cone` half angle (180 is every direction).
+`size` is 1 to 8 pairs of life fraction and quad width in metres; `color` is 1 to 8 groups of life fraction and an
+sRGB color with linear alpha. Both are interpolated linearly. `stretch` above 0 draws a quad along the velocity,
+speed times that many seconds long, for sparks. `blend` is `additive` or `alpha`. `texture` is an image asset
+reference or `-` for a soft round dot. `max_particles` is 1 to 20000.
+
 ## Earlier versions
 
+- **Version 6** (Milestone 4): no `EMITTER`, `ANIMATOR`, `ATTACH`, `RAGDOLL` or `RAGBONE` record.
 - **Version 5** (Milestone 3 slice S5): `MESH` has no material or UV scale, `LIGHT` no cones or shadows, `BODY` no rotation
   lock, `COLLIDER` no filter; `MATSLOT`, `ENVIRONMENT`, `BEHAVIOR` and the `spot` type are rejected.
 - **Version 4** (Milestone 3 slice S4): `MESH` has no asset reference fields.
