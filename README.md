@@ -5,7 +5,7 @@ the **Physics Shooter**, made entirely from data on top of the engine's reusable
 
 ![The Physics Shooter running inside the editor](docs/evidence/m4/02_arena_playing.jpg)
 
-**Status:** Windows x64 with MSVC is the built and tested platform. Linux GCC has a preset but is not verified. 555 CTest entries
+**Status:** Windows x64 with MSVC is the built and tested platform. Linux GCC has a preset but is not verified. 563 CTest entries
 pass, along with GPU smoke tests and scripted runs that use real mouse and keyboard input. Hosted CI is set up in
 `.github/workflows/ci.yml` and runs for the first time with this repository.
 
@@ -100,6 +100,8 @@ between them.
 | GLM | MIT | Math |
 | spdlog | MIT | Logging |
 | ozz-animation | MIT | Skeletal animation (Milestone 5) |
+| Lua 5.4 and sol2 | MIT | Scripts (Milestone 6) |
+| ImGuiColorTextEdit (goossens' fork) | MIT | The Script Editor (Milestone 6) |
 | GameNetworkingSockets | BSD-style | Networking backend, headers only for now |
 
 The full list, with commits, is in [`docs/build/dependencies.md`](docs/build/dependencies.md).
@@ -236,7 +238,7 @@ folder and open the copy with `--project <copy> --scene <copy>\physics_shooter.s
 ./cmake/scripts/dev-shell.ps1 ctest --preset windows-msvc-debug -L smoke     # headless smoke tests
 ```
 
-There are **555 CTest entries**, covering physics and ragdolls, the scene bridge, animation, particles, gameplay, assets and package names, networking,
+There are **563 CTest entries**, covering physics and ragdolls, the scene bridge, animation, particles, Lua scripting, gameplay, assets and package names, networking,
 online services, the core, the renderer snapshot and the editor. The editor tests run without a window: the commands, the viewport camera, the panels, the workflow
 and the feedback. Each test case runs in its own process. The test framework in `Tests/Framework` has no third-party dependencies.
 

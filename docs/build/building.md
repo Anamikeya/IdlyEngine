@@ -46,6 +46,7 @@ cmake -S . -B build/mingw-gcc-debug -G Ninja -DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_
 | `GAMEENGINE_STRICT_DEPENDENCY_LOCK` | OFF | Fail configure if a dependency is not at its locked commit |
 | `GAMEENGINE_WITH_PHYSICS` | ON | Build Box3D and `engine::physics` |
 | `GAMEENGINE_WITH_ANIMATION` | ON | Build ozz-animation as `gameengine::ozz`. Needs CMake 3.30 |
+| `GAMEENGINE_WITH_SCRIPTING` | ON | Build Lua 5.4 (compiled as C++) as `gameengine::lua` and sol2 as `gameengine::sol2` |
 | `GAMEENGINE_BUILD_EDITOR` | ON | Define `gameengine::glfw` / `gameengine::imgui` and add `Engine/Editor` when it exists |
 | `GAMEENGINE_WITH_GNS` | OFF | Build GameNetworkingSockets and `engine::networking_gns` (needs protobuf) |
 | `GAMEENGINE_GNS_COMPILE_CHECK` | ON | When GNS is off, compile (not link) the GNS backend against GNS headers |
@@ -66,6 +67,9 @@ Warnings (`cmake/GameEngineCompilerOptions.cmake`) apply only to engine targets 
 | `engine::assets` | Claude | `engine::core` (for `Result`) |
 | `gameengine::glfw` | Claude (build) | GLFW from resources, `EXCLUDE_FROM_ALL` |
 | `gameengine::imgui` | Claude (build) | ImGui core + GLFW backend, `EXCLUDE_FROM_ALL`; no renderer backend |
+| `gameengine::imgui_text_edit` | Claude (build) | ImGuiColorTextEdit's `TextEditor` on `gameengine::imgui`, `EXCLUDE_FROM_ALL`; the Script Editor's widget |
+| `gameengine::lua` | Claude (build) | Lua 5.4.9 library sources compiled as C++, fixed string hash seed, `EXCLUDE_FROM_ALL` |
+| `gameengine::sol2` | Claude (build) | sol2 headers on `gameengine::lua`, every safety check on, `/bigobj` |
 | `engine::renderer` | Codex | `engine::core` |
 | `engine::core` | Codex | added automatically once `Engine/Core/CMakeLists.txt` exists; receives `ENGINE_DEPENDENCY_ROOT=${GAMEENGINE_RESOURCES_DIR}` |
 

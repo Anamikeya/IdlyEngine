@@ -36,7 +36,8 @@ jobs:
 
       - name: Fetch locked dependencies
         # filament: Engine/Editor (on by default on Windows/MSVC) builds the renderer from source.
-        run: python -I cmake/scripts/fetch_dependencies.py "$env:GAMEENGINE_RESOURCES_DIR" box3d GameNetworkingSockets flecs glm spdlog glfw imgui filament ozz-animation
+        # ImGuiColorTextEdit: the editor's Script Editor.
+        run: python -I cmake/scripts/fetch_dependencies.py "$env:GAMEENGINE_RESOURCES_DIR" box3d GameNetworkingSockets flecs glm spdlog glfw imgui filament ozz-animation lua sol2 ImGuiColorTextEdit
 
       - name: Configure
         shell: pwsh
@@ -72,7 +73,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y ninja-build
 
       - name: Fetch locked dependencies
-        run: python3 -I cmake/scripts/fetch_dependencies.py "$GAMEENGINE_RESOURCES_DIR" box3d GameNetworkingSockets flecs glm spdlog glfw imgui ozz-animation
+        run: python3 -I cmake/scripts/fetch_dependencies.py "$GAMEENGINE_RESOURCES_DIR" box3d GameNetworkingSockets flecs glm spdlog glfw imgui ozz-animation lua sol2
 
       - name: Configure
         # Editor targets (GLFW) need X11/Wayland development packages and are unverified on Linux.

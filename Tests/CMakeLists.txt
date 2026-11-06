@@ -39,6 +39,14 @@ if(TARGET engine::animation)
 	target_compile_definitions(animation_tests PRIVATE "GAMEENGINE_TEST_RESOURCES_DIR=\"${GAMEENGINE_RESOURCES_DIR}\"")
 endif()
 
+# Lua and sol2 as the engine builds them.
+if(TARGET gameengine::sol2)
+	gameengine_add_test_executable(scripting_tests
+		LABELS scripting unit
+		SOURCES Scripting/lua_smoke_tests.cpp
+		LIBRARIES gameengine::sol2)
+endif()
+
 if(TARGET engine::effects)
 	gameengine_add_test_executable(effects_tests
 		LABELS effects unit
@@ -141,5 +149,5 @@ if(TARGET gameengine::imgui)
 	gameengine_add_test_executable(editor_dependency_smoke
 		LABELS editor smoke
 		SOURCES Editor/editor_dependency_smoke.cpp
-		LIBRARIES gameengine_imgui_null)
+		LIBRARIES gameengine_imgui_null gameengine::imgui_text_edit)
 endif()

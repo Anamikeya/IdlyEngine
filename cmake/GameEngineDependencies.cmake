@@ -115,6 +115,46 @@ if(GAMEENGINE_WITH_ANIMATION)
 	add_library(gameengine::ozz ALIAS gameengine_ozz)
 endif()
 
+# ---- Lua and sol2 -----------------------------------------------------------------------------
+# Lua 5.4 compiled as C++, so its errors are C++ exceptions: they unwind through engine code, running destructors,
+# instead of longjmp-ing over it. Only the library is built: lua.c, onelua.c and ltests.c are the interpreter, a
+# one-file build and the Lua team's test hooks. engine_lua_user.h fixes the string hash seed, so a script's run repeats
+# exactly. sol2 is header-only; its users include Lua's headers without extern "C", and keep every safety check.
+if(GAMEENGINE_WITH_SCRIPTING)
+	gameengine_verify_dependency(lua)
+	gameengine_verify_dependency(sol2)
+	set(_lua_dir "${GAMEENGINE_RESOURCES_DIR}/lua")
+	set(_lua_sources "")
+	foreach(lua_file IN ITEMS lapi lauxlib lbaselib lcode lcorolib lctype ldblib ldebug ldo ldump lfunc lgc linit
+			liolib llex lmathlib lmem loadlib lobject lopcodes loslib lparser lstate lstring lstrlib ltable ltablib ltm
+			lundump lutf8lib lvm lzio)
+		list(APPEND _lua_sources "${_lua_dir}/${lua_file}.c")
+	endforeach()
+	set_source_files_properties(${_lua_sources} PROPERTIES LANGUAGE CXX)
+	add_library(gameengine_lua STATIC EXCLUDE_FROM_ALL ${_lua_sources})
+	target_include_directories(gameengine_lua SYSTEM PUBLIC "${_lua_dir}")
+	target_include_directories(gameengine_lua PRIVATE "${CMAKE_CURRENT_LIST_DIR}/thirdparty")
+	# Debug builds also check every use of Lua's C API, so a mistake in a binding stops at once.
+	target_compile_definitions(gameengine_lua PRIVATE "LUA_USER_H=\"engine_lua_user.h\"" "$<$<CONFIG:Debug>:LUA_USE_APICHECK>")
+	target_compile_features(gameengine_lua PUBLIC cxx_std_20)
+	set_target_properties(gameengine_lua PROPERTIES FOLDER "ThirdParty")
+	add_library(gameengine::lua ALIAS gameengine_lua)
+
+	add_library(gameengine_sol2 INTERFACE)
+	target_include_directories(gameengine_sol2 SYSTEM INTERFACE "${GAMEENGINE_RESOURCES_DIR}/sol2/include")
+	target_link_libraries(gameengine_sol2 INTERFACE gameengine_lua)
+	# ALWAYS_UNSAFE: an exception thrown by engine code bound to Lua is caught where Lua called it and becomes an
+	# ordinary Lua error with its message, which a script's pcall can catch, rather than passing through Lua's own frames.
+	# PRINT_ERRORS off: the safeties would also write each error to std::cerr; the engine reports them itself.
+	target_compile_definitions(gameengine_sol2 INTERFACE SOL_USING_CXX_LUA=1 SOL_ALL_SAFETIES_ON=1 SOL_EXCEPTIONS_ALWAYS_UNSAFE=1
+		SOL_PRINT_ERRORS=0)
+	# sol2's templates put more sections in one object file than MSVC allows by default.
+	target_compile_options(gameengine_sol2 INTERFACE "$<$<CXX_COMPILER_ID:MSVC>:/bigobj>")
+	add_library(gameengine::sol2 ALIAS gameengine_sol2)
+	unset(_lua_dir)
+	unset(_lua_sources)
+endif()
+
 # ---- GameNetworkingSockets --------------------------------------------------------------------
 if(GAMEENGINE_WITH_GNS)
 	gameengine_verify_dependency(GameNetworkingSockets)

@@ -208,4 +208,23 @@ external editor stays).
 
 ## 8. Progress
 
-Nothing started yet. Slice 0 is next.
+### Slice 0: Lua, sol2 and the text editor in the build (done 2026-11-06)
+
+- **Fetched** with `fetch_dependencies.py` into `resources` at the locked commits; each checkout is clean. The CI fetch
+  lists name them (the Linux job, which builds no editor, fetches Lua and sol2 only).
+- **Lua's sources are the release's:** `lua-5.4.9.tar.gz` from lua.org, with the SHA-256 lua.org lists, matches the
+  GitHub tag file for file (`docs/build/dependencies.md`).
+- **`gameengine::lua`:** the 32 library files, compiled as C++ (`/TP`), with `cmake/thirdparty/engine_lua_user.h`
+  fixing the string hash seed through `LUA_USER_H`. A control build without it gave two states different table orders
+  on three runs out of three. Debug builds check every use of the C API (`LUA_USE_APICHECK`).
+- **`gameengine::sol2`:** header-only, all safeties on, errors not printed, engine exceptions turned into Lua errors
+  where Lua called the engine, `/bigobj`. It compiled under C++20, MSVC 19.44 and `/WX` with no warnings, so the
+  fallbacks in section 5 were not needed.
+- **`gameengine::imgui_text_edit`:** `TextEditor.cpp` only, on `gameengine::imgui`.
+- **`GAMEENGINE_WITH_SCRIPTING`** (on by default) gates Lua and sol2. Also fixed: a missing space in the
+  `GAMEENGINE_WITH_GNS` option, which made every configure print a CMake syntax warning.
+- **Tests:** `scripting_tests` (7 cases, `Tests/Scripting/lua_smoke_tests.cpp`) and a third case in
+  `editor_dependency_smoke`, which draws a Lua script with a marker in the text editor through ImGui's null backend.
+- **Verified:** both MSVC presets configured and built in empty folders (`build-m6-*`, 1,079 steps, 354 s and 340 s)
+  and pass 563 of 563 CTest entries. No warning came from the new libraries, the engine or the tests; the CI preset
+  builds them with `/WX`.

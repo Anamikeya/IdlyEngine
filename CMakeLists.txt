@@ -30,7 +30,8 @@ option(GAMEENGINE_BUILD_TESTS "Build engine tests and register them with CTest" 
 option(GAMEENGINE_WARNINGS_AS_ERRORS "Treat warnings in engine-owned targets as errors" OFF)
 option(GAMEENGINE_WITH_PHYSICS "Build the Box3D physics subsystem" ON)
 option(GAMEENGINE_WITH_ANIMATION "Build ozz-animation for skeletal animation (needs CMake 3.30)" ON)
-option(GAMEENGINE_WITH_GNS"Build the GameNetworkingSockets transport (requires protobuf)" OFF)
+option(GAMEENGINE_WITH_SCRIPTING "Build Lua and sol2 for scripts" ON)
+option(GAMEENGINE_WITH_GNS "Build the GameNetworkingSockets transport (requires protobuf)" OFF)
 option(GAMEENGINE_BUILD_EDITOR "Provide GLFW/ImGui targets and build Engine/Editor when present" ON)
 
 include(GameEngineCompilerOptions)
@@ -89,4 +90,4 @@ if(GAMEENGINE_BUILD_TESTS)
 	add_subdirectory(Tests)
 endif()
 
-message(STATUS "GameEngine ${PROJECT_VERSION}: physics=${GAMEENGINE_WITH_PHYSICS} animation=${GAMEENGINE_WITH_ANIMATION} gns=${GAMEENGINE_WITH_GNS} editor=${GAMEENGINE_BUILD_EDITOR} tests=${GAMEENGINE_BUILD_TESTS}")
+message(STATUS "GameEngine ${PROJECT_VERSION}: physics=${GAMEENGINE_WITH_PHYSICS} animation=${GAMEENGINE_WITH_ANIMATION} scripting=${GAMEENGINE_WITH_SCRIPTING} gns=${GAMEENGINE_WITH_GNS} editor=${GAMEENGINE_BUILD_EDITOR} tests=${GAMEENGINE_BUILD_TESTS}")
