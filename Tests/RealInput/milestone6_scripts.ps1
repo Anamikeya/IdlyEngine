@@ -160,7 +160,8 @@ try {
     $a = Position (Get-State); Start-Sleep -Seconds 2; $state = Get-State; $b = Position $state
     Save-Capture (Join-Path $Output 'm6_s4_04_playing.jpg')
     $rise = $b[1] - $a[1]
-    Check 'In Play the target rises at its own speed, 3 m/s' ($state.script_instances -eq '1' -and $rise -gt 4.5 -and $rise -lt 7.5 -and [Math]::Abs($b[0] - $a[0]) -lt 1e-6) ('rose {0:n2} m in 2 s' -f $rise)
+    # Three scripts run: the new one, and since slice 5 the vault's gate and button.
+    Check 'In Play the target rises at its own speed, 3 m/s' ($state.script_instances -eq '3' -and $rise -gt 4.5 -and $rise -lt 7.5 -and [Math]::Abs($b[0] - $a[0]) -lt 1e-6) ('rose {0:n2} m in 2 s, scripts {1}' -f $rise, $state.script_instances)
 
     # ---- Saved while playing: the running script changes, keeping where it was ----
     $logged = [int]$state.log_info

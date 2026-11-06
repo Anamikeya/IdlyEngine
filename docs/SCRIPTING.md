@@ -188,6 +188,26 @@ text only, and `require` finds only the project's scripts. Each script has its o
 - **Errors** stop only the instance that made them. The Message Log shows the script, line and function, and a toast
   appears; the other instances and the game go on. Stop and Play again to start it afresh.
 
+## What scripts cost
+
+Measured in Release on a Ryzen 7 5800X (`script_benchmark`, Milestone 6 slice 6), per call or operation:
+
+| | |
+|---|---|
+| Calling an instance's `tick` | 0.3 µs |
+| Arithmetic on numbers, `math.fmod`, reading a field of `self` | 0.05 µs |
+| Reading `v.x` of a `Vec3` | 0.1 µs |
+| `+`, `-`, `*` or `/` on a `Vec3`, or making one | 0.15 to 0.2 µs |
+| Reading `self.entity.position` | about 0.5 µs |
+| Setting it, and the scene taking the move at the end of the phase | about 1.7 µs |
+
+500 entities running `Mover` take about 1.4 ms a tick, and 1.75 ms in the editor, a tenth of a frame at 60 frames a second. So:
+
+- An instance only costs what its functions do: a script with nothing to do every tick should have no `tick`.
+- Keep what `engine.find` returns: finding looks through the whole scene.
+- In a loop that runs often, numbers are cheaper than vectors.
+- Set a position once a tick, not once per step of a calculation.
+
 ## Determinism
 
 A run repeats exactly, which tests rely on. No clock reaches a script; `dt` is the fixed step. `math.random` is seeded

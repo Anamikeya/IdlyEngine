@@ -1,7 +1,8 @@
 # Milestone 6 plan: scripting
 
 Branch `milestone-6`, worktree `D:\AI\GameEngine-Integration`, created from `main` at `ea2fa85` (the Milestone 5 merge).
-**Status: approved 2026-11-06.** Do not merge into `main` without the user's approval.
+**Status: approved 2026-11-06; done 2026-11-06** ([`MILESTONE_6_REPORT.md`](MILESTONE_6_REPORT.md)). Do not merge into `main`
+without the user's approval.
 
 Decisions (2026-11-06), the recommended option each time: Lua 5.4.9 with sol2 3.5.0, and goossens' ImGuiColorTextEdit,
 go into `resources` at the pinned commits. Scripts are edited in a Script Editor tab, with Open in External Editor.
@@ -379,3 +380,37 @@ external editor stays).
   Stop gives back the scene byte for byte. 14 of 14 on the first run (`docs/evidence/m6-shooter`).
 - **Docs:** the shooter's scripts in `SCRIPTING.md`, the vault and E in the sample's README, the testing README.
 - **Tests:** eight in `gameplay_tests`, one in `editor_shooter_tests`. Both presets pass 612 of 612.
+
+### Slice 6: performance, fresh builds, report (done 2026-11-06)
+
+- **What it measures:** `script_stress.scene`, the sample with 500 cubes over the arena, each moved up and down by
+  `Mover.lua`, with the vault's two scripts 502 in all. The perf log times scripts apart from gameplay (per tick and per
+  drawn frame) and each drawn frame's CPU time; the stats overlay shows script time. `milestone6_performance.ps1` plays the
+  sample, the stress scene and the stress scene with the movers' scripts out, twice each; `script_benchmark` times the
+  same without a window, with five scripts that tell the costs apart.
+- **The first measurement** gave 7.6 ms a tick for the scripts, with pauses past 100 ms, and showed that 500 cubes that
+  never moved cost 2.5 ms a tick of gameplay and physics. Three costs grew with the scene, none of them Lua's:
+  - **The command bus** copied, validated and committed the whole scene for every transaction, and physics, gameplay and
+    scripts send one or more every tick. A batch that only renames, moves or sets components now runs in place, at the
+    cost of what it names; moves alone copy no record on a bus without history. 500 moves: 4.7 to 0.45 ms. An
+    `engine.core.acceptance` scenario plays the same batches through both paths and compares scenes, world matrices to
+    the bit, receipts, errors and undo, with and without history.
+  - **Physics** copied the whole scene every tick to find bodies. `Scene::structure_revision()` moves only when more than
+    transforms change, and physics mirrors components only then.
+  - **sol2 gives every type a finalizer**, so each `Vec3` a script made was walked by every collection and freed a cycle
+    late: pauses of 36 to 51 ms. `Vec3`, `Color`, `Quat` and `Entity` have none now.
+- **Then, at `f06fbd7`,** the editor gave 2.15 ms a tick with the desktop in use, over the 2 ms asked for. Vec3's
+  operators became plain C functions that hand any other operand to sol2's, and `Mover.lua` works out its path once a tick
+  (the same numbers: it still plays to the bit as the C++ mover). Measured, sol2's safety checks cost another fifth; they
+  stay on.
+- **Result** at `7a9aace`: 502 scripts cost 1.78 ms a tick with the desktop idle and 1.84 ms with it in use, against
+  the 2 ms asked for; the slowest 1% of frames 2.9 and 4.1 ms. Without a window, 500 Movers take 1.40 ms. Both presets
+  build from empty folders and pass 616 of 616 and `--smoke` and `--render-test`. Real input at this commit: the
+  shooter's vault run 14 of 14, Milestone 5's shooter run 26 of 26, and the Script Editor run 15 of 15 once its check
+  expected the vault's two scripts as well as its own (`docs/evidence/m6-performance`).
+- **Side effects:** the sample's C++ gameplay went from 0.42 to 0.04 ms a tick and physics from 0.40 to 0.08, as both send
+  their moves through the bus.
+- **Also added:** a test that Simulate runs scripts, which the acceptance names and nothing covered; the core architecture
+  note corrected, as it said fixed ticks took no whole-scene snapshots.
+- **Tests:** `engine.core.acceptance` gains a scenario, `scripting_tests` two cases, `editor_script_tests` and
+  `editor_shooter_tests` one each. Both presets pass 616 of 616.

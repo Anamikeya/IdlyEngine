@@ -41,6 +41,7 @@ build-m4-windows-msvc-release\bin\engine_editor.exe --sample
 |---|---|
 | `physics_shooter.scene` | The arena, targets, player and rules, as behaviors on entities |
 | `stress_test.scene` | The arena with ten enemies in view and ten fountains keeping 5,000 particles alive, for performance runs |
+| `script_stress.scene` | The arena with 500 small cubes overhead, each moved up and down by `Mover.lua`: 502 scripts with the vault's two, for measuring what scripts cost (Milestone 6) |
 | `lighting_test.scene` | Metallic, rough, non-metal, textured and transparent surfaces, for checking lighting |
 | `Assets/materials/` | Material assets, editable in the Material Editor |
 | `Assets/Scripts/` | Lua scripts (Milestone 6): the vault's `Gate` and `Button`, and `Mover`, `Pickup` and `BonusZone`, which play the same as the C++ behaviors of those names. See `docs/SCRIPTING.md` |

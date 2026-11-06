@@ -253,7 +253,8 @@ powershell -ExecutionPolicy Bypass -File Tests/RealInput/editor_ux_phase5.ps1 -E
 
 They wait for the desktop to be idle and stop if the editor loses focus, so don't use the PC while they run. A run that stops exits
 with code 2 and proves nothing either way. `Tests/Performance/milestone5_performance.ps1` measures the Release editor playing the
-sample and a stress scene; it sends no input, but also waits for an idle desktop.
+sample and a stress scene, and `milestone6_performance.ps1` what 500 scripts cost; they send no input, but also wait for an idle
+desktop.
 
 Details are in [`docs/testing/README.md`](docs/testing/README.md). Results and screenshots from every milestone and phase are in
 [`docs/evidence`](docs/evidence).
