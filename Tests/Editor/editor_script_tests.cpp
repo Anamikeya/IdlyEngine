@@ -314,6 +314,35 @@ return Gate
 	ENGINE_CHECK(p.s.take_script_errors().empty());
 }
 
+// Milestone 6, slice 6: Simulate runs scripts as Play does, with nobody possessed, and Stop puts the scene back.
+ENGINE_TEST(simulate_runs_scripts_too_and_stop_puts_the_scene_back)
+{
+	Project p("simulate");
+	write_script(p.s, p.gate, R"lua(local Gate = { properties = { speed = 2.0 } }
+function Gate:tick(dt) self.entity.position = self.entity.position + Vec3(0, self.speed * dt, 0) end
+function Gate:on_stop() print("stopping") end
+return Gate
+)lua");
+	const auto gate = make_entity(p.s, "Gate");
+	ENGINE_REQUIRE(p.s.assign_script(gate, p.gate));
+	const auto before = p.s.scene().snapshot();
+	const auto revision = p.s.commands().revision();
+	ENGINE_REQUIRE(p.s.simulate());
+	ENGINE_CHECK(p.s.simulating());
+	ENGINE_CHECK(p.s.script_instances() == std::vector<EntityId>{gate});
+	for (int i = 0; i < 30; ++i) p.s.update(EditorSession::fixed_step);
+	const auto moved = p.s.scene().inspect(gate);
+	ENGINE_REQUIRE(moved.has_value());
+	ENGINE_CHECK_NEAR(moved->transform.position.y, 1.0, 1e-6); // Half a second at the default 2 m/s.
+	ENGINE_REQUIRE(p.s.stop());
+	const auto output = p.s.take_script_output();
+	ENGINE_REQUIRE(output.size() == 1);
+	ENGINE_CHECK_EQ(output[0].text, std::string("stopping"));
+	ENGINE_CHECK(p.s.scene().snapshot() == before);
+	ENGINE_CHECK_EQ(p.s.commands().revision(), revision);
+	ENGINE_CHECK(p.s.take_script_errors().empty());
+}
+
 ENGINE_TEST(a_script_error_in_play_stops_that_script_and_says_where)
 {
 	Project p("play-error");

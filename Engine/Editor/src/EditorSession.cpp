@@ -1570,8 +1570,10 @@ void EditorSession::tick() {
     ++r.ticks;
     const auto start = std::chrono::steady_clock::now();
     if (r.game) r.game->pre_physics();
+    const auto before_scripts = std::chrono::steady_clock::now();
     if (r.scripts) r.scripts->pre_physics();
     const auto before_physics = std::chrono::steady_clock::now();
+    auto scripts_took = before_physics - before_scripts;
     if (auto report = r.physics->fixed_update(fixed_step, r.scene, r.bus, physics_context); !report) {
         physics_error_ = "Physics stopped: " + report.error().message;
         r.paused = true;
@@ -1604,6 +1606,7 @@ void EditorSession::tick() {
         for (const auto &event : r.game->effect_events()) fire_effect(event);
     }
     if (r.scripts) {
+        const auto before_late_scripts = std::chrono::steady_clock::now();
         r.scripts->post_physics(notices);
         // What scripts asked of the animations, ragdolls and effects, as for the game's.
         for (const auto &request : r.scripts->clip_requests()) {
@@ -1617,12 +1620,15 @@ void EditorSession::tick() {
         for (const auto &event : r.scripts->effect_requests()) fire_effect(event);
         for (auto &issue : r.scripts->take_issues()) r.game_issues.push_back(std::move(issue));
         collect_script_messages();
+        scripts_took += std::chrono::steady_clock::now() - before_late_scripts;
     }
     const auto end = std::chrono::steady_clock::now();
     ++timing_.ticks;
     timing_.physics += after_physics - before_physics;
     timing_.physics_max = std::max<std::chrono::nanoseconds>(timing_.physics_max, after_physics - before_physics);
-    timing_.gameplay += (before_physics - start) + (end - after_physics) - animation_took;
+    timing_.gameplay += (before_physics - start) + (end - after_physics) - animation_took - scripts_took;
+    timing_.scripts += scripts_took;
+    timing_.scripts_max = std::max<std::chrono::nanoseconds>(timing_.scripts_max, scripts_took);
     timing_.animation += animation_took;
     timing_.animation_max = std::max<std::chrono::nanoseconds>(timing_.animation_max, animation_took);
     reconcile();

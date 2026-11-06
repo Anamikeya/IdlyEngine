@@ -134,6 +134,13 @@ class CommandBus final {
     static void merge(History &into, std::vector<Delta> deltas);
     Result<void> authorize(const Context &, Capability) const;
     Result<Receipt> replay(const Context &, std::uint64_t, bool undo);
+    // A batch that keeps every entity, ID and parent runs in place: only what it names is read, checked and
+    // committed, so it costs what it changes rather than what the scene holds. The outcome is the whole-scene path's.
+    // Moves alone (SetTransform) copy no record unless the bus keeps history.
+    Result<Receipt> execute_in_place(std::span<const Command>, std::string_view name);
+    Result<Receipt> execute_moves(std::span<const Command>, std::string_view name);
+    // A committed change: the next revision, and the step for undo.
+    Receipt finish(History history, Receipt receipt, std::size_t changed);
 
   public:
     explicit CommandBus(Scene &scene, std::size_t history_limit = 128);

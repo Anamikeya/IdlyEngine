@@ -1,0 +1,1852 @@
+ENGINE_SCENE 8 589 588
+ENTITY 1 0 "Game Rules" 0 0 0 0 0 0 1 1 1 1
+ENTITY 2 0 "Environment" 0 0 0 0 0 0 1 1 1 1
+ENTITY 3 0 "Sun" 0 20 0 -0.4144880622958475 0.29261871889070007 0.14271968522738726 0.8498264664139349 1 1 1
+ENTITY 4 0 "Impact Effect Template" 0 -40 0 0 0 0 1 1 1 1
+ENTITY 5 0 "Crate Dust Template" 2 -40 0 0 0 0 1 1 1 1
+ENTITY 6 0 "Footstep Dust Template" 4 -40 0 0 0 0 1 1 1 1
+ENTITY 7 0 "Glass Shard Template" 6 -40 0 0 0 0 1 0.22 0.16 0.012
+ENTITY 8 0 "Floor" 0 -0.5 0 0 0 0 1 32 1 32
+ENTITY 9 0 "Wall North" 0 2.5 -16.5 0 0 0 1 34 5 1
+ENTITY 10 0 "Wall South" 0 2.5 16.5 0 0 0 1 34 5 1
+ENTITY 11 0 "Wall West" -16.5 2.5 -2.75 0 0 0 1 1 5 26.5
+ENTITY 12 0 "Wall East" 16.5 2.5 0 0 0 0 1 1 5 32
+ENTITY 13 0 "Player" 0 1 12 0 0 0 1 1 1 1
+ENTITY 14 13 "Camera" 0 0.68 0 0 0 0 1 1 1 1
+ENTITY 15 14 "Gun" 0.2 -0.17 -0.42 0 0 0 1 0.05 0.07 0.26
+ENTITY 16 15 "Gun Barrel" 0 0.2 -0.75 0 0 0 1 0.5 0.45 0.7
+ENTITY 17 15 "Gun Grip" 0 -0.75 0.28 0 0 0 1 0.8 0.9 0.3
+ENTITY 18 16 "Muzzle" 0 0 -0.56 0 0 0 1 1 1 1
+ENTITY 19 0 "Low Wall Left" -5.5 0.6 7 0 0 0 1 5 1.2 0.7
+ENTITY 20 0 "Low Wall Right" 5.5 0.6 7 0 0 0 1 5 1.2 0.7
+ENTITY 21 0 "Pillar 1" -9.5 2 0.5 0 0 0 1 1.6 4 1.6
+ENTITY 22 0 "Pillar 2" 9.5 2 0.5 0 0 0 1 1.6 4 1.6
+ENTITY 23 0 "Pillar 3" -4 2 -4.5 0 0 0 1 1.6 4 1.6
+ENTITY 24 0 "Pillar 4" 4 2 -4.5 0 0 0 1 1.6 4 1.6
+ENTITY 25 0 "Glass Barrier" 0 1.1 3 0 0 0 1 5 2.2 0.12
+ENTITY 26 0 "Platform" 11 0.6 -9 0 0 0 1 7 1.2 7
+ENTITY 27 0 "Step" 6.8 0.25 -11 0 0 0 1 1.4 0.5 3
+ENTITY 28 0 "Static Target 1" -8 3 -15.9 0 0 0 1 1.3 1.3 0.16
+ENTITY 29 0 "Static Target 2" 8 3 -15.9 0 0 0 1 1.3 1.3 0.16
+ENTITY 30 0 "Static Target 3" -9.5 2.5 1.38 0 0 0 1 1.3 1.3 0.16
+ENTITY 31 0 "Moving Target 1" -11 2.4 -7.8 0 0 0 1 1 1 1
+ENTITY 32 0 "Moving Target 2" 14 1.6 -12 0 0 0 1 1 1 1
+ENTITY 33 0 "Crate 0-0" -12.545 0.5 -9 0 0 0 1 1 1 1
+ENTITY 34 0 "Crate 0-1" -11.515 0.5 -9 0 0 0 1 1 1 1
+ENTITY 35 0 "Crate 0-2" -10.485 0.5 -9 0 0 0 1 1 1 1
+ENTITY 36 0 "Crate 0-3" -9.455 0.5 -9 0 0 0 1 1 1 1
+ENTITY 37 0 "Crate 1-0" -12.03 1.501 -9 0 0 0 1 1 1 1
+ENTITY 38 0 "Crate 1-1" -11 1.501 -9 0 0 0 1 1 1 1
+ENTITY 39 0 "Crate 1-2" -9.97 1.501 -9 0 0 0 1 1 1 1
+ENTITY 40 0 "Crate 2-0" -11.515 2.502 -9 0 0 0 1 1 1 1
+ENTITY 41 0 "Crate 2-1" -10.485 2.502 -9 0 0 0 1 1 1 1
+ENTITY 42 0 "Dynamic Target 1" -11 3.42 -9 0 0 0 1 0.84 0.84 0.84
+ENTITY 43 0 "Dynamic Target 2" 11 1.6 -9 0 0 0 1 0.8 0.8 0.8
+ENTITY 44 0 "Domino 1" 6.2 1 2.6 0 0 0 1 1.1 2 0.26
+ENTITY 45 0 "Domino 2" 6.2 1 1.6 0 0 0 1 1.1 2 0.26
+ENTITY 46 0 "Domino 3" 6.2 1 0.6000000000000001 0 0 0 1 1.1 2 0.26
+ENTITY 47 0 "Domino 4" 6.2 1 -0.3999999999999999 0 0 0 1 1.1 2 0.26
+ENTITY 48 0 "Domino 5" 6.2 1 -1.4 0 0 0 1 1.1 2 0.26
+ENTITY 49 0 "Domino 6" 6.2 1 -2.4 0 0 0 1 1.1 2 0.26
+ENTITY 50 0 "Domino 7" 6.2 1 -3.4 0 0 0 1 1.1 2 0.26
+ENTITY 51 0 "Domino 8" 6.2 1 -4.4 0 0 0 1 1.1 2 0.26
+ENTITY 52 0 "Domino 9" 6.2 1 -5.4 0 0 0 1 1.1 2 0.26
+ENTITY 53 0 "Domino 10" 6.2 1 -6.4 0 0 0 1 1.1 2 0.26
+ENTITY 54 0 "Chain Target" 6.2 0.5 -7.6 0 0 0 1 1 1 1
+ENTITY 55 0 "Shelf Leg Left" -2.2 1.2 -11.5 0 0 0 1 0.3 2.4 0.9
+ENTITY 56 0 "Shelf Leg Right" 2.2 1.2 -11.5 0 0 0 1 0.3 2.4 0.9
+ENTITY 57 0 "Shelf" 0 2.5 -11.5 0 0 0 1 5 0.2 1.1
+ENTITY 58 0 "Shelf Crate 1" -1.6 2.92 -11.5 0 0 0 1 0.62 0.62 0.62
+ENTITY 59 0 "Shelf Crate 2" -0.8 2.92 -11.5 0 0 0 1 0.62 0.62 0.62
+ENTITY 60 0 "Shelf Crate 3" 0 2.92 -11.5 0 0 0 1 0.62 0.62 0.62
+ENTITY 61 0 "Shelf Crate 4" 0.8000000000000003 2.92 -11.5 0 0 0 1 0.62 0.62 0.62
+ENTITY 62 0 "Shelf Crate 5" 1.6 2.92 -11.5 0 0 0 1 0.62 0.62 0.62
+ENTITY 63 0 "Bonus Zone" 0 1 -14 0 0 0 1 8 2 2.6
+ENTITY 64 0 "Stack Crate 1" -5 0.4 -0.6 0 0 0 1 0.78 0.78 0.78
+ENTITY 65 0 "Stack Crate 2" -4.2 0.4 -0.6 0 0 0 1 0.78 0.78 0.78
+ENTITY 66 0 "Stack Crate 3" -4.6 1.2 -0.6 0 0 0 1 0.78 0.78 0.78
+ENTITY 67 0 "Stack Crate 4" -5 0.4 -1.4 0 0 0 1 0.78 0.78 0.78
+ENTITY 68 0 "Stack Crate 5" -4.2 0.4 -1.4 0 0 0 1 0.78 0.78 0.78
+ENTITY 69 0 "Stack Crate 6" -4.6 1.2 -1.4 0 0 0 1 0.78 0.78 0.78
+ENTITY 70 0 "Ball 1" -1.5 0.45 -1.5 0 0 0 1 0.9 0.9 0.9
+ENTITY 71 0 "Ball 2" 1.5 0.35 -1 0 0 0 1 0.7 0.7 0.7
+ENTITY 72 0 "Ball 3" -7 7 8 0 0 0 1 0.8 0.8 0.8
+ENTITY 73 0 "Ball 4" 7 9 9 0 0 0 1 1 1 1
+ENTITY 74 0 "Plinth" -5 0.5 -11 0 0 0 1 1.2 1 1.2
+ENTITY 75 0 "Water Bottle Target" -5 1.63 -11 0 0 0 1 5 5 5
+ENTITY 76 0 "Enemy 1" -12 0 4 0.0 0.7071067811865476 -0.0 0.7071067811865476 1 1 1
+ENTITY 77 0 "Enemy 2" 0 0 -3 0.0 1.0 -0.0 6.123233995736766e-17 1 1 1
+ENTITY 78 0 "Enemy 3" 8.5 0 5.5 0.0 0.7071067811865476 -0.0 0.7071067811865476 1 1 1
+ENTITY 79 0 "Time Pickup" 13.2 1.9 -11.2 0 0 0 1 0.5 0.5 0.5
+ENTITY 80 0 "Ammo Pickup" -13 0.9 8 0 0 0 1 0.5 0.5 0.5
+ENTITY 81 0 "Wall West End" -16.5 2.5 14.75 0 0 0 1 1 5 2.5
+ENTITY 82 0 "Vault Lintel" -16.5 4 12 0 0 0 1 1 2 3
+ENTITY 83 0 "Vault Floor" -20 -0.5 12 0 0 0 1 8 1 7
+ENTITY 84 0 "Vault Wall North" -20.5 2.5 9 0 0 0 1 7 5 1
+ENTITY 85 0 "Vault Wall South" -20.5 2.5 15 0 0 0 1 7 5 1
+ENTITY 86 0 "Vault Wall Back" -23.5 2.5 12 0 0 0 1 1 5 5
+ENTITY 87 0 "Vault Gate" -16.5 1.5 12 0 0 0 1 0.3 3 3
+ENTITY 88 0 "Vault Button" -22.9 1.3 12 0 0 0 1 0.2 0.35 0.35
+ENTITY 89 0 "Script Mover 1" -12 5.5 -12 0 0 0 1 0.3 0.3 0.3
+ENTITY 90 0 "Script Mover 2" -11 7.5 -12 0 0 0 1 0.3 0.3 0.3
+ENTITY 91 0 "Script Mover 3" -10 5.5 -12 0 0 0 1 0.3 0.3 0.3
+ENTITY 92 0 "Script Mover 4" -9 7.5 -12 0 0 0 1 0.3 0.3 0.3
+ENTITY 93 0 "Script Mover 5" -8 5.5 -12 0 0 0 1 0.3 0.3 0.3
+ENTITY 94 0 "Script Mover 6" -7 7.5 -12 0 0 0 1 0.3 0.3 0.3
+ENTITY 95 0 "Script Mover 7" -6 5.5 -12 0 0 0 1 0.3 0.3 0.3
+ENTITY 96 0 "Script Mover 8" -5 7.5 -12 0 0 0 1 0.3 0.3 0.3
+ENTITY 97 0 "Script Mover 9" -4 5.5 -12 0 0 0 1 0.3 0.3 0.3
+ENTITY 98 0 "Script Mover 10" -3 7.5 -12 0 0 0 1 0.3 0.3 0.3
+ENTITY 99 0 "Script Mover 11" -2 5.5 -12 0 0 0 1 0.3 0.3 0.3
+ENTITY 100 0 "Script Mover 12" -1 7.5 -12 0 0 0 1 0.3 0.3 0.3
+ENTITY 101 0 "Script Mover 13" 0 5.5 -12 0 0 0 1 0.3 0.3 0.3
+ENTITY 102 0 "Script Mover 14" 1 7.5 -12 0 0 0 1 0.3 0.3 0.3
+ENTITY 103 0 "Script Mover 15" 2 5.5 -12 0 0 0 1 0.3 0.3 0.3
+ENTITY 104 0 "Script Mover 16" 3 7.5 -12 0 0 0 1 0.3 0.3 0.3
+ENTITY 105 0 "Script Mover 17" 4 5.5 -12 0 0 0 1 0.3 0.3 0.3
+ENTITY 106 0 "Script Mover 18" 5 7.5 -12 0 0 0 1 0.3 0.3 0.3
+ENTITY 107 0 "Script Mover 19" 6 5.5 -12 0 0 0 1 0.3 0.3 0.3
+ENTITY 108 0 "Script Mover 20" 7 7.5 -12 0 0 0 1 0.3 0.3 0.3
+ENTITY 109 0 "Script Mover 21" 8 5.5 -12 0 0 0 1 0.3 0.3 0.3
+ENTITY 110 0 "Script Mover 22" 9 7.5 -12 0 0 0 1 0.3 0.3 0.3
+ENTITY 111 0 "Script Mover 23" 10 5.5 -12 0 0 0 1 0.3 0.3 0.3
+ENTITY 112 0 "Script Mover 24" 11 7.5 -12 0 0 0 1 0.3 0.3 0.3
+ENTITY 113 0 "Script Mover 25" 12 5.5 -12 0 0 0 1 0.3 0.3 0.3
+ENTITY 114 0 "Script Mover 26" -12 7.5 -11 0 0 0 1 0.3 0.3 0.3
+ENTITY 115 0 "Script Mover 27" -11 5.5 -11 0 0 0 1 0.3 0.3 0.3
+ENTITY 116 0 "Script Mover 28" -10 7.5 -11 0 0 0 1 0.3 0.3 0.3
+ENTITY 117 0 "Script Mover 29" -9 5.5 -11 0 0 0 1 0.3 0.3 0.3
+ENTITY 118 0 "Script Mover 30" -8 7.5 -11 0 0 0 1 0.3 0.3 0.3
+ENTITY 119 0 "Script Mover 31" -7 5.5 -11 0 0 0 1 0.3 0.3 0.3
+ENTITY 120 0 "Script Mover 32" -6 7.5 -11 0 0 0 1 0.3 0.3 0.3
+ENTITY 121 0 "Script Mover 33" -5 5.5 -11 0 0 0 1 0.3 0.3 0.3
+ENTITY 122 0 "Script Mover 34" -4 7.5 -11 0 0 0 1 0.3 0.3 0.3
+ENTITY 123 0 "Script Mover 35" -3 5.5 -11 0 0 0 1 0.3 0.3 0.3
+ENTITY 124 0 "Script Mover 36" -2 7.5 -11 0 0 0 1 0.3 0.3 0.3
+ENTITY 125 0 "Script Mover 37" -1 5.5 -11 0 0 0 1 0.3 0.3 0.3
+ENTITY 126 0 "Script Mover 38" 0 7.5 -11 0 0 0 1 0.3 0.3 0.3
+ENTITY 127 0 "Script Mover 39" 1 5.5 -11 0 0 0 1 0.3 0.3 0.3
+ENTITY 128 0 "Script Mover 40" 2 7.5 -11 0 0 0 1 0.3 0.3 0.3
+ENTITY 129 0 "Script Mover 41" 3 5.5 -11 0 0 0 1 0.3 0.3 0.3
+ENTITY 130 0 "Script Mover 42" 4 7.5 -11 0 0 0 1 0.3 0.3 0.3
+ENTITY 131 0 "Script Mover 43" 5 5.5 -11 0 0 0 1 0.3 0.3 0.3
+ENTITY 132 0 "Script Mover 44" 6 7.5 -11 0 0 0 1 0.3 0.3 0.3
+ENTITY 133 0 "Script Mover 45" 7 5.5 -11 0 0 0 1 0.3 0.3 0.3
+ENTITY 134 0 "Script Mover 46" 8 7.5 -11 0 0 0 1 0.3 0.3 0.3
+ENTITY 135 0 "Script Mover 47" 9 5.5 -11 0 0 0 1 0.3 0.3 0.3
+ENTITY 136 0 "Script Mover 48" 10 7.5 -11 0 0 0 1 0.3 0.3 0.3
+ENTITY 137 0 "Script Mover 49" 11 5.5 -11 0 0 0 1 0.3 0.3 0.3
+ENTITY 138 0 "Script Mover 50" 12 7.5 -11 0 0 0 1 0.3 0.3 0.3
+ENTITY 139 0 "Script Mover 51" -12 5.5 -10 0 0 0 1 0.3 0.3 0.3
+ENTITY 140 0 "Script Mover 52" -11 7.5 -10 0 0 0 1 0.3 0.3 0.3
+ENTITY 141 0 "Script Mover 53" -10 5.5 -10 0 0 0 1 0.3 0.3 0.3
+ENTITY 142 0 "Script Mover 54" -9 7.5 -10 0 0 0 1 0.3 0.3 0.3
+ENTITY 143 0 "Script Mover 55" -8 5.5 -10 0 0 0 1 0.3 0.3 0.3
+ENTITY 144 0 "Script Mover 56" -7 7.5 -10 0 0 0 1 0.3 0.3 0.3
+ENTITY 145 0 "Script Mover 57" -6 5.5 -10 0 0 0 1 0.3 0.3 0.3
+ENTITY 146 0 "Script Mover 58" -5 7.5 -10 0 0 0 1 0.3 0.3 0.3
+ENTITY 147 0 "Script Mover 59" -4 5.5 -10 0 0 0 1 0.3 0.3 0.3
+ENTITY 148 0 "Script Mover 60" -3 7.5 -10 0 0 0 1 0.3 0.3 0.3
+ENTITY 149 0 "Script Mover 61" -2 5.5 -10 0 0 0 1 0.3 0.3 0.3
+ENTITY 150 0 "Script Mover 62" -1 7.5 -10 0 0 0 1 0.3 0.3 0.3
+ENTITY 151 0 "Script Mover 63" 0 5.5 -10 0 0 0 1 0.3 0.3 0.3
+ENTITY 152 0 "Script Mover 64" 1 7.5 -10 0 0 0 1 0.3 0.3 0.3
+ENTITY 153 0 "Script Mover 65" 2 5.5 -10 0 0 0 1 0.3 0.3 0.3
+ENTITY 154 0 "Script Mover 66" 3 7.5 -10 0 0 0 1 0.3 0.3 0.3
+ENTITY 155 0 "Script Mover 67" 4 5.5 -10 0 0 0 1 0.3 0.3 0.3
+ENTITY 156 0 "Script Mover 68" 5 7.5 -10 0 0 0 1 0.3 0.3 0.3
+ENTITY 157 0 "Script Mover 69" 6 5.5 -10 0 0 0 1 0.3 0.3 0.3
+ENTITY 158 0 "Script Mover 70" 7 7.5 -10 0 0 0 1 0.3 0.3 0.3
+ENTITY 159 0 "Script Mover 71" 8 5.5 -10 0 0 0 1 0.3 0.3 0.3
+ENTITY 160 0 "Script Mover 72" 9 7.5 -10 0 0 0 1 0.3 0.3 0.3
+ENTITY 161 0 "Script Mover 73" 10 5.5 -10 0 0 0 1 0.3 0.3 0.3
+ENTITY 162 0 "Script Mover 74" 11 7.5 -10 0 0 0 1 0.3 0.3 0.3
+ENTITY 163 0 "Script Mover 75" 12 5.5 -10 0 0 0 1 0.3 0.3 0.3
+ENTITY 164 0 "Script Mover 76" -12 7.5 -9 0 0 0 1 0.3 0.3 0.3
+ENTITY 165 0 "Script Mover 77" -11 5.5 -9 0 0 0 1 0.3 0.3 0.3
+ENTITY 166 0 "Script Mover 78" -10 7.5 -9 0 0 0 1 0.3 0.3 0.3
+ENTITY 167 0 "Script Mover 79" -9 5.5 -9 0 0 0 1 0.3 0.3 0.3
+ENTITY 168 0 "Script Mover 80" -8 7.5 -9 0 0 0 1 0.3 0.3 0.3
+ENTITY 169 0 "Script Mover 81" -7 5.5 -9 0 0 0 1 0.3 0.3 0.3
+ENTITY 170 0 "Script Mover 82" -6 7.5 -9 0 0 0 1 0.3 0.3 0.3
+ENTITY 171 0 "Script Mover 83" -5 5.5 -9 0 0 0 1 0.3 0.3 0.3
+ENTITY 172 0 "Script Mover 84" -4 7.5 -9 0 0 0 1 0.3 0.3 0.3
+ENTITY 173 0 "Script Mover 85" -3 5.5 -9 0 0 0 1 0.3 0.3 0.3
+ENTITY 174 0 "Script Mover 86" -2 7.5 -9 0 0 0 1 0.3 0.3 0.3
+ENTITY 175 0 "Script Mover 87" -1 5.5 -9 0 0 0 1 0.3 0.3 0.3
+ENTITY 176 0 "Script Mover 88" 0 7.5 -9 0 0 0 1 0.3 0.3 0.3
+ENTITY 177 0 "Script Mover 89" 1 5.5 -9 0 0 0 1 0.3 0.3 0.3
+ENTITY 178 0 "Script Mover 90" 2 7.5 -9 0 0 0 1 0.3 0.3 0.3
+ENTITY 179 0 "Script Mover 91" 3 5.5 -9 0 0 0 1 0.3 0.3 0.3
+ENTITY 180 0 "Script Mover 92" 4 7.5 -9 0 0 0 1 0.3 0.3 0.3
+ENTITY 181 0 "Script Mover 93" 5 5.5 -9 0 0 0 1 0.3 0.3 0.3
+ENTITY 182 0 "Script Mover 94" 6 7.5 -9 0 0 0 1 0.3 0.3 0.3
+ENTITY 183 0 "Script Mover 95" 7 5.5 -9 0 0 0 1 0.3 0.3 0.3
+ENTITY 184 0 "Script Mover 96" 8 7.5 -9 0 0 0 1 0.3 0.3 0.3
+ENTITY 185 0 "Script Mover 97" 9 5.5 -9 0 0 0 1 0.3 0.3 0.3
+ENTITY 186 0 "Script Mover 98" 10 7.5 -9 0 0 0 1 0.3 0.3 0.3
+ENTITY 187 0 "Script Mover 99" 11 5.5 -9 0 0 0 1 0.3 0.3 0.3
+ENTITY 188 0 "Script Mover 100" 12 7.5 -9 0 0 0 1 0.3 0.3 0.3
+ENTITY 189 0 "Script Mover 101" -12 5.5 -8 0 0 0 1 0.3 0.3 0.3
+ENTITY 190 0 "Script Mover 102" -11 7.5 -8 0 0 0 1 0.3 0.3 0.3
+ENTITY 191 0 "Script Mover 103" -10 5.5 -8 0 0 0 1 0.3 0.3 0.3
+ENTITY 192 0 "Script Mover 104" -9 7.5 -8 0 0 0 1 0.3 0.3 0.3
+ENTITY 193 0 "Script Mover 105" -8 5.5 -8 0 0 0 1 0.3 0.3 0.3
+ENTITY 194 0 "Script Mover 106" -7 7.5 -8 0 0 0 1 0.3 0.3 0.3
+ENTITY 195 0 "Script Mover 107" -6 5.5 -8 0 0 0 1 0.3 0.3 0.3
+ENTITY 196 0 "Script Mover 108" -5 7.5 -8 0 0 0 1 0.3 0.3 0.3
+ENTITY 197 0 "Script Mover 109" -4 5.5 -8 0 0 0 1 0.3 0.3 0.3
+ENTITY 198 0 "Script Mover 110" -3 7.5 -8 0 0 0 1 0.3 0.3 0.3
+ENTITY 199 0 "Script Mover 111" -2 5.5 -8 0 0 0 1 0.3 0.3 0.3
+ENTITY 200 0 "Script Mover 112" -1 7.5 -8 0 0 0 1 0.3 0.3 0.3
+ENTITY 201 0 "Script Mover 113" 0 5.5 -8 0 0 0 1 0.3 0.3 0.3
+ENTITY 202 0 "Script Mover 114" 1 7.5 -8 0 0 0 1 0.3 0.3 0.3
+ENTITY 203 0 "Script Mover 115" 2 5.5 -8 0 0 0 1 0.3 0.3 0.3
+ENTITY 204 0 "Script Mover 116" 3 7.5 -8 0 0 0 1 0.3 0.3 0.3
+ENTITY 205 0 "Script Mover 117" 4 5.5 -8 0 0 0 1 0.3 0.3 0.3
+ENTITY 206 0 "Script Mover 118" 5 7.5 -8 0 0 0 1 0.3 0.3 0.3
+ENTITY 207 0 "Script Mover 119" 6 5.5 -8 0 0 0 1 0.3 0.3 0.3
+ENTITY 208 0 "Script Mover 120" 7 7.5 -8 0 0 0 1 0.3 0.3 0.3
+ENTITY 209 0 "Script Mover 121" 8 5.5 -8 0 0 0 1 0.3 0.3 0.3
+ENTITY 210 0 "Script Mover 122" 9 7.5 -8 0 0 0 1 0.3 0.3 0.3
+ENTITY 211 0 "Script Mover 123" 10 5.5 -8 0 0 0 1 0.3 0.3 0.3
+ENTITY 212 0 "Script Mover 124" 11 7.5 -8 0 0 0 1 0.3 0.3 0.3
+ENTITY 213 0 "Script Mover 125" 12 5.5 -8 0 0 0 1 0.3 0.3 0.3
+ENTITY 214 0 "Script Mover 126" -12 7.5 -7 0 0 0 1 0.3 0.3 0.3
+ENTITY 215 0 "Script Mover 127" -11 5.5 -7 0 0 0 1 0.3 0.3 0.3
+ENTITY 216 0 "Script Mover 128" -10 7.5 -7 0 0 0 1 0.3 0.3 0.3
+ENTITY 217 0 "Script Mover 129" -9 5.5 -7 0 0 0 1 0.3 0.3 0.3
+ENTITY 218 0 "Script Mover 130" -8 7.5 -7 0 0 0 1 0.3 0.3 0.3
+ENTITY 219 0 "Script Mover 131" -7 5.5 -7 0 0 0 1 0.3 0.3 0.3
+ENTITY 220 0 "Script Mover 132" -6 7.5 -7 0 0 0 1 0.3 0.3 0.3
+ENTITY 221 0 "Script Mover 133" -5 5.5 -7 0 0 0 1 0.3 0.3 0.3
+ENTITY 222 0 "Script Mover 134" -4 7.5 -7 0 0 0 1 0.3 0.3 0.3
+ENTITY 223 0 "Script Mover 135" -3 5.5 -7 0 0 0 1 0.3 0.3 0.3
+ENTITY 224 0 "Script Mover 136" -2 7.5 -7 0 0 0 1 0.3 0.3 0.3
+ENTITY 225 0 "Script Mover 137" -1 5.5 -7 0 0 0 1 0.3 0.3 0.3
+ENTITY 226 0 "Script Mover 138" 0 7.5 -7 0 0 0 1 0.3 0.3 0.3
+ENTITY 227 0 "Script Mover 139" 1 5.5 -7 0 0 0 1 0.3 0.3 0.3
+ENTITY 228 0 "Script Mover 140" 2 7.5 -7 0 0 0 1 0.3 0.3 0.3
+ENTITY 229 0 "Script Mover 141" 3 5.5 -7 0 0 0 1 0.3 0.3 0.3
+ENTITY 230 0 "Script Mover 142" 4 7.5 -7 0 0 0 1 0.3 0.3 0.3
+ENTITY 231 0 "Script Mover 143" 5 5.5 -7 0 0 0 1 0.3 0.3 0.3
+ENTITY 232 0 "Script Mover 144" 6 7.5 -7 0 0 0 1 0.3 0.3 0.3
+ENTITY 233 0 "Script Mover 145" 7 5.5 -7 0 0 0 1 0.3 0.3 0.3
+ENTITY 234 0 "Script Mover 146" 8 7.5 -7 0 0 0 1 0.3 0.3 0.3
+ENTITY 235 0 "Script Mover 147" 9 5.5 -7 0 0 0 1 0.3 0.3 0.3
+ENTITY 236 0 "Script Mover 148" 10 7.5 -7 0 0 0 1 0.3 0.3 0.3
+ENTITY 237 0 "Script Mover 149" 11 5.5 -7 0 0 0 1 0.3 0.3 0.3
+ENTITY 238 0 "Script Mover 150" 12 7.5 -7 0 0 0 1 0.3 0.3 0.3
+ENTITY 239 0 "Script Mover 151" -12 5.5 -6 0 0 0 1 0.3 0.3 0.3
+ENTITY 240 0 "Script Mover 152" -11 7.5 -6 0 0 0 1 0.3 0.3 0.3
+ENTITY 241 0 "Script Mover 153" -10 5.5 -6 0 0 0 1 0.3 0.3 0.3
+ENTITY 242 0 "Script Mover 154" -9 7.5 -6 0 0 0 1 0.3 0.3 0.3
+ENTITY 243 0 "Script Mover 155" -8 5.5 -6 0 0 0 1 0.3 0.3 0.3
+ENTITY 244 0 "Script Mover 156" -7 7.5 -6 0 0 0 1 0.3 0.3 0.3
+ENTITY 245 0 "Script Mover 157" -6 5.5 -6 0 0 0 1 0.3 0.3 0.3
+ENTITY 246 0 "Script Mover 158" -5 7.5 -6 0 0 0 1 0.3 0.3 0.3
+ENTITY 247 0 "Script Mover 159" -4 5.5 -6 0 0 0 1 0.3 0.3 0.3
+ENTITY 248 0 "Script Mover 160" -3 7.5 -6 0 0 0 1 0.3 0.3 0.3
+ENTITY 249 0 "Script Mover 161" -2 5.5 -6 0 0 0 1 0.3 0.3 0.3
+ENTITY 250 0 "Script Mover 162" -1 7.5 -6 0 0 0 1 0.3 0.3 0.3
+ENTITY 251 0 "Script Mover 163" 0 5.5 -6 0 0 0 1 0.3 0.3 0.3
+ENTITY 252 0 "Script Mover 164" 1 7.5 -6 0 0 0 1 0.3 0.3 0.3
+ENTITY 253 0 "Script Mover 165" 2 5.5 -6 0 0 0 1 0.3 0.3 0.3
+ENTITY 254 0 "Script Mover 166" 3 7.5 -6 0 0 0 1 0.3 0.3 0.3
+ENTITY 255 0 "Script Mover 167" 4 5.5 -6 0 0 0 1 0.3 0.3 0.3
+ENTITY 256 0 "Script Mover 168" 5 7.5 -6 0 0 0 1 0.3 0.3 0.3
+ENTITY 257 0 "Script Mover 169" 6 5.5 -6 0 0 0 1 0.3 0.3 0.3
+ENTITY 258 0 "Script Mover 170" 7 7.5 -6 0 0 0 1 0.3 0.3 0.3
+ENTITY 259 0 "Script Mover 171" 8 5.5 -6 0 0 0 1 0.3 0.3 0.3
+ENTITY 260 0 "Script Mover 172" 9 7.5 -6 0 0 0 1 0.3 0.3 0.3
+ENTITY 261 0 "Script Mover 173" 10 5.5 -6 0 0 0 1 0.3 0.3 0.3
+ENTITY 262 0 "Script Mover 174" 11 7.5 -6 0 0 0 1 0.3 0.3 0.3
+ENTITY 263 0 "Script Mover 175" 12 5.5 -6 0 0 0 1 0.3 0.3 0.3
+ENTITY 264 0 "Script Mover 176" -12 7.5 -5 0 0 0 1 0.3 0.3 0.3
+ENTITY 265 0 "Script Mover 177" -11 5.5 -5 0 0 0 1 0.3 0.3 0.3
+ENTITY 266 0 "Script Mover 178" -10 7.5 -5 0 0 0 1 0.3 0.3 0.3
+ENTITY 267 0 "Script Mover 179" -9 5.5 -5 0 0 0 1 0.3 0.3 0.3
+ENTITY 268 0 "Script Mover 180" -8 7.5 -5 0 0 0 1 0.3 0.3 0.3
+ENTITY 269 0 "Script Mover 181" -7 5.5 -5 0 0 0 1 0.3 0.3 0.3
+ENTITY 270 0 "Script Mover 182" -6 7.5 -5 0 0 0 1 0.3 0.3 0.3
+ENTITY 271 0 "Script Mover 183" -5 5.5 -5 0 0 0 1 0.3 0.3 0.3
+ENTITY 272 0 "Script Mover 184" -4 7.5 -5 0 0 0 1 0.3 0.3 0.3
+ENTITY 273 0 "Script Mover 185" -3 5.5 -5 0 0 0 1 0.3 0.3 0.3
+ENTITY 274 0 "Script Mover 186" -2 7.5 -5 0 0 0 1 0.3 0.3 0.3
+ENTITY 275 0 "Script Mover 187" -1 5.5 -5 0 0 0 1 0.3 0.3 0.3
+ENTITY 276 0 "Script Mover 188" 0 7.5 -5 0 0 0 1 0.3 0.3 0.3
+ENTITY 277 0 "Script Mover 189" 1 5.5 -5 0 0 0 1 0.3 0.3 0.3
+ENTITY 278 0 "Script Mover 190" 2 7.5 -5 0 0 0 1 0.3 0.3 0.3
+ENTITY 279 0 "Script Mover 191" 3 5.5 -5 0 0 0 1 0.3 0.3 0.3
+ENTITY 280 0 "Script Mover 192" 4 7.5 -5 0 0 0 1 0.3 0.3 0.3
+ENTITY 281 0 "Script Mover 193" 5 5.5 -5 0 0 0 1 0.3 0.3 0.3
+ENTITY 282 0 "Script Mover 194" 6 7.5 -5 0 0 0 1 0.3 0.3 0.3
+ENTITY 283 0 "Script Mover 195" 7 5.5 -5 0 0 0 1 0.3 0.3 0.3
+ENTITY 284 0 "Script Mover 196" 8 7.5 -5 0 0 0 1 0.3 0.3 0.3
+ENTITY 285 0 "Script Mover 197" 9 5.5 -5 0 0 0 1 0.3 0.3 0.3
+ENTITY 286 0 "Script Mover 198" 10 7.5 -5 0 0 0 1 0.3 0.3 0.3
+ENTITY 287 0 "Script Mover 199" 11 5.5 -5 0 0 0 1 0.3 0.3 0.3
+ENTITY 288 0 "Script Mover 200" 12 7.5 -5 0 0 0 1 0.3 0.3 0.3
+ENTITY 289 0 "Script Mover 201" -12 5.5 -4 0 0 0 1 0.3 0.3 0.3
+ENTITY 290 0 "Script Mover 202" -11 7.5 -4 0 0 0 1 0.3 0.3 0.3
+ENTITY 291 0 "Script Mover 203" -10 5.5 -4 0 0 0 1 0.3 0.3 0.3
+ENTITY 292 0 "Script Mover 204" -9 7.5 -4 0 0 0 1 0.3 0.3 0.3
+ENTITY 293 0 "Script Mover 205" -8 5.5 -4 0 0 0 1 0.3 0.3 0.3
+ENTITY 294 0 "Script Mover 206" -7 7.5 -4 0 0 0 1 0.3 0.3 0.3
+ENTITY 295 0 "Script Mover 207" -6 5.5 -4 0 0 0 1 0.3 0.3 0.3
+ENTITY 296 0 "Script Mover 208" -5 7.5 -4 0 0 0 1 0.3 0.3 0.3
+ENTITY 297 0 "Script Mover 209" -4 5.5 -4 0 0 0 1 0.3 0.3 0.3
+ENTITY 298 0 "Script Mover 210" -3 7.5 -4 0 0 0 1 0.3 0.3 0.3
+ENTITY 299 0 "Script Mover 211" -2 5.5 -4 0 0 0 1 0.3 0.3 0.3
+ENTITY 300 0 "Script Mover 212" -1 7.5 -4 0 0 0 1 0.3 0.3 0.3
+ENTITY 301 0 "Script Mover 213" 0 5.5 -4 0 0 0 1 0.3 0.3 0.3
+ENTITY 302 0 "Script Mover 214" 1 7.5 -4 0 0 0 1 0.3 0.3 0.3
+ENTITY 303 0 "Script Mover 215" 2 5.5 -4 0 0 0 1 0.3 0.3 0.3
+ENTITY 304 0 "Script Mover 216" 3 7.5 -4 0 0 0 1 0.3 0.3 0.3
+ENTITY 305 0 "Script Mover 217" 4 5.5 -4 0 0 0 1 0.3 0.3 0.3
+ENTITY 306 0 "Script Mover 218" 5 7.5 -4 0 0 0 1 0.3 0.3 0.3
+ENTITY 307 0 "Script Mover 219" 6 5.5 -4 0 0 0 1 0.3 0.3 0.3
+ENTITY 308 0 "Script Mover 220" 7 7.5 -4 0 0 0 1 0.3 0.3 0.3
+ENTITY 309 0 "Script Mover 221" 8 5.5 -4 0 0 0 1 0.3 0.3 0.3
+ENTITY 310 0 "Script Mover 222" 9 7.5 -4 0 0 0 1 0.3 0.3 0.3
+ENTITY 311 0 "Script Mover 223" 10 5.5 -4 0 0 0 1 0.3 0.3 0.3
+ENTITY 312 0 "Script Mover 224" 11 7.5 -4 0 0 0 1 0.3 0.3 0.3
+ENTITY 313 0 "Script Mover 225" 12 5.5 -4 0 0 0 1 0.3 0.3 0.3
+ENTITY 314 0 "Script Mover 226" -12 7.5 -3 0 0 0 1 0.3 0.3 0.3
+ENTITY 315 0 "Script Mover 227" -11 5.5 -3 0 0 0 1 0.3 0.3 0.3
+ENTITY 316 0 "Script Mover 228" -10 7.5 -3 0 0 0 1 0.3 0.3 0.3
+ENTITY 317 0 "Script Mover 229" -9 5.5 -3 0 0 0 1 0.3 0.3 0.3
+ENTITY 318 0 "Script Mover 230" -8 7.5 -3 0 0 0 1 0.3 0.3 0.3
+ENTITY 319 0 "Script Mover 231" -7 5.5 -3 0 0 0 1 0.3 0.3 0.3
+ENTITY 320 0 "Script Mover 232" -6 7.5 -3 0 0 0 1 0.3 0.3 0.3
+ENTITY 321 0 "Script Mover 233" -5 5.5 -3 0 0 0 1 0.3 0.3 0.3
+ENTITY 322 0 "Script Mover 234" -4 7.5 -3 0 0 0 1 0.3 0.3 0.3
+ENTITY 323 0 "Script Mover 235" -3 5.5 -3 0 0 0 1 0.3 0.3 0.3
+ENTITY 324 0 "Script Mover 236" -2 7.5 -3 0 0 0 1 0.3 0.3 0.3
+ENTITY 325 0 "Script Mover 237" -1 5.5 -3 0 0 0 1 0.3 0.3 0.3
+ENTITY 326 0 "Script Mover 238" 0 7.5 -3 0 0 0 1 0.3 0.3 0.3
+ENTITY 327 0 "Script Mover 239" 1 5.5 -3 0 0 0 1 0.3 0.3 0.3
+ENTITY 328 0 "Script Mover 240" 2 7.5 -3 0 0 0 1 0.3 0.3 0.3
+ENTITY 329 0 "Script Mover 241" 3 5.5 -3 0 0 0 1 0.3 0.3 0.3
+ENTITY 330 0 "Script Mover 242" 4 7.5 -3 0 0 0 1 0.3 0.3 0.3
+ENTITY 331 0 "Script Mover 243" 5 5.5 -3 0 0 0 1 0.3 0.3 0.3
+ENTITY 332 0 "Script Mover 244" 6 7.5 -3 0 0 0 1 0.3 0.3 0.3
+ENTITY 333 0 "Script Mover 245" 7 5.5 -3 0 0 0 1 0.3 0.3 0.3
+ENTITY 334 0 "Script Mover 246" 8 7.5 -3 0 0 0 1 0.3 0.3 0.3
+ENTITY 335 0 "Script Mover 247" 9 5.5 -3 0 0 0 1 0.3 0.3 0.3
+ENTITY 336 0 "Script Mover 248" 10 7.5 -3 0 0 0 1 0.3 0.3 0.3
+ENTITY 337 0 "Script Mover 249" 11 5.5 -3 0 0 0 1 0.3 0.3 0.3
+ENTITY 338 0 "Script Mover 250" 12 7.5 -3 0 0 0 1 0.3 0.3 0.3
+ENTITY 339 0 "Script Mover 251" -12 5.5 -2 0 0 0 1 0.3 0.3 0.3
+ENTITY 340 0 "Script Mover 252" -11 7.5 -2 0 0 0 1 0.3 0.3 0.3
+ENTITY 341 0 "Script Mover 253" -10 5.5 -2 0 0 0 1 0.3 0.3 0.3
+ENTITY 342 0 "Script Mover 254" -9 7.5 -2 0 0 0 1 0.3 0.3 0.3
+ENTITY 343 0 "Script Mover 255" -8 5.5 -2 0 0 0 1 0.3 0.3 0.3
+ENTITY 344 0 "Script Mover 256" -7 7.5 -2 0 0 0 1 0.3 0.3 0.3
+ENTITY 345 0 "Script Mover 257" -6 5.5 -2 0 0 0 1 0.3 0.3 0.3
+ENTITY 346 0 "Script Mover 258" -5 7.5 -2 0 0 0 1 0.3 0.3 0.3
+ENTITY 347 0 "Script Mover 259" -4 5.5 -2 0 0 0 1 0.3 0.3 0.3
+ENTITY 348 0 "Script Mover 260" -3 7.5 -2 0 0 0 1 0.3 0.3 0.3
+ENTITY 349 0 "Script Mover 261" -2 5.5 -2 0 0 0 1 0.3 0.3 0.3
+ENTITY 350 0 "Script Mover 262" -1 7.5 -2 0 0 0 1 0.3 0.3 0.3
+ENTITY 351 0 "Script Mover 263" 0 5.5 -2 0 0 0 1 0.3 0.3 0.3
+ENTITY 352 0 "Script Mover 264" 1 7.5 -2 0 0 0 1 0.3 0.3 0.3
+ENTITY 353 0 "Script Mover 265" 2 5.5 -2 0 0 0 1 0.3 0.3 0.3
+ENTITY 354 0 "Script Mover 266" 3 7.5 -2 0 0 0 1 0.3 0.3 0.3
+ENTITY 355 0 "Script Mover 267" 4 5.5 -2 0 0 0 1 0.3 0.3 0.3
+ENTITY 356 0 "Script Mover 268" 5 7.5 -2 0 0 0 1 0.3 0.3 0.3
+ENTITY 357 0 "Script Mover 269" 6 5.5 -2 0 0 0 1 0.3 0.3 0.3
+ENTITY 358 0 "Script Mover 270" 7 7.5 -2 0 0 0 1 0.3 0.3 0.3
+ENTITY 359 0 "Script Mover 271" 8 5.5 -2 0 0 0 1 0.3 0.3 0.3
+ENTITY 360 0 "Script Mover 272" 9 7.5 -2 0 0 0 1 0.3 0.3 0.3
+ENTITY 361 0 "Script Mover 273" 10 5.5 -2 0 0 0 1 0.3 0.3 0.3
+ENTITY 362 0 "Script Mover 274" 11 7.5 -2 0 0 0 1 0.3 0.3 0.3
+ENTITY 363 0 "Script Mover 275" 12 5.5 -2 0 0 0 1 0.3 0.3 0.3
+ENTITY 364 0 "Script Mover 276" -12 7.5 -1 0 0 0 1 0.3 0.3 0.3
+ENTITY 365 0 "Script Mover 277" -11 5.5 -1 0 0 0 1 0.3 0.3 0.3
+ENTITY 366 0 "Script Mover 278" -10 7.5 -1 0 0 0 1 0.3 0.3 0.3
+ENTITY 367 0 "Script Mover 279" -9 5.5 -1 0 0 0 1 0.3 0.3 0.3
+ENTITY 368 0 "Script Mover 280" -8 7.5 -1 0 0 0 1 0.3 0.3 0.3
+ENTITY 369 0 "Script Mover 281" -7 5.5 -1 0 0 0 1 0.3 0.3 0.3
+ENTITY 370 0 "Script Mover 282" -6 7.5 -1 0 0 0 1 0.3 0.3 0.3
+ENTITY 371 0 "Script Mover 283" -5 5.5 -1 0 0 0 1 0.3 0.3 0.3
+ENTITY 372 0 "Script Mover 284" -4 7.5 -1 0 0 0 1 0.3 0.3 0.3
+ENTITY 373 0 "Script Mover 285" -3 5.5 -1 0 0 0 1 0.3 0.3 0.3
+ENTITY 374 0 "Script Mover 286" -2 7.5 -1 0 0 0 1 0.3 0.3 0.3
+ENTITY 375 0 "Script Mover 287" -1 5.5 -1 0 0 0 1 0.3 0.3 0.3
+ENTITY 376 0 "Script Mover 288" 0 7.5 -1 0 0 0 1 0.3 0.3 0.3
+ENTITY 377 0 "Script Mover 289" 1 5.5 -1 0 0 0 1 0.3 0.3 0.3
+ENTITY 378 0 "Script Mover 290" 2 7.5 -1 0 0 0 1 0.3 0.3 0.3
+ENTITY 379 0 "Script Mover 291" 3 5.5 -1 0 0 0 1 0.3 0.3 0.3
+ENTITY 380 0 "Script Mover 292" 4 7.5 -1 0 0 0 1 0.3 0.3 0.3
+ENTITY 381 0 "Script Mover 293" 5 5.5 -1 0 0 0 1 0.3 0.3 0.3
+ENTITY 382 0 "Script Mover 294" 6 7.5 -1 0 0 0 1 0.3 0.3 0.3
+ENTITY 383 0 "Script Mover 295" 7 5.5 -1 0 0 0 1 0.3 0.3 0.3
+ENTITY 384 0 "Script Mover 296" 8 7.5 -1 0 0 0 1 0.3 0.3 0.3
+ENTITY 385 0 "Script Mover 297" 9 5.5 -1 0 0 0 1 0.3 0.3 0.3
+ENTITY 386 0 "Script Mover 298" 10 7.5 -1 0 0 0 1 0.3 0.3 0.3
+ENTITY 387 0 "Script Mover 299" 11 5.5 -1 0 0 0 1 0.3 0.3 0.3
+ENTITY 388 0 "Script Mover 300" 12 7.5 -1 0 0 0 1 0.3 0.3 0.3
+ENTITY 389 0 "Script Mover 301" -12 5.5 0 0 0 0 1 0.3 0.3 0.3
+ENTITY 390 0 "Script Mover 302" -11 7.5 0 0 0 0 1 0.3 0.3 0.3
+ENTITY 391 0 "Script Mover 303" -10 5.5 0 0 0 0 1 0.3 0.3 0.3
+ENTITY 392 0 "Script Mover 304" -9 7.5 0 0 0 0 1 0.3 0.3 0.3
+ENTITY 393 0 "Script Mover 305" -8 5.5 0 0 0 0 1 0.3 0.3 0.3
+ENTITY 394 0 "Script Mover 306" -7 7.5 0 0 0 0 1 0.3 0.3 0.3
+ENTITY 395 0 "Script Mover 307" -6 5.5 0 0 0 0 1 0.3 0.3 0.3
+ENTITY 396 0 "Script Mover 308" -5 7.5 0 0 0 0 1 0.3 0.3 0.3
+ENTITY 397 0 "Script Mover 309" -4 5.5 0 0 0 0 1 0.3 0.3 0.3
+ENTITY 398 0 "Script Mover 310" -3 7.5 0 0 0 0 1 0.3 0.3 0.3
+ENTITY 399 0 "Script Mover 311" -2 5.5 0 0 0 0 1 0.3 0.3 0.3
+ENTITY 400 0 "Script Mover 312" -1 7.5 0 0 0 0 1 0.3 0.3 0.3
+ENTITY 401 0 "Script Mover 313" 0 5.5 0 0 0 0 1 0.3 0.3 0.3
+ENTITY 402 0 "Script Mover 314" 1 7.5 0 0 0 0 1 0.3 0.3 0.3
+ENTITY 403 0 "Script Mover 315" 2 5.5 0 0 0 0 1 0.3 0.3 0.3
+ENTITY 404 0 "Script Mover 316" 3 7.5 0 0 0 0 1 0.3 0.3 0.3
+ENTITY 405 0 "Script Mover 317" 4 5.5 0 0 0 0 1 0.3 0.3 0.3
+ENTITY 406 0 "Script Mover 318" 5 7.5 0 0 0 0 1 0.3 0.3 0.3
+ENTITY 407 0 "Script Mover 319" 6 5.5 0 0 0 0 1 0.3 0.3 0.3
+ENTITY 408 0 "Script Mover 320" 7 7.5 0 0 0 0 1 0.3 0.3 0.3
+ENTITY 409 0 "Script Mover 321" 8 5.5 0 0 0 0 1 0.3 0.3 0.3
+ENTITY 410 0 "Script Mover 322" 9 7.5 0 0 0 0 1 0.3 0.3 0.3
+ENTITY 411 0 "Script Mover 323" 10 5.5 0 0 0 0 1 0.3 0.3 0.3
+ENTITY 412 0 "Script Mover 324" 11 7.5 0 0 0 0 1 0.3 0.3 0.3
+ENTITY 413 0 "Script Mover 325" 12 5.5 0 0 0 0 1 0.3 0.3 0.3
+ENTITY 414 0 "Script Mover 326" -12 7.5 1 0 0 0 1 0.3 0.3 0.3
+ENTITY 415 0 "Script Mover 327" -11 5.5 1 0 0 0 1 0.3 0.3 0.3
+ENTITY 416 0 "Script Mover 328" -10 7.5 1 0 0 0 1 0.3 0.3 0.3
+ENTITY 417 0 "Script Mover 329" -9 5.5 1 0 0 0 1 0.3 0.3 0.3
+ENTITY 418 0 "Script Mover 330" -8 7.5 1 0 0 0 1 0.3 0.3 0.3
+ENTITY 419 0 "Script Mover 331" -7 5.5 1 0 0 0 1 0.3 0.3 0.3
+ENTITY 420 0 "Script Mover 332" -6 7.5 1 0 0 0 1 0.3 0.3 0.3
+ENTITY 421 0 "Script Mover 333" -5 5.5 1 0 0 0 1 0.3 0.3 0.3
+ENTITY 422 0 "Script Mover 334" -4 7.5 1 0 0 0 1 0.3 0.3 0.3
+ENTITY 423 0 "Script Mover 335" -3 5.5 1 0 0 0 1 0.3 0.3 0.3
+ENTITY 424 0 "Script Mover 336" -2 7.5 1 0 0 0 1 0.3 0.3 0.3
+ENTITY 425 0 "Script Mover 337" -1 5.5 1 0 0 0 1 0.3 0.3 0.3
+ENTITY 426 0 "Script Mover 338" 0 7.5 1 0 0 0 1 0.3 0.3 0.3
+ENTITY 427 0 "Script Mover 339" 1 5.5 1 0 0 0 1 0.3 0.3 0.3
+ENTITY 428 0 "Script Mover 340" 2 7.5 1 0 0 0 1 0.3 0.3 0.3
+ENTITY 429 0 "Script Mover 341" 3 5.5 1 0 0 0 1 0.3 0.3 0.3
+ENTITY 430 0 "Script Mover 342" 4 7.5 1 0 0 0 1 0.3 0.3 0.3
+ENTITY 431 0 "Script Mover 343" 5 5.5 1 0 0 0 1 0.3 0.3 0.3
+ENTITY 432 0 "Script Mover 344" 6 7.5 1 0 0 0 1 0.3 0.3 0.3
+ENTITY 433 0 "Script Mover 345" 7 5.5 1 0 0 0 1 0.3 0.3 0.3
+ENTITY 434 0 "Script Mover 346" 8 7.5 1 0 0 0 1 0.3 0.3 0.3
+ENTITY 435 0 "Script Mover 347" 9 5.5 1 0 0 0 1 0.3 0.3 0.3
+ENTITY 436 0 "Script Mover 348" 10 7.5 1 0 0 0 1 0.3 0.3 0.3
+ENTITY 437 0 "Script Mover 349" 11 5.5 1 0 0 0 1 0.3 0.3 0.3
+ENTITY 438 0 "Script Mover 350" 12 7.5 1 0 0 0 1 0.3 0.3 0.3
+ENTITY 439 0 "Script Mover 351" -12 5.5 2 0 0 0 1 0.3 0.3 0.3
+ENTITY 440 0 "Script Mover 352" -11 7.5 2 0 0 0 1 0.3 0.3 0.3
+ENTITY 441 0 "Script Mover 353" -10 5.5 2 0 0 0 1 0.3 0.3 0.3
+ENTITY 442 0 "Script Mover 354" -9 7.5 2 0 0 0 1 0.3 0.3 0.3
+ENTITY 443 0 "Script Mover 355" -8 5.5 2 0 0 0 1 0.3 0.3 0.3
+ENTITY 444 0 "Script Mover 356" -7 7.5 2 0 0 0 1 0.3 0.3 0.3
+ENTITY 445 0 "Script Mover 357" -6 5.5 2 0 0 0 1 0.3 0.3 0.3
+ENTITY 446 0 "Script Mover 358" -5 7.5 2 0 0 0 1 0.3 0.3 0.3
+ENTITY 447 0 "Script Mover 359" -4 5.5 2 0 0 0 1 0.3 0.3 0.3
+ENTITY 448 0 "Script Mover 360" -3 7.5 2 0 0 0 1 0.3 0.3 0.3
+ENTITY 449 0 "Script Mover 361" -2 5.5 2 0 0 0 1 0.3 0.3 0.3
+ENTITY 450 0 "Script Mover 362" -1 7.5 2 0 0 0 1 0.3 0.3 0.3
+ENTITY 451 0 "Script Mover 363" 0 5.5 2 0 0 0 1 0.3 0.3 0.3
+ENTITY 452 0 "Script Mover 364" 1 7.5 2 0 0 0 1 0.3 0.3 0.3
+ENTITY 453 0 "Script Mover 365" 2 5.5 2 0 0 0 1 0.3 0.3 0.3
+ENTITY 454 0 "Script Mover 366" 3 7.5 2 0 0 0 1 0.3 0.3 0.3
+ENTITY 455 0 "Script Mover 367" 4 5.5 2 0 0 0 1 0.3 0.3 0.3
+ENTITY 456 0 "Script Mover 368" 5 7.5 2 0 0 0 1 0.3 0.3 0.3
+ENTITY 457 0 "Script Mover 369" 6 5.5 2 0 0 0 1 0.3 0.3 0.3
+ENTITY 458 0 "Script Mover 370" 7 7.5 2 0 0 0 1 0.3 0.3 0.3
+ENTITY 459 0 "Script Mover 371" 8 5.5 2 0 0 0 1 0.3 0.3 0.3
+ENTITY 460 0 "Script Mover 372" 9 7.5 2 0 0 0 1 0.3 0.3 0.3
+ENTITY 461 0 "Script Mover 373" 10 5.5 2 0 0 0 1 0.3 0.3 0.3
+ENTITY 462 0 "Script Mover 374" 11 7.5 2 0 0 0 1 0.3 0.3 0.3
+ENTITY 463 0 "Script Mover 375" 12 5.5 2 0 0 0 1 0.3 0.3 0.3
+ENTITY 464 0 "Script Mover 376" -12 7.5 3 0 0 0 1 0.3 0.3 0.3
+ENTITY 465 0 "Script Mover 377" -11 5.5 3 0 0 0 1 0.3 0.3 0.3
+ENTITY 466 0 "Script Mover 378" -10 7.5 3 0 0 0 1 0.3 0.3 0.3
+ENTITY 467 0 "Script Mover 379" -9 5.5 3 0 0 0 1 0.3 0.3 0.3
+ENTITY 468 0 "Script Mover 380" -8 7.5 3 0 0 0 1 0.3 0.3 0.3
+ENTITY 469 0 "Script Mover 381" -7 5.5 3 0 0 0 1 0.3 0.3 0.3
+ENTITY 470 0 "Script Mover 382" -6 7.5 3 0 0 0 1 0.3 0.3 0.3
+ENTITY 471 0 "Script Mover 383" -5 5.5 3 0 0 0 1 0.3 0.3 0.3
+ENTITY 472 0 "Script Mover 384" -4 7.5 3 0 0 0 1 0.3 0.3 0.3
+ENTITY 473 0 "Script Mover 385" -3 5.5 3 0 0 0 1 0.3 0.3 0.3
+ENTITY 474 0 "Script Mover 386" -2 7.5 3 0 0 0 1 0.3 0.3 0.3
+ENTITY 475 0 "Script Mover 387" -1 5.5 3 0 0 0 1 0.3 0.3 0.3
+ENTITY 476 0 "Script Mover 388" 0 7.5 3 0 0 0 1 0.3 0.3 0.3
+ENTITY 477 0 "Script Mover 389" 1 5.5 3 0 0 0 1 0.3 0.3 0.3
+ENTITY 478 0 "Script Mover 390" 2 7.5 3 0 0 0 1 0.3 0.3 0.3
+ENTITY 479 0 "Script Mover 391" 3 5.5 3 0 0 0 1 0.3 0.3 0.3
+ENTITY 480 0 "Script Mover 392" 4 7.5 3 0 0 0 1 0.3 0.3 0.3
+ENTITY 481 0 "Script Mover 393" 5 5.5 3 0 0 0 1 0.3 0.3 0.3
+ENTITY 482 0 "Script Mover 394" 6 7.5 3 0 0 0 1 0.3 0.3 0.3
+ENTITY 483 0 "Script Mover 395" 7 5.5 3 0 0 0 1 0.3 0.3 0.3
+ENTITY 484 0 "Script Mover 396" 8 7.5 3 0 0 0 1 0.3 0.3 0.3
+ENTITY 485 0 "Script Mover 397" 9 5.5 3 0 0 0 1 0.3 0.3 0.3
+ENTITY 486 0 "Script Mover 398" 10 7.5 3 0 0 0 1 0.3 0.3 0.3
+ENTITY 487 0 "Script Mover 399" 11 5.5 3 0 0 0 1 0.3 0.3 0.3
+ENTITY 488 0 "Script Mover 400" 12 7.5 3 0 0 0 1 0.3 0.3 0.3
+ENTITY 489 0 "Script Mover 401" -12 5.5 4 0 0 0 1 0.3 0.3 0.3
+ENTITY 490 0 "Script Mover 402" -11 7.5 4 0 0 0 1 0.3 0.3 0.3
+ENTITY 491 0 "Script Mover 403" -10 5.5 4 0 0 0 1 0.3 0.3 0.3
+ENTITY 492 0 "Script Mover 404" -9 7.5 4 0 0 0 1 0.3 0.3 0.3
+ENTITY 493 0 "Script Mover 405" -8 5.5 4 0 0 0 1 0.3 0.3 0.3
+ENTITY 494 0 "Script Mover 406" -7 7.5 4 0 0 0 1 0.3 0.3 0.3
+ENTITY 495 0 "Script Mover 407" -6 5.5 4 0 0 0 1 0.3 0.3 0.3
+ENTITY 496 0 "Script Mover 408" -5 7.5 4 0 0 0 1 0.3 0.3 0.3
+ENTITY 497 0 "Script Mover 409" -4 5.5 4 0 0 0 1 0.3 0.3 0.3
+ENTITY 498 0 "Script Mover 410" -3 7.5 4 0 0 0 1 0.3 0.3 0.3
+ENTITY 499 0 "Script Mover 411" -2 5.5 4 0 0 0 1 0.3 0.3 0.3
+ENTITY 500 0 "Script Mover 412" -1 7.5 4 0 0 0 1 0.3 0.3 0.3
+ENTITY 501 0 "Script Mover 413" 0 5.5 4 0 0 0 1 0.3 0.3 0.3
+ENTITY 502 0 "Script Mover 414" 1 7.5 4 0 0 0 1 0.3 0.3 0.3
+ENTITY 503 0 "Script Mover 415" 2 5.5 4 0 0 0 1 0.3 0.3 0.3
+ENTITY 504 0 "Script Mover 416" 3 7.5 4 0 0 0 1 0.3 0.3 0.3
+ENTITY 505 0 "Script Mover 417" 4 5.5 4 0 0 0 1 0.3 0.3 0.3
+ENTITY 506 0 "Script Mover 418" 5 7.5 4 0 0 0 1 0.3 0.3 0.3
+ENTITY 507 0 "Script Mover 419" 6 5.5 4 0 0 0 1 0.3 0.3 0.3
+ENTITY 508 0 "Script Mover 420" 7 7.5 4 0 0 0 1 0.3 0.3 0.3
+ENTITY 509 0 "Script Mover 421" 8 5.5 4 0 0 0 1 0.3 0.3 0.3
+ENTITY 510 0 "Script Mover 422" 9 7.5 4 0 0 0 1 0.3 0.3 0.3
+ENTITY 511 0 "Script Mover 423" 10 5.5 4 0 0 0 1 0.3 0.3 0.3
+ENTITY 512 0 "Script Mover 424" 11 7.5 4 0 0 0 1 0.3 0.3 0.3
+ENTITY 513 0 "Script Mover 425" 12 5.5 4 0 0 0 1 0.3 0.3 0.3
+ENTITY 514 0 "Script Mover 426" -12 7.5 5 0 0 0 1 0.3 0.3 0.3
+ENTITY 515 0 "Script Mover 427" -11 5.5 5 0 0 0 1 0.3 0.3 0.3
+ENTITY 516 0 "Script Mover 428" -10 7.5 5 0 0 0 1 0.3 0.3 0.3
+ENTITY 517 0 "Script Mover 429" -9 5.5 5 0 0 0 1 0.3 0.3 0.3
+ENTITY 518 0 "Script Mover 430" -8 7.5 5 0 0 0 1 0.3 0.3 0.3
+ENTITY 519 0 "Script Mover 431" -7 5.5 5 0 0 0 1 0.3 0.3 0.3
+ENTITY 520 0 "Script Mover 432" -6 7.5 5 0 0 0 1 0.3 0.3 0.3
+ENTITY 521 0 "Script Mover 433" -5 5.5 5 0 0 0 1 0.3 0.3 0.3
+ENTITY 522 0 "Script Mover 434" -4 7.5 5 0 0 0 1 0.3 0.3 0.3
+ENTITY 523 0 "Script Mover 435" -3 5.5 5 0 0 0 1 0.3 0.3 0.3
+ENTITY 524 0 "Script Mover 436" -2 7.5 5 0 0 0 1 0.3 0.3 0.3
+ENTITY 525 0 "Script Mover 437" -1 5.5 5 0 0 0 1 0.3 0.3 0.3
+ENTITY 526 0 "Script Mover 438" 0 7.5 5 0 0 0 1 0.3 0.3 0.3
+ENTITY 527 0 "Script Mover 439" 1 5.5 5 0 0 0 1 0.3 0.3 0.3
+ENTITY 528 0 "Script Mover 440" 2 7.5 5 0 0 0 1 0.3 0.3 0.3
+ENTITY 529 0 "Script Mover 441" 3 5.5 5 0 0 0 1 0.3 0.3 0.3
+ENTITY 530 0 "Script Mover 442" 4 7.5 5 0 0 0 1 0.3 0.3 0.3
+ENTITY 531 0 "Script Mover 443" 5 5.5 5 0 0 0 1 0.3 0.3 0.3
+ENTITY 532 0 "Script Mover 444" 6 7.5 5 0 0 0 1 0.3 0.3 0.3
+ENTITY 533 0 "Script Mover 445" 7 5.5 5 0 0 0 1 0.3 0.3 0.3
+ENTITY 534 0 "Script Mover 446" 8 7.5 5 0 0 0 1 0.3 0.3 0.3
+ENTITY 535 0 "Script Mover 447" 9 5.5 5 0 0 0 1 0.3 0.3 0.3
+ENTITY 536 0 "Script Mover 448" 10 7.5 5 0 0 0 1 0.3 0.3 0.3
+ENTITY 537 0 "Script Mover 449" 11 5.5 5 0 0 0 1 0.3 0.3 0.3
+ENTITY 538 0 "Script Mover 450" 12 7.5 5 0 0 0 1 0.3 0.3 0.3
+ENTITY 539 0 "Script Mover 451" -12 5.5 6 0 0 0 1 0.3 0.3 0.3
+ENTITY 540 0 "Script Mover 452" -11 7.5 6 0 0 0 1 0.3 0.3 0.3
+ENTITY 541 0 "Script Mover 453" -10 5.5 6 0 0 0 1 0.3 0.3 0.3
+ENTITY 542 0 "Script Mover 454" -9 7.5 6 0 0 0 1 0.3 0.3 0.3
+ENTITY 543 0 "Script Mover 455" -8 5.5 6 0 0 0 1 0.3 0.3 0.3
+ENTITY 544 0 "Script Mover 456" -7 7.5 6 0 0 0 1 0.3 0.3 0.3
+ENTITY 545 0 "Script Mover 457" -6 5.5 6 0 0 0 1 0.3 0.3 0.3
+ENTITY 546 0 "Script Mover 458" -5 7.5 6 0 0 0 1 0.3 0.3 0.3
+ENTITY 547 0 "Script Mover 459" -4 5.5 6 0 0 0 1 0.3 0.3 0.3
+ENTITY 548 0 "Script Mover 460" -3 7.5 6 0 0 0 1 0.3 0.3 0.3
+ENTITY 549 0 "Script Mover 461" -2 5.5 6 0 0 0 1 0.3 0.3 0.3
+ENTITY 550 0 "Script Mover 462" -1 7.5 6 0 0 0 1 0.3 0.3 0.3
+ENTITY 551 0 "Script Mover 463" 0 5.5 6 0 0 0 1 0.3 0.3 0.3
+ENTITY 552 0 "Script Mover 464" 1 7.5 6 0 0 0 1 0.3 0.3 0.3
+ENTITY 553 0 "Script Mover 465" 2 5.5 6 0 0 0 1 0.3 0.3 0.3
+ENTITY 554 0 "Script Mover 466" 3 7.5 6 0 0 0 1 0.3 0.3 0.3
+ENTITY 555 0 "Script Mover 467" 4 5.5 6 0 0 0 1 0.3 0.3 0.3
+ENTITY 556 0 "Script Mover 468" 5 7.5 6 0 0 0 1 0.3 0.3 0.3
+ENTITY 557 0 "Script Mover 469" 6 5.5 6 0 0 0 1 0.3 0.3 0.3
+ENTITY 558 0 "Script Mover 470" 7 7.5 6 0 0 0 1 0.3 0.3 0.3
+ENTITY 559 0 "Script Mover 471" 8 5.5 6 0 0 0 1 0.3 0.3 0.3
+ENTITY 560 0 "Script Mover 472" 9 7.5 6 0 0 0 1 0.3 0.3 0.3
+ENTITY 561 0 "Script Mover 473" 10 5.5 6 0 0 0 1 0.3 0.3 0.3
+ENTITY 562 0 "Script Mover 474" 11 7.5 6 0 0 0 1 0.3 0.3 0.3
+ENTITY 563 0 "Script Mover 475" 12 5.5 6 0 0 0 1 0.3 0.3 0.3
+ENTITY 564 0 "Script Mover 476" -12 7.5 7 0 0 0 1 0.3 0.3 0.3
+ENTITY 565 0 "Script Mover 477" -11 5.5 7 0 0 0 1 0.3 0.3 0.3
+ENTITY 566 0 "Script Mover 478" -10 7.5 7 0 0 0 1 0.3 0.3 0.3
+ENTITY 567 0 "Script Mover 479" -9 5.5 7 0 0 0 1 0.3 0.3 0.3
+ENTITY 568 0 "Script Mover 480" -8 7.5 7 0 0 0 1 0.3 0.3 0.3
+ENTITY 569 0 "Script Mover 481" -7 5.5 7 0 0 0 1 0.3 0.3 0.3
+ENTITY 570 0 "Script Mover 482" -6 7.5 7 0 0 0 1 0.3 0.3 0.3
+ENTITY 571 0 "Script Mover 483" -5 5.5 7 0 0 0 1 0.3 0.3 0.3
+ENTITY 572 0 "Script Mover 484" -4 7.5 7 0 0 0 1 0.3 0.3 0.3
+ENTITY 573 0 "Script Mover 485" -3 5.5 7 0 0 0 1 0.3 0.3 0.3
+ENTITY 574 0 "Script Mover 486" -2 7.5 7 0 0 0 1 0.3 0.3 0.3
+ENTITY 575 0 "Script Mover 487" -1 5.5 7 0 0 0 1 0.3 0.3 0.3
+ENTITY 576 0 "Script Mover 488" 0 7.5 7 0 0 0 1 0.3 0.3 0.3
+ENTITY 577 0 "Script Mover 489" 1 5.5 7 0 0 0 1 0.3 0.3 0.3
+ENTITY 578 0 "Script Mover 490" 2 7.5 7 0 0 0 1 0.3 0.3 0.3
+ENTITY 579 0 "Script Mover 491" 3 5.5 7 0 0 0 1 0.3 0.3 0.3
+ENTITY 580 0 "Script Mover 492" 4 7.5 7 0 0 0 1 0.3 0.3 0.3
+ENTITY 581 0 "Script Mover 493" 5 5.5 7 0 0 0 1 0.3 0.3 0.3
+ENTITY 582 0 "Script Mover 494" 6 7.5 7 0 0 0 1 0.3 0.3 0.3
+ENTITY 583 0 "Script Mover 495" 7 5.5 7 0 0 0 1 0.3 0.3 0.3
+ENTITY 584 0 "Script Mover 496" 8 7.5 7 0 0 0 1 0.3 0.3 0.3
+ENTITY 585 0 "Script Mover 497" 9 5.5 7 0 0 0 1 0.3 0.3 0.3
+ENTITY 586 0 "Script Mover 498" 10 7.5 7 0 0 0 1 0.3 0.3 0.3
+ENTITY 587 0 "Script Mover 499" 11 5.5 7 0 0 0 1 0.3 0.3 0.3
+ENTITY 588 0 "Script Mover 500" 12 7.5 7 0 0 0 1 0.3 0.3 0.3
+COMPONENTS 1262
+BEHAVIOR 1 game_mode 1 time_limit 90
+ENVIRONMENT 2 image 26d86673787c1453 "environments/sky_1k.hdr" 0.32 0.5 0.82 0.78 0.84 0.92 0.3 0.27 0.24 22000 0 1 14.6 aces medium 50 1 1
+LIGHT 3 directional 1 0.95 0.86 85000 10 25 35 1
+BEHAVIOR 4 impact_effect 2 lifetime 0.22 scale 0.14
+EMITTER 4 69d6af3d39b7dd8c "effects/sparks.effect" 0 0 1
+BEHAVIOR 5 dust_effect 2 min_speed 3.5 cooldown 0.3
+EMITTER 5 c81ea709e1f8cd4c "effects/crate_dust.effect" 0 0 1
+BEHAVIOR 6 footstep_effect 0
+EMITTER 6 fc2e128c3180bf4c "effects/footstep_dust.effect" 0 0 1
+MESH 7 cube 1 1 1 0.65 0 - - 8167b41c20f16e69 "materials/glass.material" 1 1
+BEHAVIOR 7 shard 2 lifetime 5 density 2500
+EMITTER 7 8d3375b76fc95b78 "effects/glass_slivers.effect" 0 0 1
+MESH 8 cube 1 1 1 0.65 0 - - 2bfd8d78f387bc8d "materials/concrete_floor.material" 10 10
+COLLIDER 8 box 0 0 0 0 0 0 1 0.5 0.5 0.5 0.5 0.5 1000 0.8 0 0 0 18446744073709551615 18446744073709551615
+MESH 9 cube 1 1 1 0.65 0 - - 3dd476cd8eddbb89 "materials/plaster_wall.material" 9 1.4
+COLLIDER 9 box 0 0 0 0 0 0 1 0.5 0.5 0.5 0.5 0.5 1000 0.8 0 0 0 18446744073709551615 18446744073709551615
+MESH 10 cube 1 1 1 0.65 0 - - 3dd476cd8eddbb89 "materials/plaster_wall.material" 9 1.4
+COLLIDER 10 box 0 0 0 0 0 0 1 0.5 0.5 0.5 0.5 0.5 1000 0.8 0 0 0 18446744073709551615 18446744073709551615
+MESH 11 cube 1 1 1 0.65 0 - - 3dd476cd8eddbb89 "materials/plaster_wall.material" 7.5 1.4
+COLLIDER 11 box 0 0 0 0 0 0 1 0.5 0.5 0.5 0.5 0.5 1000 0.8 0 0 0 18446744073709551615 18446744073709551615
+MESH 12 cube 1 1 1 0.65 0 - - 3dd476cd8eddbb89 "materials/plaster_wall.material" 9 1.4
+COLLIDER 12 box 0 0 0 0 0 0 1 0.5 0.5 0.5 0.5 0.5 1000 0.8 0 0 0 18446744073709551615 18446744073709551615
+BODY 13 dynamic 0 0 0 0 0 0 0 0 1 0 1 1
+COLLIDER 13 capsule 0 0 0 0 0 0 1 0.5 0.5 0.5 0.35 0.55 130 0 0 0 1 18446744073709551615 18446744073709551615
+BEHAVIOR 13 player 7 walk_speed 5 sprint_speed 8.5 jump_speed 5.2 acceleration 60 air_acceleration 12 look_sensitivity 0.0022 spawn_floor -15
+BEHAVIOR 13 weapon 7 damage 25 fire_interval 0.12 magazine 15 reserve 150 reload_time 1.3 range 120 impulse 95
+CAMERA 14 68 0.05 300 1
+MESH 15 cube 1 1 1 0.65 0 - - 7195af1013baff9b "materials/gun_metal.material" 1 1
+BEHAVIOR 15 weapon_view 2 recoil 0.05 recoil_recovery 14
+MESH 16 cube 1 1 1 0.65 0 - - 7195af1013baff9b "materials/gun_metal.material" 1 1
+MESH 17 cube 1 1 1 0.65 0 - - e270fb06ae38c2b2 "materials/gun_accent.material" 1 1
+BEHAVIOR 18 muzzle_effect 0
+EMITTER 18 997d867a08cdba71 "effects/muzzle_flash.effect" 0 0 1
+MESH 19 cube 1 1 1 0.65 0 - - ba69f0b1c0390008 "materials/metal_plate.material" 3 1
+COLLIDER 19 box 0 0 0 0 0 0 1 0.5 0.5 0.5 0.5 0.5 1000 0.8 0 0 0 18446744073709551615 18446744073709551615
+MESH 20 cube 1 1 1 0.65 0 - - ba69f0b1c0390008 "materials/metal_plate.material" 3 1
+COLLIDER 20 box 0 0 0 0 0 0 1 0.5 0.5 0.5 0.5 0.5 1000 0.8 0 0 0 18446744073709551615 18446744073709551615
+MESH 21 cube 1 1 1 0.65 0 - - ba69f0b1c0390008 "materials/metal_plate.material" 1 2.5
+COLLIDER 21 box 0 0 0 0 0 0 1 0.5 0.5 0.5 0.5 0.5 1000 0.8 0 0 0 18446744073709551615 18446744073709551615
+MESH 22 cube 1 1 1 0.65 0 - - ba69f0b1c0390008 "materials/metal_plate.material" 1 2.5
+COLLIDER 22 box 0 0 0 0 0 0 1 0.5 0.5 0.5 0.5 0.5 1000 0.8 0 0 0 18446744073709551615 18446744073709551615
+MESH 23 cube 1 1 1 0.65 0 - - ba69f0b1c0390008 "materials/metal_plate.material" 1 2.5
+COLLIDER 23 box 0 0 0 0 0 0 1 0.5 0.5 0.5 0.5 0.5 1000 0.8 0 0 0 18446744073709551615 18446744073709551615
+MESH 24 cube 1 1 1 0.65 0 - - ba69f0b1c0390008 "materials/metal_plate.material" 1 2.5
+COLLIDER 24 box 0 0 0 0 0 0 1 0.5 0.5 0.5 0.5 0.5 1000 0.8 0 0 0 18446744073709551615 18446744073709551615
+MESH 25 cube 1 1 1 0.65 0 - - 8167b41c20f16e69 "materials/glass.material" 1 1
+COLLIDER 25 box 0 0 0 0 0 0 1 0.5 0.5 0.5 0.5 0.5 1000 0.7 0 0 0 18446744073709551615 18446744073709551615
+BEHAVIOR 25 health 1 max 50
+BEHAVIOR 25 breakable 2 shards 14 speed 2.5
+MESH 26 cube 1 1 1 0.65 0 - - ba69f0b1c0390008 "materials/metal_plate.material" 4 4
+COLLIDER 26 box 0 0 0 0 0 0 1 0.5 0.5 0.5 0.5 0.5 1000 0.8 0 0 0 18446744073709551615 18446744073709551615
+MESH 27 cube 1 1 1 0.65 0 - - ba69f0b1c0390008 "materials/metal_plate.material" 1 1
+COLLIDER 27 box 0 0 0 0 0 0 1 0.5 0.5 0.5 0.5 0.5 1000 0.8 0 0 0 18446744073709551615 18446744073709551615
+MESH 28 cube 1 1 1 0.65 0 - - 773cc65fcf5b3196 "materials/target_static.material" 1 1
+COLLIDER 28 box 0 0 0 0 0 0 1 0.5 0.5 0.5 0.5 0.5 1000 0.7 0 0 0 18446744073709551615 18446744073709551615
+BEHAVIOR 28 health 1 max 50
+BEHAVIOR 28 target 1 points 100
+MESH 29 cube 1 1 1 0.65 0 - - 773cc65fcf5b3196 "materials/target_static.material" 1 1
+COLLIDER 29 box 0 0 0 0 0 0 1 0.5 0.5 0.5 0.5 0.5 1000 0.7 0 0 0 18446744073709551615 18446744073709551615
+BEHAVIOR 29 health 1 max 50
+BEHAVIOR 29 target 1 points 100
+MESH 30 cube 1 1 1 0.65 0 - - 773cc65fcf5b3196 "materials/target_static.material" 1 1
+COLLIDER 30 box 0 0 0 0 0 0 1 0.5 0.5 0.5 0.5 0.5 1000 0.7 0 0 0 18446744073709551615 18446744073709551615
+BEHAVIOR 30 health 1 max 50
+BEHAVIOR 30 target 1 points 100
+MESH 31 sphere 1 1 1 0.65 0 - - f2c7ff6e29b8d3f0 "materials/target_moving.material" 1 1
+BODY 31 kinematic 0 0 0 0 0 0 0 0 1 0 0 0
+COLLIDER 31 sphere 0 0 0 0 0 0 1 0.5 0.5 0.5 0.5 0.5 1000 0.7 0 0 0 18446744073709551615 18446744073709551615
+BEHAVIOR 31 health 1 max 50
+BEHAVIOR 31 target 1 points 150
+BEHAVIOR 31 mover 7 ax -11 ay 2.4 az -7.8 bx 11 by 2.4 bz -7.8 speed 3.5
+MESH 32 sphere 1 1 1 0.65 0 - - f2c7ff6e29b8d3f0 "materials/target_moving.material" 1 1
+BODY 32 kinematic 0 0 0 0 0 0 0 0 1 0 0 0
+COLLIDER 32 sphere 0 0 0 0 0 0 1 0.5 0.5 0.5 0.5 0.5 1000 0.7 0 0 0 18446744073709551615 18446744073709551615
+BEHAVIOR 32 health 1 max 50
+BEHAVIOR 32 target 1 points 150
+BEHAVIOR 32 mover 7 ax 14 ay 1.6 az -12 bx 14 by 1.6 bz 11 speed 3
+MESH 33 cube 1 1 1 0.65 0 - - e720d6c5b2bef5f9 "materials/wood_crate.material" 1 1
+BODY 33 dynamic 0 0 0 0 0 0 0 0 1 1 0 0
+COLLIDER 33 box 0 0 0 0 0 0 1 0.5 0.5 0.5 0.5 0.5 70 0.65 0 0 1 18446744073709551615 18446744073709551615
+MESH 34 cube 1 1 1 0.65 0 - - e720d6c5b2bef5f9 "materials/wood_crate.material" 1 1
+BODY 34 dynamic 0 0 0 0 0 0 0 0 1 1 0 0
+COLLIDER 34 box 0 0 0 0 0 0 1 0.5 0.5 0.5 0.5 0.5 70 0.65 0 0 1 18446744073709551615 18446744073709551615
+MESH 35 cube 1 1 1 0.65 0 - - e720d6c5b2bef5f9 "materials/wood_crate.material" 1 1
+BODY 35 dynamic 0 0 0 0 0 0 0 0 1 1 0 0
+COLLIDER 35 box 0 0 0 0 0 0 1 0.5 0.5 0.5 0.5 0.5 70 0.65 0 0 1 18446744073709551615 18446744073709551615
+MESH 36 cube 1 1 1 0.65 0 - - e720d6c5b2bef5f9 "materials/wood_crate.material" 1 1
+BODY 36 dynamic 0 0 0 0 0 0 0 0 1 1 0 0
+COLLIDER 36 box 0 0 0 0 0 0 1 0.5 0.5 0.5 0.5 0.5 70 0.65 0 0 1 18446744073709551615 18446744073709551615
+MESH 37 cube 1 1 1 0.65 0 - - e720d6c5b2bef5f9 "materials/wood_crate.material" 1 1
+BODY 37 dynamic 0 0 0 0 0 0 0 0 1 1 0 0
+COLLIDER 37 box 0 0 0 0 0 0 1 0.5 0.5 0.5 0.5 0.5 70 0.65 0 0 1 18446744073709551615 18446744073709551615
+MESH 38 cube 1 1 1 0.65 0 - - e720d6c5b2bef5f9 "materials/wood_crate.material" 1 1
+BODY 38 dynamic 0 0 0 0 0 0 0 0 1 1 0 0
+COLLIDER 38 box 0 0 0 0 0 0 1 0.5 0.5 0.5 0.5 0.5 70 0.65 0 0 1 18446744073709551615 18446744073709551615
+MESH 39 cube 1 1 1 0.65 0 - - e720d6c5b2bef5f9 "materials/wood_crate.material" 1 1
+BODY 39 dynamic 0 0 0 0 0 0 0 0 1 1 0 0
+COLLIDER 39 box 0 0 0 0 0 0 1 0.5 0.5 0.5 0.5 0.5 70 0.65 0 0 1 18446744073709551615 18446744073709551615
+MESH 40 cube 1 1 1 0.65 0 - - e720d6c5b2bef5f9 "materials/wood_crate.material" 1 1
+BODY 40 dynamic 0 0 0 0 0 0 0 0 1 1 0 0
+COLLIDER 40 box 0 0 0 0 0 0 1 0.5 0.5 0.5 0.5 0.5 70 0.65 0 0 1 18446744073709551615 18446744073709551615
+MESH 41 cube 1 1 1 0.65 0 - - e720d6c5b2bef5f9 "materials/wood_crate.material" 1 1
+BODY 41 dynamic 0 0 0 0 0 0 0 0 1 1 0 0
+COLLIDER 41 box 0 0 0 0 0 0 1 0.5 0.5 0.5 0.5 0.5 70 0.65 0 0 1 18446744073709551615 18446744073709551615
+MESH 42 cube 1 1 1 0.65 0 - - 40b16f2fdd76706d "materials/target_dynamic.material" 1 1
+BODY 42 dynamic 0 0 0 0 0 0 0 0 1 1 0 0
+COLLIDER 42 box 0 0 0 0 0 0 1 0.5 0.5 0.5 0.5 0.5 90 0.6 0 0 1 18446744073709551615 18446744073709551615
+BEHAVIOR 42 health 1 max 75
+BEHAVIOR 42 target 1 points 150
+BEHAVIOR 42 impact_damage 2 min_speed 2.5 scale 25
+MESH 43 cube 1 1 1 0.65 0 - - 40b16f2fdd76706d "materials/target_dynamic.material" 1 1
+BODY 43 dynamic 0 0 0 0 0 0 0 0 1 1 0 0
+COLLIDER 43 box 0 0 0 0 0 0 1 0.5 0.5 0.5 0.5 0.5 60 0.5 0 0 1 18446744073709551615 18446744073709551615
+BEHAVIOR 43 health 1 max 75
+BEHAVIOR 43 target 1 points 150
+BEHAVIOR 43 impact_damage 2 min_speed 3.5 scale 25
+MESH 44 cube 1 1 1 0.65 0 - - e720d6c5b2bef5f9 "materials/wood_crate.material" 0.5 1
+BODY 44 dynamic 0 0 0 0 0 0 0 0 1 1 0 0
+COLLIDER 44 box 0 0 0 0 0 0 1 0.5 0.5 0.5 0.5 0.5 240 0.6 0 0 1 18446744073709551615 18446744073709551615
+MESH 45 cube 1 1 1 0.65 0 - - e720d6c5b2bef5f9 "materials/wood_crate.material" 0.5 1
+BODY 45 dynamic 0 0 0 0 0 0 0 0 1 1 0 0
+COLLIDER 45 box 0 0 0 0 0 0 1 0.5 0.5 0.5 0.5 0.5 240 0.6 0 0 1 18446744073709551615 18446744073709551615
+MESH 46 cube 1 1 1 0.65 0 - - e720d6c5b2bef5f9 "materials/wood_crate.material" 0.5 1
+BODY 46 dynamic 0 0 0 0 0 0 0 0 1 1 0 0
+COLLIDER 46 box 0 0 0 0 0 0 1 0.5 0.5 0.5 0.5 0.5 240 0.6 0 0 1 18446744073709551615 18446744073709551615
+MESH 47 cube 1 1 1 0.65 0 - - e720d6c5b2bef5f9 "materials/wood_crate.material" 0.5 1
+BODY 47 dynamic 0 0 0 0 0 0 0 0 1 1 0 0
+COLLIDER 47 box 0 0 0 0 0 0 1 0.5 0.5 0.5 0.5 0.5 240 0.6 0 0 1 18446744073709551615 18446744073709551615
+MESH 48 cube 1 1 1 0.65 0 - - e720d6c5b2bef5f9 "materials/wood_crate.material" 0.5 1
+BODY 48 dynamic 0 0 0 0 0 0 0 0 1 1 0 0
+COLLIDER 48 box 0 0 0 0 0 0 1 0.5 0.5 0.5 0.5 0.5 240 0.6 0 0 1 18446744073709551615 18446744073709551615
+MESH 49 cube 1 1 1 0.65 0 - - e720d6c5b2bef5f9 "materials/wood_crate.material" 0.5 1
+BODY 49 dynamic 0 0 0 0 0 0 0 0 1 1 0 0
+COLLIDER 49 box 0 0 0 0 0 0 1 0.5 0.5 0.5 0.5 0.5 240 0.6 0 0 1 18446744073709551615 18446744073709551615
+MESH 50 cube 1 1 1 0.65 0 - - e720d6c5b2bef5f9 "materials/wood_crate.material" 0.5 1
+BODY 50 dynamic 0 0 0 0 0 0 0 0 1 1 0 0
+COLLIDER 50 box 0 0 0 0 0 0 1 0.5 0.5 0.5 0.5 0.5 240 0.6 0 0 1 18446744073709551615 18446744073709551615
+MESH 51 cube 1 1 1 0.65 0 - - e720d6c5b2bef5f9 "materials/wood_crate.material" 0.5 1
+BODY 51 dynamic 0 0 0 0 0 0 0 0 1 1 0 0
+COLLIDER 51 box 0 0 0 0 0 0 1 0.5 0.5 0.5 0.5 0.5 240 0.6 0 0 1 18446744073709551615 18446744073709551615
+MESH 52 cube 1 1 1 0.65 0 - - e720d6c5b2bef5f9 "materials/wood_crate.material" 0.5 1
+BODY 52 dynamic 0 0 0 0 0 0 0 0 1 1 0 0
+COLLIDER 52 box 0 0 0 0 0 0 1 0.5 0.5 0.5 0.5 0.5 240 0.6 0 0 1 18446744073709551615 18446744073709551615
+MESH 53 cube 1 1 1 0.65 0 - - e720d6c5b2bef5f9 "materials/wood_crate.material" 0.5 1
+BODY 53 dynamic 0 0 0 0 0 0 0 0 1 1 0 0
+COLLIDER 53 box 0 0 0 0 0 0 1 0.5 0.5 0.5 0.5 0.5 240 0.6 0 0 1 18446744073709551615 18446744073709551615
+MESH 54 sphere 1 1 1 0.65 0 - - 40b16f2fdd76706d "materials/target_dynamic.material" 1 1
+BODY 54 dynamic 0 0 0 0 0 0 0 0 1 1 0 0
+COLLIDER 54 sphere 0 0 0 0 0 0 1 0.5 0.5 0.5 0.5 0.5 60 0.5 0 0 1 18446744073709551615 18446744073709551615
+BEHAVIOR 54 health 1 max 75
+BEHAVIOR 54 target 1 points 200
+BEHAVIOR 54 impact_damage 2 min_speed 1.2 scale 45
+MESH 55 cube 1 1 1 0.65 0 - - ba69f0b1c0390008 "materials/metal_plate.material" 1 1
+COLLIDER 55 box 0 0 0 0 0 0 1 0.5 0.5 0.5 0.5 0.5 1000 0.8 0 0 0 18446744073709551615 18446744073709551615
+MESH 56 cube 1 1 1 0.65 0 - - ba69f0b1c0390008 "materials/metal_plate.material" 1 1
+COLLIDER 56 box 0 0 0 0 0 0 1 0.5 0.5 0.5 0.5 0.5 1000 0.8 0 0 0 18446744073709551615 18446744073709551615
+MESH 57 cube 1 1 1 0.65 0 - - ba69f0b1c0390008 "materials/metal_plate.material" 3 1
+COLLIDER 57 box 0 0 0 0 0 0 1 0.5 0.5 0.5 0.5 0.5 1000 0.8 0 0 0 18446744073709551615 18446744073709551615
+MESH 58 cube 1 1 1 0.65 0 - - e720d6c5b2bef5f9 "materials/wood_crate.material" 1 1
+BODY 58 dynamic 0 0 0 0 0 0 0 0 1 1 0 0
+COLLIDER 58 box 0 0 0 0 0 0 1 0.5 0.5 0.5 0.5 0.5 55 0.65 0 0 1 18446744073709551615 18446744073709551615
+MESH 59 cube 1 1 1 0.65 0 - - e720d6c5b2bef5f9 "materials/wood_crate.material" 1 1
+BODY 59 dynamic 0 0 0 0 0 0 0 0 1 1 0 0
+COLLIDER 59 box 0 0 0 0 0 0 1 0.5 0.5 0.5 0.5 0.5 55 0.65 0 0 1 18446744073709551615 18446744073709551615
+MESH 60 cube 1 1 1 0.65 0 - - e720d6c5b2bef5f9 "materials/wood_crate.material" 1 1
+BODY 60 dynamic 0 0 0 0 0 0 0 0 1 1 0 0
+COLLIDER 60 box 0 0 0 0 0 0 1 0.5 0.5 0.5 0.5 0.5 55 0.65 0 0 1 18446744073709551615 18446744073709551615
+MESH 61 cube 1 1 1 0.65 0 - - e720d6c5b2bef5f9 "materials/wood_crate.material" 1 1
+BODY 61 dynamic 0 0 0 0 0 0 0 0 1 1 0 0
+COLLIDER 61 box 0 0 0 0 0 0 1 0.5 0.5 0.5 0.5 0.5 55 0.65 0 0 1 18446744073709551615 18446744073709551615
+MESH 62 cube 1 1 1 0.65 0 - - e720d6c5b2bef5f9 "materials/wood_crate.material" 1 1
+BODY 62 dynamic 0 0 0 0 0 0 0 0 1 1 0 0
+COLLIDER 62 box 0 0 0 0 0 0 1 0.5 0.5 0.5 0.5 0.5 55 0.65 0 0 1 18446744073709551615 18446744073709551615
+MESH 63 cube 1 1 1 0.65 0 - - 86f3ad4d48cba3bb "materials/bonus_zone.material" 1 1
+COLLIDER 63 box 0 0 0 0 0 0 1 0.5 0.5 0.5 0.5 0.5 1000 0.7 0 1 1 18446744073709551615 18446744073709551615
+BEHAVIOR 63 bonus_zone 1 points 50
+MESH 64 cube 1 1 1 0.65 0 - - e720d6c5b2bef5f9 "materials/wood_crate.material" 1 1
+BODY 64 dynamic 0 0 0 0 0 0 0 0 1 1 0 0
+COLLIDER 64 box 0 0 0 0 0 0 1 0.5 0.5 0.5 0.5 0.5 60 0.65 0 0 1 18446744073709551615 18446744073709551615
+MESH 65 cube 1 1 1 0.65 0 - - e720d6c5b2bef5f9 "materials/wood_crate.material" 1 1
+BODY 65 dynamic 0 0 0 0 0 0 0 0 1 1 0 0
+COLLIDER 65 box 0 0 0 0 0 0 1 0.5 0.5 0.5 0.5 0.5 60 0.65 0 0 1 18446744073709551615 18446744073709551615
+MESH 66 cube 1 1 1 0.65 0 - - e720d6c5b2bef5f9 "materials/wood_crate.material" 1 1
+BODY 66 dynamic 0 0 0 0 0 0 0 0 1 1 0 0
+COLLIDER 66 box 0 0 0 0 0 0 1 0.5 0.5 0.5 0.5 0.5 60 0.65 0 0 1 18446744073709551615 18446744073709551615
+MESH 67 cube 1 1 1 0.65 0 - - e720d6c5b2bef5f9 "materials/wood_crate.material" 1 1
+BODY 67 dynamic 0 0 0 0 0 0 0 0 1 1 0 0
+COLLIDER 67 box 0 0 0 0 0 0 1 0.5 0.5 0.5 0.5 0.5 60 0.65 0 0 1 18446744073709551615 18446744073709551615
+MESH 68 cube 1 1 1 0.65 0 - - e720d6c5b2bef5f9 "materials/wood_crate.material" 1 1
+BODY 68 dynamic 0 0 0 0 0 0 0 0 1 1 0 0
+COLLIDER 68 box 0 0 0 0 0 0 1 0.5 0.5 0.5 0.5 0.5 60 0.65 0 0 1 18446744073709551615 18446744073709551615
+MESH 69 cube 1 1 1 0.65 0 - - e720d6c5b2bef5f9 "materials/wood_crate.material" 1 1
+BODY 69 dynamic 0 0 0 0 0 0 0 0 1 1 0 0
+COLLIDER 69 box 0 0 0 0 0 0 1 0.5 0.5 0.5 0.5 0.5 60 0.65 0 0 1 18446744073709551615 18446744073709551615
+MESH 70 sphere 1 1 1 0.65 0 - - 4af9ff13da11e072 "materials/rubber.material" 1 1
+BODY 70 dynamic 0 0 0 0 0 0 0 0.3 1 1 0 0
+COLLIDER 70 sphere 0 0 0 0 0 0 1 0.5 0.5 0.5 0.5 0.5 120 0.7 0.55 0 1 18446744073709551615 18446744073709551615
+MESH 71 sphere 1 1 1 0.65 0 - - 4af9ff13da11e072 "materials/rubber.material" 1 1
+BODY 71 dynamic 0 0 0 0 0 0 0 0.3 1 1 0 0
+COLLIDER 71 sphere 0 0 0 0 0 0 1 0.5 0.5 0.5 0.5 0.5 120 0.7 0.8 0 1 18446744073709551615 18446744073709551615
+MESH 72 sphere 1 1 1 0.65 0 - - 4af9ff13da11e072 "materials/rubber.material" 1 1
+BODY 72 dynamic 0 0 0 0 0 0 0 0.3 1 1 0 0
+COLLIDER 72 sphere 0 0 0 0 0 0 1 0.5 0.5 0.5 0.5 0.5 120 0.7 0.75 0 1 18446744073709551615 18446744073709551615
+MESH 73 sphere 1 1 1 0.65 0 - - 4af9ff13da11e072 "materials/rubber.material" 1 1
+BODY 73 dynamic 0 0 0 0 0 0 0 0.3 1 1 0 0
+COLLIDER 73 sphere 0 0 0 0 0 0 1 0.5 0.5 0.5 0.5 0.5 120 0.7 0.7 0 1 18446744073709551615 18446744073709551615
+MESH 74 cube 1 1 1 0.65 0 - - ba69f0b1c0390008 "materials/metal_plate.material" 1 1
+COLLIDER 74 box 0 0 0 0 0 0 1 0.5 0.5 0.5 0.5 0.5 1000 0.8 0 0 0 18446744073709551615 18446744073709551615
+MESH 75 cube 1 1 1 0.65 0 6a2acfb8df4bd25e "models/WaterBottle.glb" - - 1 1
+BODY 75 dynamic 0 0 0 0 0 0 0 0 1 1 0 0
+COLLIDER 75 box 0 0 0 0 0 0 1 0.05 0.128 0.05 0.5 0.5 700 0.6 0 0 1 18446744073709551615 18446744073709551615
+BEHAVIOR 75 health 1 max 50
+BEHAVIOR 75 target 1 points 250
+BEHAVIOR 75 impact_damage 2 min_speed 4 scale 30
+MESH 76 cube 1 1 1 0.65 0 3587bebaf186dc15 "models/Mannequin.glb" - - 1 1
+BODY 76 kinematic 0 0 0 0 0 0 0 0 1 0 0 0
+COLLIDER 76 capsule 0 0.92 0 0 0 0 1 0.5 0.5 0.5 0.32 0.6 1000 0.7 0 0 0 18446744073709551615 18446744073709551615
+BEHAVIOR 76 health 1 max 75
+BEHAVIOR 76 target 1 points 200
+BEHAVIOR 76 enemy 8 walk_speed 1.05 ax -12 az 4 bx -7 bz 4 pause 1.6 turn_rate 3 flinch_time 0.45
+ANIMATOR 76 - "Walk_Loop" 1 1 0 1
+RAGDOLL 76 0 1000 40 20 0.5
+MESH 77 cube 1 1 1 0.65 0 3587bebaf186dc15 "models/Mannequin.glb" - - 1 1
+BODY 77 kinematic 0 0 0 0 0 0 0 0 1 0 0 0
+COLLIDER 77 capsule 0 0.92 0 0 0 0 1 0.5 0.5 0.5 0.32 0.6 1000 0.7 0 0 0 18446744073709551615 18446744073709551615
+BEHAVIOR 77 health 1 max 75
+BEHAVIOR 77 target 1 points 200
+BEHAVIOR 77 enemy 8 walk_speed 1.05 ax 0 az -3 bx 0 bz -9 pause 1.6 turn_rate 3 flinch_time 0.45
+ANIMATOR 77 - "Walk_Loop" 1 1 0 1
+RAGDOLL 77 0 1000 40 20 0.5
+MESH 78 cube 1 1 1 0.65 0 3587bebaf186dc15 "models/Mannequin.glb" - - 1 1
+BODY 78 kinematic 0 0 0 0 0 0 0 0 1 0 0 0
+COLLIDER 78 capsule 0 0.92 0 0 0 0 1 0.5 0.5 0.5 0.32 0.6 1000 0.7 0 0 0 18446744073709551615 18446744073709551615
+BEHAVIOR 78 health 1 max 75
+BEHAVIOR 78 target 1 points 200
+BEHAVIOR 78 enemy 8 walk_speed 1.05 ax 8.5 az 5.5 bx 12.5 bz 5.5 pause 1.6 turn_rate 3 flinch_time 0.45
+ANIMATOR 78 - "Walk_Loop" 1 1 0 1
+RAGDOLL 78 0 1000 40 20 0.5
+MESH 79 sphere 1 1 1 0.65 0 - - 479ec9b519619a7e "materials/pickup_time.material" 1 1
+COLLIDER 79 sphere 0 0 0 0 0 0 1 0.5 0.5 0.5 0.9 0.5 1000 0.7 0 1 1 18446744073709551615 18446744073709551615
+BEHAVIOR 79 pickup 1 time 15
+MESH 80 sphere 1 1 1 0.65 0 - - 40ca55fea3f54761 "materials/pickup_ammo.material" 1 1
+COLLIDER 80 sphere 0 0 0 0 0 0 1 0.5 0.5 0.5 0.9 0.5 1000 0.7 0 1 1 18446744073709551615 18446744073709551615
+BEHAVIOR 80 pickup 1 ammo 45
+MESH 81 cube 1 1 1 0.65 0 - - 3dd476cd8eddbb89 "materials/plaster_wall.material" 0.7 1.4
+COLLIDER 81 box 0 0 0 0 0 0 1 0.5 0.5 0.5 0.5 0.5 1000 0.8 0 0 0 18446744073709551615 18446744073709551615
+MESH 82 cube 1 1 1 0.65 0 - - 3dd476cd8eddbb89 "materials/plaster_wall.material" 0.85 0.55
+COLLIDER 82 box 0 0 0 0 0 0 1 0.5 0.5 0.5 0.5 0.5 1000 0.8 0 0 0 18446744073709551615 18446744073709551615
+MESH 83 cube 1 1 1 0.65 0 - - 2bfd8d78f387bc8d "materials/concrete_floor.material" 2.5 2.2
+COLLIDER 83 box 0 0 0 0 0 0 1 0.5 0.5 0.5 0.5 0.5 1000 0.8 0 0 0 18446744073709551615 18446744073709551615
+MESH 84 cube 1 1 1 0.65 0 - - 3dd476cd8eddbb89 "materials/plaster_wall.material" 2 1.4
+COLLIDER 84 box 0 0 0 0 0 0 1 0.5 0.5 0.5 0.5 0.5 1000 0.8 0 0 0 18446744073709551615 18446744073709551615
+MESH 85 cube 1 1 1 0.65 0 - - 3dd476cd8eddbb89 "materials/plaster_wall.material" 2 1.4
+COLLIDER 85 box 0 0 0 0 0 0 1 0.5 0.5 0.5 0.5 0.5 1000 0.8 0 0 0 18446744073709551615 18446744073709551615
+MESH 86 cube 1 1 1 0.65 0 - - 3dd476cd8eddbb89 "materials/plaster_wall.material" 1.4 1.4
+COLLIDER 86 box 0 0 0 0 0 0 1 0.5 0.5 0.5 0.5 0.5 1000 0.8 0 0 0 18446744073709551615 18446744073709551615
+MESH 87 cube 1 1 1 0.65 0 - - 661e5075e3495afc "materials/vault_gate.material" 1 1
+BODY 87 kinematic 0 0 0 0 0 0 0 0 1 0 0 0
+COLLIDER 87 box 0 0 0 0 0 0 1 0.5 0.5 0.5 0.5 0.5 1000 0.7 0 0 0 18446744073709551615 18446744073709551615
+SCRIPT 87 d92d56840e9e75b3 "Scripts/Gate.lua" 4 message t "The vault is open" open_offset v 0 0 3 room_max v -6 8 16 room_min v -16 -1 -6
+MESH 88 cube 1 1 1 0.65 0 - - acd523a02a69781f "materials/vault_button.material" 1 1
+SCRIPT 88 40bd59954271c32b "Scripts/Button.lua" 5 hint t "Press E for the vault's prize" message t "+300  Vault, and 20 seconds" points n 300 time n 20 travel v -0.08 0 0
+MESH 89 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 89 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -12 5.5 -12 b v -12 7.5 -12 speed n 1
+MESH 90 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 90 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -11 7.5 -12 b v -11 5.5 -12 speed n 2.4
+MESH 91 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 91 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -10 5.5 -12 b v -10 7.5 -12 speed n 1.8
+MESH 92 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 92 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -9 7.5 -12 b v -9 5.5 -12 speed n 1.2
+MESH 93 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 93 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -8 5.5 -12 b v -8 7.5 -12 speed n 2.6
+MESH 94 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 94 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -7 7.5 -12 b v -7 5.5 -12 speed n 2
+MESH 95 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 95 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -6 5.5 -12 b v -6 7.5 -12 speed n 1.4
+MESH 96 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 96 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -5 7.5 -12 b v -5 5.5 -12 speed n 2.8
+MESH 97 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 97 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -4 5.5 -12 b v -4 7.5 -12 speed n 2.2
+MESH 98 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 98 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -3 7.5 -12 b v -3 5.5 -12 speed n 1.6
+MESH 99 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 99 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -2 5.5 -12 b v -2 7.5 -12 speed n 1
+MESH 100 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 100 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -1 7.5 -12 b v -1 5.5 -12 speed n 2.4
+MESH 101 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 101 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 0 5.5 -12 b v 0 7.5 -12 speed n 1.8
+MESH 102 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 102 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 1 7.5 -12 b v 1 5.5 -12 speed n 1.2
+MESH 103 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 103 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 2 5.5 -12 b v 2 7.5 -12 speed n 2.6
+MESH 104 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 104 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 3 7.5 -12 b v 3 5.5 -12 speed n 2
+MESH 105 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 105 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 4 5.5 -12 b v 4 7.5 -12 speed n 1.4
+MESH 106 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 106 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 5 7.5 -12 b v 5 5.5 -12 speed n 2.8
+MESH 107 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 107 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 6 5.5 -12 b v 6 7.5 -12 speed n 2.2
+MESH 108 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 108 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 7 7.5 -12 b v 7 5.5 -12 speed n 1.6
+MESH 109 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 109 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 8 5.5 -12 b v 8 7.5 -12 speed n 1
+MESH 110 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 110 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 9 7.5 -12 b v 9 5.5 -12 speed n 2.4
+MESH 111 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 111 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 10 5.5 -12 b v 10 7.5 -12 speed n 1.8
+MESH 112 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 112 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 11 7.5 -12 b v 11 5.5 -12 speed n 1.2
+MESH 113 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 113 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 12 5.5 -12 b v 12 7.5 -12 speed n 2.6
+MESH 114 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 114 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -12 7.5 -11 b v -12 5.5 -11 speed n 1.6
+MESH 115 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 115 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -11 5.5 -11 b v -11 7.5 -11 speed n 1
+MESH 116 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 116 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -10 7.5 -11 b v -10 5.5 -11 speed n 2.4
+MESH 117 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 117 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -9 5.5 -11 b v -9 7.5 -11 speed n 1.8
+MESH 118 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 118 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -8 7.5 -11 b v -8 5.5 -11 speed n 1.2
+MESH 119 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 119 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -7 5.5 -11 b v -7 7.5 -11 speed n 2.6
+MESH 120 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 120 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -6 7.5 -11 b v -6 5.5 -11 speed n 2
+MESH 121 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 121 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -5 5.5 -11 b v -5 7.5 -11 speed n 1.4
+MESH 122 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 122 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -4 7.5 -11 b v -4 5.5 -11 speed n 2.8
+MESH 123 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 123 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -3 5.5 -11 b v -3 7.5 -11 speed n 2.2
+MESH 124 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 124 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -2 7.5 -11 b v -2 5.5 -11 speed n 1.6
+MESH 125 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 125 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -1 5.5 -11 b v -1 7.5 -11 speed n 1
+MESH 126 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 126 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 0 7.5 -11 b v 0 5.5 -11 speed n 2.4
+MESH 127 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 127 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 1 5.5 -11 b v 1 7.5 -11 speed n 1.8
+MESH 128 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 128 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 2 7.5 -11 b v 2 5.5 -11 speed n 1.2
+MESH 129 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 129 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 3 5.5 -11 b v 3 7.5 -11 speed n 2.6
+MESH 130 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 130 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 4 7.5 -11 b v 4 5.5 -11 speed n 2
+MESH 131 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 131 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 5 5.5 -11 b v 5 7.5 -11 speed n 1.4
+MESH 132 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 132 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 6 7.5 -11 b v 6 5.5 -11 speed n 2.8
+MESH 133 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 133 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 7 5.5 -11 b v 7 7.5 -11 speed n 2.2
+MESH 134 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 134 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 8 7.5 -11 b v 8 5.5 -11 speed n 1.6
+MESH 135 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 135 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 9 5.5 -11 b v 9 7.5 -11 speed n 1
+MESH 136 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 136 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 10 7.5 -11 b v 10 5.5 -11 speed n 2.4
+MESH 137 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 137 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 11 5.5 -11 b v 11 7.5 -11 speed n 1.8
+MESH 138 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 138 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 12 7.5 -11 b v 12 5.5 -11 speed n 1.2
+MESH 139 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 139 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -12 5.5 -10 b v -12 7.5 -10 speed n 2.2
+MESH 140 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 140 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -11 7.5 -10 b v -11 5.5 -10 speed n 1.6
+MESH 141 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 141 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -10 5.5 -10 b v -10 7.5 -10 speed n 1
+MESH 142 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 142 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -9 7.5 -10 b v -9 5.5 -10 speed n 2.4
+MESH 143 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 143 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -8 5.5 -10 b v -8 7.5 -10 speed n 1.8
+MESH 144 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 144 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -7 7.5 -10 b v -7 5.5 -10 speed n 1.2
+MESH 145 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 145 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -6 5.5 -10 b v -6 7.5 -10 speed n 2.6
+MESH 146 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 146 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -5 7.5 -10 b v -5 5.5 -10 speed n 2
+MESH 147 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 147 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -4 5.5 -10 b v -4 7.5 -10 speed n 1.4
+MESH 148 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 148 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -3 7.5 -10 b v -3 5.5 -10 speed n 2.8
+MESH 149 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 149 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -2 5.5 -10 b v -2 7.5 -10 speed n 2.2
+MESH 150 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 150 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -1 7.5 -10 b v -1 5.5 -10 speed n 1.6
+MESH 151 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 151 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 0 5.5 -10 b v 0 7.5 -10 speed n 1
+MESH 152 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 152 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 1 7.5 -10 b v 1 5.5 -10 speed n 2.4
+MESH 153 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 153 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 2 5.5 -10 b v 2 7.5 -10 speed n 1.8
+MESH 154 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 154 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 3 7.5 -10 b v 3 5.5 -10 speed n 1.2
+MESH 155 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 155 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 4 5.5 -10 b v 4 7.5 -10 speed n 2.6
+MESH 156 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 156 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 5 7.5 -10 b v 5 5.5 -10 speed n 2
+MESH 157 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 157 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 6 5.5 -10 b v 6 7.5 -10 speed n 1.4
+MESH 158 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 158 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 7 7.5 -10 b v 7 5.5 -10 speed n 2.8
+MESH 159 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 159 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 8 5.5 -10 b v 8 7.5 -10 speed n 2.2
+MESH 160 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 160 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 9 7.5 -10 b v 9 5.5 -10 speed n 1.6
+MESH 161 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 161 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 10 5.5 -10 b v 10 7.5 -10 speed n 1
+MESH 162 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 162 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 11 7.5 -10 b v 11 5.5 -10 speed n 2.4
+MESH 163 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 163 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 12 5.5 -10 b v 12 7.5 -10 speed n 1.8
+MESH 164 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 164 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -12 7.5 -9 b v -12 5.5 -9 speed n 2.8
+MESH 165 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 165 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -11 5.5 -9 b v -11 7.5 -9 speed n 2.2
+MESH 166 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 166 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -10 7.5 -9 b v -10 5.5 -9 speed n 1.6
+MESH 167 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 167 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -9 5.5 -9 b v -9 7.5 -9 speed n 1
+MESH 168 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 168 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -8 7.5 -9 b v -8 5.5 -9 speed n 2.4
+MESH 169 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 169 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -7 5.5 -9 b v -7 7.5 -9 speed n 1.8
+MESH 170 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 170 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -6 7.5 -9 b v -6 5.5 -9 speed n 1.2
+MESH 171 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 171 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -5 5.5 -9 b v -5 7.5 -9 speed n 2.6
+MESH 172 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 172 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -4 7.5 -9 b v -4 5.5 -9 speed n 2
+MESH 173 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 173 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -3 5.5 -9 b v -3 7.5 -9 speed n 1.4
+MESH 174 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 174 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -2 7.5 -9 b v -2 5.5 -9 speed n 2.8
+MESH 175 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 175 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -1 5.5 -9 b v -1 7.5 -9 speed n 2.2
+MESH 176 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 176 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 0 7.5 -9 b v 0 5.5 -9 speed n 1.6
+MESH 177 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 177 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 1 5.5 -9 b v 1 7.5 -9 speed n 1
+MESH 178 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 178 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 2 7.5 -9 b v 2 5.5 -9 speed n 2.4
+MESH 179 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 179 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 3 5.5 -9 b v 3 7.5 -9 speed n 1.8
+MESH 180 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 180 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 4 7.5 -9 b v 4 5.5 -9 speed n 1.2
+MESH 181 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 181 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 5 5.5 -9 b v 5 7.5 -9 speed n 2.6
+MESH 182 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 182 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 6 7.5 -9 b v 6 5.5 -9 speed n 2
+MESH 183 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 183 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 7 5.5 -9 b v 7 7.5 -9 speed n 1.4
+MESH 184 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 184 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 8 7.5 -9 b v 8 5.5 -9 speed n 2.8
+MESH 185 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 185 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 9 5.5 -9 b v 9 7.5 -9 speed n 2.2
+MESH 186 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 186 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 10 7.5 -9 b v 10 5.5 -9 speed n 1.6
+MESH 187 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 187 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 11 5.5 -9 b v 11 7.5 -9 speed n 1
+MESH 188 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 188 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 12 7.5 -9 b v 12 5.5 -9 speed n 2.4
+MESH 189 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 189 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -12 5.5 -8 b v -12 7.5 -8 speed n 1.4
+MESH 190 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 190 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -11 7.5 -8 b v -11 5.5 -8 speed n 2.8
+MESH 191 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 191 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -10 5.5 -8 b v -10 7.5 -8 speed n 2.2
+MESH 192 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 192 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -9 7.5 -8 b v -9 5.5 -8 speed n 1.6
+MESH 193 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 193 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -8 5.5 -8 b v -8 7.5 -8 speed n 1
+MESH 194 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 194 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -7 7.5 -8 b v -7 5.5 -8 speed n 2.4
+MESH 195 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 195 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -6 5.5 -8 b v -6 7.5 -8 speed n 1.8
+MESH 196 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 196 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -5 7.5 -8 b v -5 5.5 -8 speed n 1.2
+MESH 197 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 197 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -4 5.5 -8 b v -4 7.5 -8 speed n 2.6
+MESH 198 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 198 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -3 7.5 -8 b v -3 5.5 -8 speed n 2
+MESH 199 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 199 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -2 5.5 -8 b v -2 7.5 -8 speed n 1.4
+MESH 200 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 200 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -1 7.5 -8 b v -1 5.5 -8 speed n 2.8
+MESH 201 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 201 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 0 5.5 -8 b v 0 7.5 -8 speed n 2.2
+MESH 202 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 202 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 1 7.5 -8 b v 1 5.5 -8 speed n 1.6
+MESH 203 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 203 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 2 5.5 -8 b v 2 7.5 -8 speed n 1
+MESH 204 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 204 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 3 7.5 -8 b v 3 5.5 -8 speed n 2.4
+MESH 205 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 205 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 4 5.5 -8 b v 4 7.5 -8 speed n 1.8
+MESH 206 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 206 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 5 7.5 -8 b v 5 5.5 -8 speed n 1.2
+MESH 207 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 207 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 6 5.5 -8 b v 6 7.5 -8 speed n 2.6
+MESH 208 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 208 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 7 7.5 -8 b v 7 5.5 -8 speed n 2
+MESH 209 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 209 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 8 5.5 -8 b v 8 7.5 -8 speed n 1.4
+MESH 210 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 210 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 9 7.5 -8 b v 9 5.5 -8 speed n 2.8
+MESH 211 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 211 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 10 5.5 -8 b v 10 7.5 -8 speed n 2.2
+MESH 212 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 212 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 11 7.5 -8 b v 11 5.5 -8 speed n 1.6
+MESH 213 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 213 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 12 5.5 -8 b v 12 7.5 -8 speed n 1
+MESH 214 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 214 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -12 7.5 -7 b v -12 5.5 -7 speed n 2
+MESH 215 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 215 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -11 5.5 -7 b v -11 7.5 -7 speed n 1.4
+MESH 216 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 216 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -10 7.5 -7 b v -10 5.5 -7 speed n 2.8
+MESH 217 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 217 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -9 5.5 -7 b v -9 7.5 -7 speed n 2.2
+MESH 218 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 218 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -8 7.5 -7 b v -8 5.5 -7 speed n 1.6
+MESH 219 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 219 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -7 5.5 -7 b v -7 7.5 -7 speed n 1
+MESH 220 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 220 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -6 7.5 -7 b v -6 5.5 -7 speed n 2.4
+MESH 221 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 221 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -5 5.5 -7 b v -5 7.5 -7 speed n 1.8
+MESH 222 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 222 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -4 7.5 -7 b v -4 5.5 -7 speed n 1.2
+MESH 223 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 223 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -3 5.5 -7 b v -3 7.5 -7 speed n 2.6
+MESH 224 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 224 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -2 7.5 -7 b v -2 5.5 -7 speed n 2
+MESH 225 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 225 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -1 5.5 -7 b v -1 7.5 -7 speed n 1.4
+MESH 226 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 226 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 0 7.5 -7 b v 0 5.5 -7 speed n 2.8
+MESH 227 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 227 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 1 5.5 -7 b v 1 7.5 -7 speed n 2.2
+MESH 228 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 228 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 2 7.5 -7 b v 2 5.5 -7 speed n 1.6
+MESH 229 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 229 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 3 5.5 -7 b v 3 7.5 -7 speed n 1
+MESH 230 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 230 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 4 7.5 -7 b v 4 5.5 -7 speed n 2.4
+MESH 231 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 231 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 5 5.5 -7 b v 5 7.5 -7 speed n 1.8
+MESH 232 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 232 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 6 7.5 -7 b v 6 5.5 -7 speed n 1.2
+MESH 233 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 233 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 7 5.5 -7 b v 7 7.5 -7 speed n 2.6
+MESH 234 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 234 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 8 7.5 -7 b v 8 5.5 -7 speed n 2
+MESH 235 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 235 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 9 5.5 -7 b v 9 7.5 -7 speed n 1.4
+MESH 236 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 236 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 10 7.5 -7 b v 10 5.5 -7 speed n 2.8
+MESH 237 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 237 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 11 5.5 -7 b v 11 7.5 -7 speed n 2.2
+MESH 238 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 238 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 12 7.5 -7 b v 12 5.5 -7 speed n 1.6
+MESH 239 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 239 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -12 5.5 -6 b v -12 7.5 -6 speed n 2.6
+MESH 240 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 240 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -11 7.5 -6 b v -11 5.5 -6 speed n 2
+MESH 241 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 241 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -10 5.5 -6 b v -10 7.5 -6 speed n 1.4
+MESH 242 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 242 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -9 7.5 -6 b v -9 5.5 -6 speed n 2.8
+MESH 243 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 243 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -8 5.5 -6 b v -8 7.5 -6 speed n 2.2
+MESH 244 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 244 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -7 7.5 -6 b v -7 5.5 -6 speed n 1.6
+MESH 245 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 245 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -6 5.5 -6 b v -6 7.5 -6 speed n 1
+MESH 246 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 246 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -5 7.5 -6 b v -5 5.5 -6 speed n 2.4
+MESH 247 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 247 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -4 5.5 -6 b v -4 7.5 -6 speed n 1.8
+MESH 248 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 248 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -3 7.5 -6 b v -3 5.5 -6 speed n 1.2
+MESH 249 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 249 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -2 5.5 -6 b v -2 7.5 -6 speed n 2.6
+MESH 250 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 250 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -1 7.5 -6 b v -1 5.5 -6 speed n 2
+MESH 251 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 251 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 0 5.5 -6 b v 0 7.5 -6 speed n 1.4
+MESH 252 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 252 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 1 7.5 -6 b v 1 5.5 -6 speed n 2.8
+MESH 253 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 253 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 2 5.5 -6 b v 2 7.5 -6 speed n 2.2
+MESH 254 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 254 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 3 7.5 -6 b v 3 5.5 -6 speed n 1.6
+MESH 255 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 255 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 4 5.5 -6 b v 4 7.5 -6 speed n 1
+MESH 256 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 256 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 5 7.5 -6 b v 5 5.5 -6 speed n 2.4
+MESH 257 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 257 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 6 5.5 -6 b v 6 7.5 -6 speed n 1.8
+MESH 258 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 258 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 7 7.5 -6 b v 7 5.5 -6 speed n 1.2
+MESH 259 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 259 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 8 5.5 -6 b v 8 7.5 -6 speed n 2.6
+MESH 260 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 260 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 9 7.5 -6 b v 9 5.5 -6 speed n 2
+MESH 261 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 261 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 10 5.5 -6 b v 10 7.5 -6 speed n 1.4
+MESH 262 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 262 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 11 7.5 -6 b v 11 5.5 -6 speed n 2.8
+MESH 263 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 263 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 12 5.5 -6 b v 12 7.5 -6 speed n 2.2
+MESH 264 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 264 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -12 7.5 -5 b v -12 5.5 -5 speed n 1.2
+MESH 265 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 265 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -11 5.5 -5 b v -11 7.5 -5 speed n 2.6
+MESH 266 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 266 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -10 7.5 -5 b v -10 5.5 -5 speed n 2
+MESH 267 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 267 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -9 5.5 -5 b v -9 7.5 -5 speed n 1.4
+MESH 268 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 268 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -8 7.5 -5 b v -8 5.5 -5 speed n 2.8
+MESH 269 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 269 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -7 5.5 -5 b v -7 7.5 -5 speed n 2.2
+MESH 270 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 270 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -6 7.5 -5 b v -6 5.5 -5 speed n 1.6
+MESH 271 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 271 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -5 5.5 -5 b v -5 7.5 -5 speed n 1
+MESH 272 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 272 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -4 7.5 -5 b v -4 5.5 -5 speed n 2.4
+MESH 273 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 273 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -3 5.5 -5 b v -3 7.5 -5 speed n 1.8
+MESH 274 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 274 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -2 7.5 -5 b v -2 5.5 -5 speed n 1.2
+MESH 275 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 275 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -1 5.5 -5 b v -1 7.5 -5 speed n 2.6
+MESH 276 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 276 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 0 7.5 -5 b v 0 5.5 -5 speed n 2
+MESH 277 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 277 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 1 5.5 -5 b v 1 7.5 -5 speed n 1.4
+MESH 278 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 278 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 2 7.5 -5 b v 2 5.5 -5 speed n 2.8
+MESH 279 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 279 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 3 5.5 -5 b v 3 7.5 -5 speed n 2.2
+MESH 280 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 280 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 4 7.5 -5 b v 4 5.5 -5 speed n 1.6
+MESH 281 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 281 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 5 5.5 -5 b v 5 7.5 -5 speed n 1
+MESH 282 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 282 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 6 7.5 -5 b v 6 5.5 -5 speed n 2.4
+MESH 283 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 283 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 7 5.5 -5 b v 7 7.5 -5 speed n 1.8
+MESH 284 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 284 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 8 7.5 -5 b v 8 5.5 -5 speed n 1.2
+MESH 285 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 285 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 9 5.5 -5 b v 9 7.5 -5 speed n 2.6
+MESH 286 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 286 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 10 7.5 -5 b v 10 5.5 -5 speed n 2
+MESH 287 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 287 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 11 5.5 -5 b v 11 7.5 -5 speed n 1.4
+MESH 288 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 288 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 12 7.5 -5 b v 12 5.5 -5 speed n 2.8
+MESH 289 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 289 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -12 5.5 -4 b v -12 7.5 -4 speed n 1.8
+MESH 290 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 290 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -11 7.5 -4 b v -11 5.5 -4 speed n 1.2
+MESH 291 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 291 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -10 5.5 -4 b v -10 7.5 -4 speed n 2.6
+MESH 292 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 292 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -9 7.5 -4 b v -9 5.5 -4 speed n 2
+MESH 293 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 293 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -8 5.5 -4 b v -8 7.5 -4 speed n 1.4
+MESH 294 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 294 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -7 7.5 -4 b v -7 5.5 -4 speed n 2.8
+MESH 295 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 295 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -6 5.5 -4 b v -6 7.5 -4 speed n 2.2
+MESH 296 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 296 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -5 7.5 -4 b v -5 5.5 -4 speed n 1.6
+MESH 297 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 297 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -4 5.5 -4 b v -4 7.5 -4 speed n 1
+MESH 298 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 298 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -3 7.5 -4 b v -3 5.5 -4 speed n 2.4
+MESH 299 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 299 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -2 5.5 -4 b v -2 7.5 -4 speed n 1.8
+MESH 300 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 300 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -1 7.5 -4 b v -1 5.5 -4 speed n 1.2
+MESH 301 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 301 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 0 5.5 -4 b v 0 7.5 -4 speed n 2.6
+MESH 302 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 302 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 1 7.5 -4 b v 1 5.5 -4 speed n 2
+MESH 303 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 303 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 2 5.5 -4 b v 2 7.5 -4 speed n 1.4
+MESH 304 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 304 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 3 7.5 -4 b v 3 5.5 -4 speed n 2.8
+MESH 305 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 305 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 4 5.5 -4 b v 4 7.5 -4 speed n 2.2
+MESH 306 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 306 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 5 7.5 -4 b v 5 5.5 -4 speed n 1.6
+MESH 307 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 307 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 6 5.5 -4 b v 6 7.5 -4 speed n 1
+MESH 308 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 308 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 7 7.5 -4 b v 7 5.5 -4 speed n 2.4
+MESH 309 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 309 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 8 5.5 -4 b v 8 7.5 -4 speed n 1.8
+MESH 310 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 310 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 9 7.5 -4 b v 9 5.5 -4 speed n 1.2
+MESH 311 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 311 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 10 5.5 -4 b v 10 7.5 -4 speed n 2.6
+MESH 312 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 312 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 11 7.5 -4 b v 11 5.5 -4 speed n 2
+MESH 313 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 313 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 12 5.5 -4 b v 12 7.5 -4 speed n 1.4
+MESH 314 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 314 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -12 7.5 -3 b v -12 5.5 -3 speed n 2.4
+MESH 315 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 315 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -11 5.5 -3 b v -11 7.5 -3 speed n 1.8
+MESH 316 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 316 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -10 7.5 -3 b v -10 5.5 -3 speed n 1.2
+MESH 317 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 317 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -9 5.5 -3 b v -9 7.5 -3 speed n 2.6
+MESH 318 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 318 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -8 7.5 -3 b v -8 5.5 -3 speed n 2
+MESH 319 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 319 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -7 5.5 -3 b v -7 7.5 -3 speed n 1.4
+MESH 320 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 320 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -6 7.5 -3 b v -6 5.5 -3 speed n 2.8
+MESH 321 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 321 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -5 5.5 -3 b v -5 7.5 -3 speed n 2.2
+MESH 322 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 322 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -4 7.5 -3 b v -4 5.5 -3 speed n 1.6
+MESH 323 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 323 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -3 5.5 -3 b v -3 7.5 -3 speed n 1
+MESH 324 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 324 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -2 7.5 -3 b v -2 5.5 -3 speed n 2.4
+MESH 325 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 325 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -1 5.5 -3 b v -1 7.5 -3 speed n 1.8
+MESH 326 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 326 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 0 7.5 -3 b v 0 5.5 -3 speed n 1.2
+MESH 327 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 327 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 1 5.5 -3 b v 1 7.5 -3 speed n 2.6
+MESH 328 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 328 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 2 7.5 -3 b v 2 5.5 -3 speed n 2
+MESH 329 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 329 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 3 5.5 -3 b v 3 7.5 -3 speed n 1.4
+MESH 330 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 330 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 4 7.5 -3 b v 4 5.5 -3 speed n 2.8
+MESH 331 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 331 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 5 5.5 -3 b v 5 7.5 -3 speed n 2.2
+MESH 332 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 332 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 6 7.5 -3 b v 6 5.5 -3 speed n 1.6
+MESH 333 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 333 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 7 5.5 -3 b v 7 7.5 -3 speed n 1
+MESH 334 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 334 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 8 7.5 -3 b v 8 5.5 -3 speed n 2.4
+MESH 335 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 335 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 9 5.5 -3 b v 9 7.5 -3 speed n 1.8
+MESH 336 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 336 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 10 7.5 -3 b v 10 5.5 -3 speed n 1.2
+MESH 337 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 337 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 11 5.5 -3 b v 11 7.5 -3 speed n 2.6
+MESH 338 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 338 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 12 7.5 -3 b v 12 5.5 -3 speed n 2
+MESH 339 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 339 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -12 5.5 -2 b v -12 7.5 -2 speed n 1
+MESH 340 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 340 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -11 7.5 -2 b v -11 5.5 -2 speed n 2.4
+MESH 341 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 341 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -10 5.5 -2 b v -10 7.5 -2 speed n 1.8
+MESH 342 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 342 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -9 7.5 -2 b v -9 5.5 -2 speed n 1.2
+MESH 343 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 343 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -8 5.5 -2 b v -8 7.5 -2 speed n 2.6
+MESH 344 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 344 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -7 7.5 -2 b v -7 5.5 -2 speed n 2
+MESH 345 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 345 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -6 5.5 -2 b v -6 7.5 -2 speed n 1.4
+MESH 346 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 346 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -5 7.5 -2 b v -5 5.5 -2 speed n 2.8
+MESH 347 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 347 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -4 5.5 -2 b v -4 7.5 -2 speed n 2.2
+MESH 348 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 348 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -3 7.5 -2 b v -3 5.5 -2 speed n 1.6
+MESH 349 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 349 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -2 5.5 -2 b v -2 7.5 -2 speed n 1
+MESH 350 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 350 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -1 7.5 -2 b v -1 5.5 -2 speed n 2.4
+MESH 351 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 351 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 0 5.5 -2 b v 0 7.5 -2 speed n 1.8
+MESH 352 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 352 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 1 7.5 -2 b v 1 5.5 -2 speed n 1.2
+MESH 353 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 353 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 2 5.5 -2 b v 2 7.5 -2 speed n 2.6
+MESH 354 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 354 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 3 7.5 -2 b v 3 5.5 -2 speed n 2
+MESH 355 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 355 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 4 5.5 -2 b v 4 7.5 -2 speed n 1.4
+MESH 356 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 356 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 5 7.5 -2 b v 5 5.5 -2 speed n 2.8
+MESH 357 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 357 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 6 5.5 -2 b v 6 7.5 -2 speed n 2.2
+MESH 358 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 358 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 7 7.5 -2 b v 7 5.5 -2 speed n 1.6
+MESH 359 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 359 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 8 5.5 -2 b v 8 7.5 -2 speed n 1
+MESH 360 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 360 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 9 7.5 -2 b v 9 5.5 -2 speed n 2.4
+MESH 361 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 361 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 10 5.5 -2 b v 10 7.5 -2 speed n 1.8
+MESH 362 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 362 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 11 7.5 -2 b v 11 5.5 -2 speed n 1.2
+MESH 363 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 363 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 12 5.5 -2 b v 12 7.5 -2 speed n 2.6
+MESH 364 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 364 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -12 7.5 -1 b v -12 5.5 -1 speed n 1.6
+MESH 365 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 365 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -11 5.5 -1 b v -11 7.5 -1 speed n 1
+MESH 366 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 366 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -10 7.5 -1 b v -10 5.5 -1 speed n 2.4
+MESH 367 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 367 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -9 5.5 -1 b v -9 7.5 -1 speed n 1.8
+MESH 368 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 368 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -8 7.5 -1 b v -8 5.5 -1 speed n 1.2
+MESH 369 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 369 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -7 5.5 -1 b v -7 7.5 -1 speed n 2.6
+MESH 370 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 370 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -6 7.5 -1 b v -6 5.5 -1 speed n 2
+MESH 371 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 371 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -5 5.5 -1 b v -5 7.5 -1 speed n 1.4
+MESH 372 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 372 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -4 7.5 -1 b v -4 5.5 -1 speed n 2.8
+MESH 373 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 373 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -3 5.5 -1 b v -3 7.5 -1 speed n 2.2
+MESH 374 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 374 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -2 7.5 -1 b v -2 5.5 -1 speed n 1.6
+MESH 375 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 375 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -1 5.5 -1 b v -1 7.5 -1 speed n 1
+MESH 376 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 376 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 0 7.5 -1 b v 0 5.5 -1 speed n 2.4
+MESH 377 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 377 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 1 5.5 -1 b v 1 7.5 -1 speed n 1.8
+MESH 378 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 378 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 2 7.5 -1 b v 2 5.5 -1 speed n 1.2
+MESH 379 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 379 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 3 5.5 -1 b v 3 7.5 -1 speed n 2.6
+MESH 380 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 380 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 4 7.5 -1 b v 4 5.5 -1 speed n 2
+MESH 381 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 381 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 5 5.5 -1 b v 5 7.5 -1 speed n 1.4
+MESH 382 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 382 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 6 7.5 -1 b v 6 5.5 -1 speed n 2.8
+MESH 383 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 383 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 7 5.5 -1 b v 7 7.5 -1 speed n 2.2
+MESH 384 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 384 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 8 7.5 -1 b v 8 5.5 -1 speed n 1.6
+MESH 385 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 385 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 9 5.5 -1 b v 9 7.5 -1 speed n 1
+MESH 386 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 386 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 10 7.5 -1 b v 10 5.5 -1 speed n 2.4
+MESH 387 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 387 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 11 5.5 -1 b v 11 7.5 -1 speed n 1.8
+MESH 388 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 388 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 12 7.5 -1 b v 12 5.5 -1 speed n 1.2
+MESH 389 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 389 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -12 5.5 0 b v -12 7.5 0 speed n 2.2
+MESH 390 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 390 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -11 7.5 0 b v -11 5.5 0 speed n 1.6
+MESH 391 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 391 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -10 5.5 0 b v -10 7.5 0 speed n 1
+MESH 392 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 392 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -9 7.5 0 b v -9 5.5 0 speed n 2.4
+MESH 393 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 393 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -8 5.5 0 b v -8 7.5 0 speed n 1.8
+MESH 394 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 394 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -7 7.5 0 b v -7 5.5 0 speed n 1.2
+MESH 395 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 395 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -6 5.5 0 b v -6 7.5 0 speed n 2.6
+MESH 396 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 396 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -5 7.5 0 b v -5 5.5 0 speed n 2
+MESH 397 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 397 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -4 5.5 0 b v -4 7.5 0 speed n 1.4
+MESH 398 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 398 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -3 7.5 0 b v -3 5.5 0 speed n 2.8
+MESH 399 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 399 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -2 5.5 0 b v -2 7.5 0 speed n 2.2
+MESH 400 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 400 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -1 7.5 0 b v -1 5.5 0 speed n 1.6
+MESH 401 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 401 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 0 5.5 0 b v 0 7.5 0 speed n 1
+MESH 402 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 402 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 1 7.5 0 b v 1 5.5 0 speed n 2.4
+MESH 403 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 403 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 2 5.5 0 b v 2 7.5 0 speed n 1.8
+MESH 404 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 404 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 3 7.5 0 b v 3 5.5 0 speed n 1.2
+MESH 405 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 405 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 4 5.5 0 b v 4 7.5 0 speed n 2.6
+MESH 406 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 406 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 5 7.5 0 b v 5 5.5 0 speed n 2
+MESH 407 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 407 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 6 5.5 0 b v 6 7.5 0 speed n 1.4
+MESH 408 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 408 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 7 7.5 0 b v 7 5.5 0 speed n 2.8
+MESH 409 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 409 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 8 5.5 0 b v 8 7.5 0 speed n 2.2
+MESH 410 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 410 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 9 7.5 0 b v 9 5.5 0 speed n 1.6
+MESH 411 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 411 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 10 5.5 0 b v 10 7.5 0 speed n 1
+MESH 412 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 412 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 11 7.5 0 b v 11 5.5 0 speed n 2.4
+MESH 413 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 413 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 12 5.5 0 b v 12 7.5 0 speed n 1.8
+MESH 414 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 414 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -12 7.5 1 b v -12 5.5 1 speed n 2.8
+MESH 415 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 415 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -11 5.5 1 b v -11 7.5 1 speed n 2.2
+MESH 416 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 416 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -10 7.5 1 b v -10 5.5 1 speed n 1.6
+MESH 417 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 417 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -9 5.5 1 b v -9 7.5 1 speed n 1
+MESH 418 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 418 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -8 7.5 1 b v -8 5.5 1 speed n 2.4
+MESH 419 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 419 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -7 5.5 1 b v -7 7.5 1 speed n 1.8
+MESH 420 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 420 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -6 7.5 1 b v -6 5.5 1 speed n 1.2
+MESH 421 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 421 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -5 5.5 1 b v -5 7.5 1 speed n 2.6
+MESH 422 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 422 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -4 7.5 1 b v -4 5.5 1 speed n 2
+MESH 423 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 423 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -3 5.5 1 b v -3 7.5 1 speed n 1.4
+MESH 424 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 424 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -2 7.5 1 b v -2 5.5 1 speed n 2.8
+MESH 425 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 425 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -1 5.5 1 b v -1 7.5 1 speed n 2.2
+MESH 426 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 426 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 0 7.5 1 b v 0 5.5 1 speed n 1.6
+MESH 427 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 427 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 1 5.5 1 b v 1 7.5 1 speed n 1
+MESH 428 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 428 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 2 7.5 1 b v 2 5.5 1 speed n 2.4
+MESH 429 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 429 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 3 5.5 1 b v 3 7.5 1 speed n 1.8
+MESH 430 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 430 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 4 7.5 1 b v 4 5.5 1 speed n 1.2
+MESH 431 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 431 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 5 5.5 1 b v 5 7.5 1 speed n 2.6
+MESH 432 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 432 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 6 7.5 1 b v 6 5.5 1 speed n 2
+MESH 433 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 433 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 7 5.5 1 b v 7 7.5 1 speed n 1.4
+MESH 434 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 434 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 8 7.5 1 b v 8 5.5 1 speed n 2.8
+MESH 435 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 435 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 9 5.5 1 b v 9 7.5 1 speed n 2.2
+MESH 436 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 436 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 10 7.5 1 b v 10 5.5 1 speed n 1.6
+MESH 437 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 437 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 11 5.5 1 b v 11 7.5 1 speed n 1
+MESH 438 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 438 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 12 7.5 1 b v 12 5.5 1 speed n 2.4
+MESH 439 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 439 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -12 5.5 2 b v -12 7.5 2 speed n 1.4
+MESH 440 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 440 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -11 7.5 2 b v -11 5.5 2 speed n 2.8
+MESH 441 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 441 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -10 5.5 2 b v -10 7.5 2 speed n 2.2
+MESH 442 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 442 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -9 7.5 2 b v -9 5.5 2 speed n 1.6
+MESH 443 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 443 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -8 5.5 2 b v -8 7.5 2 speed n 1
+MESH 444 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 444 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -7 7.5 2 b v -7 5.5 2 speed n 2.4
+MESH 445 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 445 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -6 5.5 2 b v -6 7.5 2 speed n 1.8
+MESH 446 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 446 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -5 7.5 2 b v -5 5.5 2 speed n 1.2
+MESH 447 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 447 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -4 5.5 2 b v -4 7.5 2 speed n 2.6
+MESH 448 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 448 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -3 7.5 2 b v -3 5.5 2 speed n 2
+MESH 449 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 449 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -2 5.5 2 b v -2 7.5 2 speed n 1.4
+MESH 450 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 450 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -1 7.5 2 b v -1 5.5 2 speed n 2.8
+MESH 451 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 451 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 0 5.5 2 b v 0 7.5 2 speed n 2.2
+MESH 452 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 452 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 1 7.5 2 b v 1 5.5 2 speed n 1.6
+MESH 453 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 453 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 2 5.5 2 b v 2 7.5 2 speed n 1
+MESH 454 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 454 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 3 7.5 2 b v 3 5.5 2 speed n 2.4
+MESH 455 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 455 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 4 5.5 2 b v 4 7.5 2 speed n 1.8
+MESH 456 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 456 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 5 7.5 2 b v 5 5.5 2 speed n 1.2
+MESH 457 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 457 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 6 5.5 2 b v 6 7.5 2 speed n 2.6
+MESH 458 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 458 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 7 7.5 2 b v 7 5.5 2 speed n 2
+MESH 459 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 459 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 8 5.5 2 b v 8 7.5 2 speed n 1.4
+MESH 460 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 460 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 9 7.5 2 b v 9 5.5 2 speed n 2.8
+MESH 461 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 461 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 10 5.5 2 b v 10 7.5 2 speed n 2.2
+MESH 462 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 462 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 11 7.5 2 b v 11 5.5 2 speed n 1.6
+MESH 463 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 463 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 12 5.5 2 b v 12 7.5 2 speed n 1
+MESH 464 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 464 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -12 7.5 3 b v -12 5.5 3 speed n 2
+MESH 465 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 465 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -11 5.5 3 b v -11 7.5 3 speed n 1.4
+MESH 466 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 466 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -10 7.5 3 b v -10 5.5 3 speed n 2.8
+MESH 467 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 467 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -9 5.5 3 b v -9 7.5 3 speed n 2.2
+MESH 468 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 468 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -8 7.5 3 b v -8 5.5 3 speed n 1.6
+MESH 469 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 469 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -7 5.5 3 b v -7 7.5 3 speed n 1
+MESH 470 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 470 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -6 7.5 3 b v -6 5.5 3 speed n 2.4
+MESH 471 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 471 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -5 5.5 3 b v -5 7.5 3 speed n 1.8
+MESH 472 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 472 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -4 7.5 3 b v -4 5.5 3 speed n 1.2
+MESH 473 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 473 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -3 5.5 3 b v -3 7.5 3 speed n 2.6
+MESH 474 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 474 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -2 7.5 3 b v -2 5.5 3 speed n 2
+MESH 475 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 475 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -1 5.5 3 b v -1 7.5 3 speed n 1.4
+MESH 476 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 476 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 0 7.5 3 b v 0 5.5 3 speed n 2.8
+MESH 477 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 477 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 1 5.5 3 b v 1 7.5 3 speed n 2.2
+MESH 478 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 478 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 2 7.5 3 b v 2 5.5 3 speed n 1.6
+MESH 479 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 479 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 3 5.5 3 b v 3 7.5 3 speed n 1
+MESH 480 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 480 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 4 7.5 3 b v 4 5.5 3 speed n 2.4
+MESH 481 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 481 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 5 5.5 3 b v 5 7.5 3 speed n 1.8
+MESH 482 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 482 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 6 7.5 3 b v 6 5.5 3 speed n 1.2
+MESH 483 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 483 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 7 5.5 3 b v 7 7.5 3 speed n 2.6
+MESH 484 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 484 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 8 7.5 3 b v 8 5.5 3 speed n 2
+MESH 485 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 485 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 9 5.5 3 b v 9 7.5 3 speed n 1.4
+MESH 486 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 486 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 10 7.5 3 b v 10 5.5 3 speed n 2.8
+MESH 487 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 487 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 11 5.5 3 b v 11 7.5 3 speed n 2.2
+MESH 488 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 488 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 12 7.5 3 b v 12 5.5 3 speed n 1.6
+MESH 489 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 489 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -12 5.5 4 b v -12 7.5 4 speed n 2.6
+MESH 490 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 490 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -11 7.5 4 b v -11 5.5 4 speed n 2
+MESH 491 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 491 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -10 5.5 4 b v -10 7.5 4 speed n 1.4
+MESH 492 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 492 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -9 7.5 4 b v -9 5.5 4 speed n 2.8
+MESH 493 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 493 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -8 5.5 4 b v -8 7.5 4 speed n 2.2
+MESH 494 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 494 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -7 7.5 4 b v -7 5.5 4 speed n 1.6
+MESH 495 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 495 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -6 5.5 4 b v -6 7.5 4 speed n 1
+MESH 496 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 496 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -5 7.5 4 b v -5 5.5 4 speed n 2.4
+MESH 497 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 497 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -4 5.5 4 b v -4 7.5 4 speed n 1.8
+MESH 498 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 498 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -3 7.5 4 b v -3 5.5 4 speed n 1.2
+MESH 499 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 499 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -2 5.5 4 b v -2 7.5 4 speed n 2.6
+MESH 500 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 500 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -1 7.5 4 b v -1 5.5 4 speed n 2
+MESH 501 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 501 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 0 5.5 4 b v 0 7.5 4 speed n 1.4
+MESH 502 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 502 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 1 7.5 4 b v 1 5.5 4 speed n 2.8
+MESH 503 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 503 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 2 5.5 4 b v 2 7.5 4 speed n 2.2
+MESH 504 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 504 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 3 7.5 4 b v 3 5.5 4 speed n 1.6
+MESH 505 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 505 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 4 5.5 4 b v 4 7.5 4 speed n 1
+MESH 506 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 506 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 5 7.5 4 b v 5 5.5 4 speed n 2.4
+MESH 507 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 507 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 6 5.5 4 b v 6 7.5 4 speed n 1.8
+MESH 508 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 508 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 7 7.5 4 b v 7 5.5 4 speed n 1.2
+MESH 509 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 509 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 8 5.5 4 b v 8 7.5 4 speed n 2.6
+MESH 510 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 510 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 9 7.5 4 b v 9 5.5 4 speed n 2
+MESH 511 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 511 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 10 5.5 4 b v 10 7.5 4 speed n 1.4
+MESH 512 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 512 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 11 7.5 4 b v 11 5.5 4 speed n 2.8
+MESH 513 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 513 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 12 5.5 4 b v 12 7.5 4 speed n 2.2
+MESH 514 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 514 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -12 7.5 5 b v -12 5.5 5 speed n 1.2
+MESH 515 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 515 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -11 5.5 5 b v -11 7.5 5 speed n 2.6
+MESH 516 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 516 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -10 7.5 5 b v -10 5.5 5 speed n 2
+MESH 517 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 517 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -9 5.5 5 b v -9 7.5 5 speed n 1.4
+MESH 518 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 518 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -8 7.5 5 b v -8 5.5 5 speed n 2.8
+MESH 519 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 519 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -7 5.5 5 b v -7 7.5 5 speed n 2.2
+MESH 520 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 520 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -6 7.5 5 b v -6 5.5 5 speed n 1.6
+MESH 521 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 521 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -5 5.5 5 b v -5 7.5 5 speed n 1
+MESH 522 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 522 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -4 7.5 5 b v -4 5.5 5 speed n 2.4
+MESH 523 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 523 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -3 5.5 5 b v -3 7.5 5 speed n 1.8
+MESH 524 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 524 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -2 7.5 5 b v -2 5.5 5 speed n 1.2
+MESH 525 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 525 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -1 5.5 5 b v -1 7.5 5 speed n 2.6
+MESH 526 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 526 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 0 7.5 5 b v 0 5.5 5 speed n 2
+MESH 527 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 527 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 1 5.5 5 b v 1 7.5 5 speed n 1.4
+MESH 528 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 528 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 2 7.5 5 b v 2 5.5 5 speed n 2.8
+MESH 529 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 529 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 3 5.5 5 b v 3 7.5 5 speed n 2.2
+MESH 530 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 530 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 4 7.5 5 b v 4 5.5 5 speed n 1.6
+MESH 531 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 531 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 5 5.5 5 b v 5 7.5 5 speed n 1
+MESH 532 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 532 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 6 7.5 5 b v 6 5.5 5 speed n 2.4
+MESH 533 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 533 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 7 5.5 5 b v 7 7.5 5 speed n 1.8
+MESH 534 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 534 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 8 7.5 5 b v 8 5.5 5 speed n 1.2
+MESH 535 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 535 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 9 5.5 5 b v 9 7.5 5 speed n 2.6
+MESH 536 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 536 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 10 7.5 5 b v 10 5.5 5 speed n 2
+MESH 537 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 537 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 11 5.5 5 b v 11 7.5 5 speed n 1.4
+MESH 538 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 538 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 12 7.5 5 b v 12 5.5 5 speed n 2.8
+MESH 539 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 539 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -12 5.5 6 b v -12 7.5 6 speed n 1.8
+MESH 540 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 540 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -11 7.5 6 b v -11 5.5 6 speed n 1.2
+MESH 541 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 541 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -10 5.5 6 b v -10 7.5 6 speed n 2.6
+MESH 542 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 542 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -9 7.5 6 b v -9 5.5 6 speed n 2
+MESH 543 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 543 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -8 5.5 6 b v -8 7.5 6 speed n 1.4
+MESH 544 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 544 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -7 7.5 6 b v -7 5.5 6 speed n 2.8
+MESH 545 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 545 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -6 5.5 6 b v -6 7.5 6 speed n 2.2
+MESH 546 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 546 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -5 7.5 6 b v -5 5.5 6 speed n 1.6
+MESH 547 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 547 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -4 5.5 6 b v -4 7.5 6 speed n 1
+MESH 548 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 548 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -3 7.5 6 b v -3 5.5 6 speed n 2.4
+MESH 549 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 549 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -2 5.5 6 b v -2 7.5 6 speed n 1.8
+MESH 550 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 550 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -1 7.5 6 b v -1 5.5 6 speed n 1.2
+MESH 551 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 551 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 0 5.5 6 b v 0 7.5 6 speed n 2.6
+MESH 552 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 552 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 1 7.5 6 b v 1 5.5 6 speed n 2
+MESH 553 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 553 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 2 5.5 6 b v 2 7.5 6 speed n 1.4
+MESH 554 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 554 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 3 7.5 6 b v 3 5.5 6 speed n 2.8
+MESH 555 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 555 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 4 5.5 6 b v 4 7.5 6 speed n 2.2
+MESH 556 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 556 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 5 7.5 6 b v 5 5.5 6 speed n 1.6
+MESH 557 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 557 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 6 5.5 6 b v 6 7.5 6 speed n 1
+MESH 558 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 558 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 7 7.5 6 b v 7 5.5 6 speed n 2.4
+MESH 559 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 559 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 8 5.5 6 b v 8 7.5 6 speed n 1.8
+MESH 560 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 560 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 9 7.5 6 b v 9 5.5 6 speed n 1.2
+MESH 561 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 561 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 10 5.5 6 b v 10 7.5 6 speed n 2.6
+MESH 562 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 562 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 11 7.5 6 b v 11 5.5 6 speed n 2
+MESH 563 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 563 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 12 5.5 6 b v 12 7.5 6 speed n 1.4
+MESH 564 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 564 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -12 7.5 7 b v -12 5.5 7 speed n 2.4
+MESH 565 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 565 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -11 5.5 7 b v -11 7.5 7 speed n 1.8
+MESH 566 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 566 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -10 7.5 7 b v -10 5.5 7 speed n 1.2
+MESH 567 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 567 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -9 5.5 7 b v -9 7.5 7 speed n 2.6
+MESH 568 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 568 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -8 7.5 7 b v -8 5.5 7 speed n 2
+MESH 569 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 569 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -7 5.5 7 b v -7 7.5 7 speed n 1.4
+MESH 570 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 570 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -6 7.5 7 b v -6 5.5 7 speed n 2.8
+MESH 571 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 571 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -5 5.5 7 b v -5 7.5 7 speed n 2.2
+MESH 572 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 572 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -4 7.5 7 b v -4 5.5 7 speed n 1.6
+MESH 573 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 573 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -3 5.5 7 b v -3 7.5 7 speed n 1
+MESH 574 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 574 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -2 7.5 7 b v -2 5.5 7 speed n 2.4
+MESH 575 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 575 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v -1 5.5 7 b v -1 7.5 7 speed n 1.8
+MESH 576 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 576 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 0 7.5 7 b v 0 5.5 7 speed n 1.2
+MESH 577 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 577 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 1 5.5 7 b v 1 7.5 7 speed n 2.6
+MESH 578 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 578 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 2 7.5 7 b v 2 5.5 7 speed n 2
+MESH 579 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 579 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 3 5.5 7 b v 3 7.5 7 speed n 1.4
+MESH 580 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 580 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 4 7.5 7 b v 4 5.5 7 speed n 2.8
+MESH 581 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 581 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 5 5.5 7 b v 5 7.5 7 speed n 2.2
+MESH 582 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 582 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 6 7.5 7 b v 6 5.5 7 speed n 1.6
+MESH 583 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 583 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 7 5.5 7 b v 7 7.5 7 speed n 1
+MESH 584 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 584 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 8 7.5 7 b v 8 5.5 7 speed n 2.4
+MESH 585 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 585 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 9 5.5 7 b v 9 7.5 7 speed n 1.8
+MESH 586 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 586 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 10 7.5 7 b v 10 5.5 7 speed n 1.2
+MESH 587 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 587 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 11 5.5 7 b v 11 7.5 7 speed n 2.6
+MESH 588 cube 1 1 1 0.65 0 - - 0959e7ca692ce4c8 "materials/stress_mover.material" 1 1
+SCRIPT 588 ea557d19a34dd704 "Scripts/Mover.lua" 3 a v 12 7.5 7 b v 12 5.5 7 speed n 2

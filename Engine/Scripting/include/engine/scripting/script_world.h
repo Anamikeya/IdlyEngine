@@ -118,6 +118,8 @@ private:
 	// Forgets the instances whose entities are gone. Only between calls: never while one of them runs.
 	void forget_gone();
 	std::optional<EntityRecord> record(EntityId entity) const;
+	// Its local transform as scripts see it, without copying the rest of the entity.
+	Transform transform_of(EntityId entity) const;
 	std::array<double, 16> world_matrix(EntityId entity) const;
 
 	Scene& scene_;

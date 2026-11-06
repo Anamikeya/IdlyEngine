@@ -1,4 +1,5 @@
 ﻿#include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <engine/scene/Scene.hpp>
 #include <glm/glm.hpp>
@@ -198,12 +199,18 @@ Result<void> validate_components(const Components &c) {
     }
     return {};
 }
-template <class T> void mirror(flecs::entity e, const std::optional<T> &value) {
+// True when it changed the entity.
+template <class T> bool mirror(flecs::entity e, const std::optional<T> &value) {
     if (!value) {
-        if (e.has<T>())
-            e.remove<T>();
-    } else if (!e.has<T>() || e.get<T>() != *value)
-        e.set<T>(*value);
+        if (!e.has<T>())
+            return false;
+        e.remove<T>();
+        return true;
+    }
+    if (e.has<T>() && e.get<T>() == *value)
+        return false;
+    e.set<T>(*value);
+    return true;
 }
 template <class T> std::optional<T> read(flecs::entity e) {
     if (!e.has<T>())
@@ -215,8 +222,8 @@ struct ColliderList {
     std::vector<ColliderComponent> items;
     bool operator==(const ColliderList &) const = default;
 };
-void mirror(flecs::entity e, const std::vector<ColliderComponent> &colliders) {
-    mirror(e, colliders.empty() ? std::nullopt : std::optional<ColliderList>(ColliderList{colliders}));
+bool mirror(flecs::entity e, const std::vector<ColliderComponent> &colliders) {
+    return mirror(e, colliders.empty() ? std::nullopt : std::optional<ColliderList>(ColliderList{colliders}));
 }
 std::vector<ColliderComponent> read_colliders(flecs::entity e) {
     return e.has<ColliderList>() ? e.get<ColliderList>().items : std::vector<ColliderComponent>{};
@@ -225,11 +232,51 @@ struct BehaviorList {
     std::vector<BehaviorComponent> items;
     bool operator==(const BehaviorList &) const = default;
 };
-void mirror(flecs::entity e, const std::vector<BehaviorComponent> &behaviors) {
-    mirror(e, behaviors.empty() ? std::nullopt : std::optional<BehaviorList>(BehaviorList{behaviors}));
+bool mirror(flecs::entity e, const std::vector<BehaviorComponent> &behaviors) {
+    return mirror(e, behaviors.empty() ? std::nullopt : std::optional<BehaviorList>(BehaviorList{behaviors}));
 }
 std::vector<BehaviorComponent> read_behaviors(flecs::entity e) {
     return e.has<BehaviorList>() ? e.get<BehaviorList>().items : std::vector<BehaviorComponent>{};
+}
+Result<void> check_transform(const Transform &t) {
+    const double values[] = {t.position.x, t.position.y, t.position.z, t.rotation.x,
+                             t.rotation.y, t.rotation.z, t.rotation.w, t.scale.x,
+                             t.scale.y,    t.scale.z};
+    for (double v : values)
+        if (!std::isfinite(v))
+            return fail(ErrorCode::InvalidArgument, "Transform contains a non-finite value");
+    double norm = t.rotation.x * t.rotation.x + t.rotation.y * t.rotation.y +
+                  t.rotation.z * t.rotation.z + t.rotation.w * t.rotation.w;
+    if (std::abs(norm - 1) > 1e-6)
+        return fail(ErrorCode::InvalidArgument, "Quaternion must have unit length");
+    if (std::abs(t.scale.x) < 1e-8 || std::abs(t.scale.y) < 1e-8 || std::abs(t.scale.z) < 1e-8)
+        return fail(ErrorCode::InvalidArgument, "Scale must be invertible");
+    return {};
+}
+// What a scene requires of each entity on its own, in the order it is checked.
+Result<void> check_entity(const EntityRecord &e) {
+    if (e.name.empty() || e.name.size() > 256 ||
+        std::any_of(e.name.begin(), e.name.end(), [](unsigned char c) { return c < 32; }))
+        return fail(ErrorCode::InvalidArgument, "Names must contain 1..256 non-control bytes");
+    if (auto transform = check_transform(e.transform); !transform)
+        return transform.error();
+    return validate_components(e.components);
+}
+glm::dmat4 local_matrix(const Transform &t) {
+    return glm::translate(glm::dmat4(1), glm::dvec3(t.position.x, t.position.y, t.position.z)) *
+           glm::mat4_cast(glm::dquat(t.rotation.w, t.rotation.x, t.rotation.y, t.rotation.z)) *
+           glm::scale(glm::dmat4(1), glm::dvec3(t.scale.x, t.scale.y, t.scale.z));
+}
+// The world matrix of an entity: its local matrix alone at the root, else its parent's world times it.
+Result<WorldTransform> world_matrix(const WorldTransform *parent, const Transform &t) {
+    const auto local = local_matrix(t);
+    const auto world = parent ? glm::make_mat4(parent->matrix.data()) * local : local;
+    WorldTransform value;
+    std::copy_n(glm::value_ptr(world), 16, value.matrix.begin());
+    for (double v : value.matrix)
+        if (!std::isfinite(v))
+            return fail(ErrorCode::InvalidArgument, "World transform overflow");
+    return value;
 }
 Result<std::map<EntityId, WorldTransform>> matrices(const SceneSnapshot &s) {
     if (s.entities.size() > Scene::max_entities)
@@ -244,24 +291,8 @@ Result<std::map<EntityId, WorldTransform>> matrices(const SceneSnapshot &s) {
             return fail(ErrorCode::InvalidArgument,
                         "IDs must be sorted, unique, nonzero and below next_id");
         previous = e.id;
-        if (e.name.empty() || e.name.size() > 256 ||
-            std::any_of(e.name.begin(), e.name.end(), [](unsigned char c) { return c < 32; }))
-            return fail(ErrorCode::InvalidArgument, "Names must contain 1..256 non-control bytes");
-        const auto &t = e.transform;
-        const double values[] = {t.position.x, t.position.y, t.position.z, t.rotation.x,
-                                 t.rotation.y, t.rotation.z, t.rotation.w, t.scale.x,
-                                 t.scale.y,    t.scale.z};
-        for (double v : values)
-            if (!std::isfinite(v))
-                return fail(ErrorCode::InvalidArgument, "Transform contains a non-finite value");
-        double norm = t.rotation.x * t.rotation.x + t.rotation.y * t.rotation.y +
-                      t.rotation.z * t.rotation.z + t.rotation.w * t.rotation.w;
-        if (std::abs(norm - 1) > 1e-6)
-            return fail(ErrorCode::InvalidArgument, "Quaternion must have unit length");
-        if (std::abs(t.scale.x) < 1e-8 || std::abs(t.scale.y) < 1e-8 || std::abs(t.scale.z) < 1e-8)
-            return fail(ErrorCode::InvalidArgument, "Scale must be invertible");
-        if (auto components = validate_components(e.components); !components)
-            return components.error();
+        if (auto checked = check_entity(e); !checked)
+            return checked.error();
         records.emplace(e.id, &e);
         children[e.parent].push_back(e.id);
     }
@@ -272,18 +303,10 @@ Result<std::map<EntityId, WorldTransform>> matrices(const SceneSnapshot &s) {
     std::map<EntityId, WorldTransform> out;
     for (std::size_t i = 0; i < queue.size(); ++i) {
         const auto &e = *records.at(queue[i]);
-        const auto &t = e.transform;
-        auto local =
-            glm::translate(glm::dmat4(1), glm::dvec3(t.position.x, t.position.y, t.position.z)) *
-            glm::mat4_cast(glm::dquat(t.rotation.w, t.rotation.x, t.rotation.y, t.rotation.z)) *
-            glm::scale(glm::dmat4(1), glm::dvec3(t.scale.x, t.scale.y, t.scale.z));
-        auto world = e.parent ? glm::make_mat4(out.at(e.parent).matrix.data()) * local : local;
-        WorldTransform value;
-        std::copy_n(glm::value_ptr(world), 16, value.matrix.begin());
-        for (double v : value.matrix)
-            if (!std::isfinite(v))
-                return fail(ErrorCode::InvalidArgument, "World transform overflow");
-        out.emplace(e.id, value);
+        auto world = world_matrix(e.parent ? &out.at(e.parent) : nullptr, e.transform);
+        if (!world)
+            return world.error();
+        out.emplace(e.id, world.value());
         const auto it = children.find(e.id);
         if (it != children.end())
             queue.insert(queue.end(), it->second.begin(), it->second.end());
@@ -292,8 +315,13 @@ Result<std::map<EntityId, WorldTransform>> matrices(const SceneSnapshot &s) {
         return fail(ErrorCode::Cycle, "Transform hierarchy contains a cycle");
     return out;
 }
+// No two scenes, and no two structures of one scene, share a structure revision.
+std::uint64_t new_structure_revision() {
+    static std::atomic<std::uint64_t> next{1};
+    return next.fetch_add(1, std::memory_order_relaxed);
+}
 } // namespace
-Scene::Scene() {
+Scene::Scene() : structure_revision_(new_structure_revision()) {
     auto &w = world_.native();
     w.component<StableId>();
     w.component<Name>();
@@ -345,6 +373,130 @@ std::optional<WorldTransform> Scene::world_transform(EntityId id) const {
     if (it == entities_.end())
         return std::nullopt;
     return world_.native().entity(it->second).get<WorldTransform>();
+}
+std::optional<Transform> Scene::local_transform(EntityId id) const {
+    if (!on_owner_thread())
+        throw std::logic_error("Scene inspected from non-owner thread");
+    auto it = entities_.find(id);
+    if (it == entities_.end())
+        return std::nullopt;
+    return world_.native().entity(it->second).get<Transform>();
+}
+std::optional<EntityId> Scene::parent_of(EntityId id) const {
+    if (!on_owner_thread())
+        throw std::logic_error("Scene inspected from non-owner thread");
+    auto it = entities_.find(id);
+    if (it == entities_.end())
+        return std::nullopt;
+    return world_.native().entity(it->second).get<Parent>().value;
+}
+Result<std::vector<std::pair<flecs::entity_t, WorldTransform>>> Scene::moved_worlds(const std::map<EntityId, Transform> &moved) const {
+    const auto &w = world_.native();
+    const auto local_of = [&](EntityId id) -> const Transform & {
+        const auto found = moved.find(id);
+        return found != moved.end() ? found->second : w.entity(entities_.at(id)).get<Transform>();
+    };
+    std::vector<std::pair<flecs::entity_t, WorldTransform>> out;
+    for (const auto &[root, transform] : moved) {
+        (void)transform;
+        // Under another entity that moves, its subtree covers this one.
+        bool covered = false;
+        for (EntityId up = w.entity(entities_.at(root)).get<Parent>().value; up && !covered; up = w.entity(entities_.at(up)).get<Parent>().value)
+            covered = moved.contains(up);
+        if (covered)
+            continue;
+        // Breadth first from the root, each world from its parent's, as commit() computes them; the root's parent
+        // does not move, so its world stands.
+        const EntityId parent = w.entity(entities_.at(root)).get<Parent>().value;
+        const std::size_t first = out.size();
+        auto world = world_matrix(parent ? &w.entity(entities_.at(parent)).get<WorldTransform>() : nullptr, local_of(root));
+        if (!world)
+            return world.error();
+        out.emplace_back(entities_.at(root), world.value());
+        std::vector<std::pair<EntityId, std::size_t>> queue{{root, first}}; // An entity and where its world is in `out`.
+        for (std::size_t i = 0; i < queue.size(); ++i) {
+            const auto kids = children_.find(queue[i].first);
+            if (kids == children_.end())
+                continue;
+            for (const EntityId child : kids->second) {
+                auto below = world_matrix(&out[queue[i].second].second, local_of(child));
+                if (!below)
+                    return below.error();
+                queue.emplace_back(child, out.size());
+                out.emplace_back(entities_.at(child), below.value());
+            }
+        }
+    }
+    return out;
+}
+Result<void> Scene::commit_transforms(const std::map<EntityId, Transform> &moved) {
+    if (!on_owner_thread())
+        return fail(ErrorCode::WrongThread, "Scene mutation requires the owner thread");
+    for (const auto &[id, transform] : moved) {
+        if (!entities_.contains(id))
+            return fail(ErrorCode::NotFound, "Entity does not exist");
+        if (auto checked = check_transform(transform); !checked)
+            return checked.error();
+    }
+    auto worlds = moved_worlds(moved);
+    if (!worlds)
+        return worlds.error();
+    auto &w = world_.native();
+    for (const auto &[id, transform] : moved) {
+        auto e = w.entity(entities_.at(id));
+        if (e.get<Transform>() != transform)
+            e.set<Transform>(transform);
+    }
+    for (const auto &[native, world] : worlds.value()) {
+        auto e = w.entity(native);
+        if (!e.has<WorldTransform>() || e.get<WorldTransform>().matrix != world.matrix)
+            e.set<WorldTransform>(world);
+    }
+    return {};
+}
+Result<void> Scene::commit_in_place(const std::map<EntityId, EntityRecord> &changed) {
+    if (!on_owner_thread())
+        return fail(ErrorCode::WrongThread, "Scene mutation requires the owner thread");
+    auto &w = world_.native();
+    std::map<EntityId, Transform> moved;
+    for (const auto &[id, record] : changed) {
+        const auto it = entities_.find(id);
+        if (it == entities_.end() || record.id != id)
+            return fail(ErrorCode::NotFound, "Entity does not exist");
+        if (w.entity(it->second).get<Parent>().value != record.parent)
+            return fail(ErrorCode::InvalidState, "A change in place keeps the entity's parent");
+        if (auto checked = check_entity(record); !checked)
+            return checked.error();
+        if (w.entity(it->second).get<Transform>() != record.transform)
+            moved.emplace(id, record.transform);
+    }
+    auto worlds = moved_worlds(moved);
+    if (!worlds)
+        return worlds.error();
+    bool structural = false;
+    for (const auto &[id, record] : changed) {
+        auto e = w.entity(entities_.at(id));
+        if (e.get<Name>().value != record.name) {
+            e.set<Name>({record.name});
+            structural = true;
+        }
+        if (e.get<Transform>() != record.transform)
+            e.set<Transform>(record.transform);
+        const auto &c = record.components;
+        // Each one, whatever the others did.
+        const bool changes[] = {mirror(e, c.mesh), mirror(e, c.camera), mirror(e, c.light), mirror(e, c.body),
+                                mirror(e, c.colliders), mirror(e, c.environment), mirror(e, c.behaviors), mirror(e, c.emitter),
+                                mirror(e, c.animator), mirror(e, c.attach), mirror(e, c.ragdoll), mirror(e, c.script)};
+        structural = structural || std::find(std::begin(changes), std::end(changes), true) != std::end(changes);
+    }
+    for (const auto &[native, world] : worlds.value()) {
+        auto e = w.entity(native);
+        if (!e.has<WorldTransform>() || e.get<WorldTransform>().matrix != world.matrix)
+            e.set<WorldTransform>(world);
+    }
+    if (structural)
+        structure_revision_ = new_structure_revision();
+    return {};
 }
 Result<void> Scene::validate(const SceneSnapshot &s) {
     auto m = matrices(s);
@@ -407,6 +559,10 @@ Result<void> Scene::commit(const SceneSnapshot &s) {
             e.set<WorldTransform>(desired_transform);
     }
     next_id_ = std::max(next_id_, s.next_id);
+    children_.clear();
+    for (const auto &record : s.entities)
+        children_[record.parent].push_back(record.id);
+    structure_revision_ = new_structure_revision();
     return {};
 }
 } // namespace engine

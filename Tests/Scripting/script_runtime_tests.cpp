@@ -406,6 +406,43 @@ return M
 	ENGINE_CHECK(std::get<Color>(*tint) == (Color{0.5, 0.25, 1, 1}));
 }
 
+// Milestone 6, slice 6: Vec3, Color, Quat and Entity own nothing, so their values have no finalizer. Lua walks every
+// object that has one each cycle and frees it a cycle after it dies, and scripts make these by the thousand each
+// tick: 500 movers paused for 36 to 51 ms. Asset holds a name, so it keeps its finalizer.
+ENGINE_TEST(values_made_by_the_thousand_have_no_finalizer_and_are_freed)
+{
+	const Scripts scripts{{"/Game/Scripts/Churn", R"lua(local C = {}
+function C:start()
+	local function finalized(value) return rawget(getmetatable(value), "__gc") ~= nil end
+	self.plain = not (finalized(Vec3(1, 2, 3)) or finalized(Color(1, 1, 1)) or finalized(Quat.from_euler(0, 90, 0))
+		or finalized(Entity()) or finalized(Vec3(1, 0, 0) + Vec3(0, 1, 0)))
+	self.asset_finalized = finalized(Asset("/Game/Sounds/Creak"))
+	collectgarbage("collect")
+	self.before = collectgarbage("count")
+	local sum = Vec3(0, 0, 0)
+	for i = 1, 50000 do
+		sum = sum + Vec3(i, 0, 0) * 0.5
+		local c, q, e = Color(1, 1, 1), Quat.from_euler(0, i, 0), Entity()
+	end
+	self.sum = sum
+	collectgarbage("collect")
+	self.after = collectgarbage("count")
+end
+return C
+)lua"}};
+	ScriptRuntime runtime(memory_loader(scripts));
+	ENGINE_REQUIRE(runtime.attach(1, "/Game/Scripts/Churn"));
+	ENGINE_REQUIRE(runtime.call(1, "start"));
+	ENGINE_CHECK(runtime.take_errors().empty());
+	ENGINE_CHECK(bool_field(runtime, 1, "plain"));
+	ENGINE_CHECK(bool_field(runtime, 1, "asset_finalized"));
+	const auto sum = runtime.field(1, "sum");
+	ENGINE_REQUIRE(sum.has_value());
+	ENGINE_CHECK(std::get<Vector3>(*sum) == (Vector3{625012500, 0, 0})); // Half of 1 + ... + 50,000.
+	// About 20 MB of values made, and gone after one collection: less than 256 KB more than before.
+	ENGINE_CHECK(number_field(runtime, 1, "after") - number_field(runtime, 1, "before") < 256);
+}
+
 ENGINE_TEST(inspecting_a_script_runs_only_its_top_level_within_a_budget)
 {
 	const Scripts scripts{

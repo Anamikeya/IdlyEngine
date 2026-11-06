@@ -258,9 +258,19 @@ struct SceneSnapshot {
 class Scene final {
     ecs::World world_;
     std::map<EntityId, flecs::entity_t> entities_;
+    std::map<EntityId, std::vector<EntityId>> children_; // Ascending; rebuilt by commit(), kept by the in-place commits.
     EntityId next_id_ = 1;
+    std::uint64_t structure_revision_ = 0;
     friend class commands::CommandBus;
     Result<void> commit(const SceneSnapshot &);
+    // The command bus's paths for changes that keep every entity, ID and parent: names, transforms and components.
+    // Each checks the changed entities as validate() checks a scene, then the world transforms of their subtrees, and
+    // reads and writes nothing else, so its cost is that of what changed, not of the scene. The outcome is the same as
+    // commit() of the whole scene with those changes.
+    Result<void> commit_in_place(const std::map<EntityId, EntityRecord> &changed);
+    Result<void> commit_transforms(const std::map<EntityId, Transform> &moved);
+    // The world transforms of what moves, and of everything under it, with `moved` as their new local transforms.
+    Result<std::vector<std::pair<flecs::entity_t, WorldTransform>>> moved_worlds(const std::map<EntityId, Transform> &moved) const;
 
   public:
     static constexpr std::size_t max_entities = 100000;
@@ -276,6 +286,14 @@ class Scene final {
     std::optional<EntityRecord> inspect(EntityId) const;
     SceneSnapshot snapshot() const;
     std::optional<WorldTransform> world_transform(EntityId) const;
+    // An entity's local transform or parent, without copying the rest of it; nullopt when there is no such entity.
+    std::optional<Transform> local_transform(EntityId) const;
+    std::optional<EntityId> parent_of(EntityId) const;
+    // Changes when an entity is created, removed, renamed or reparented or a component changes, and not when only
+    // transforms do. No two scenes share a value, so a system mirroring components may skip its scan while it stands.
+    std::uint64_t structure_revision() const noexcept {
+        return structure_revision_;
+    }
     ecs::World &ecs() noexcept {
         return world_;
     } // Trusted engine systems only.

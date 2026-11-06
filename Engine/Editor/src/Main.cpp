@@ -194,29 +194,35 @@ struct PerformanceLog {
     std::size_t slow_frames = 0;
     std::vector<double> slow_at_s;
     // Where the slowest frame's time went: the loops since the frame before it, which may be several when Filament skips.
-    std::chrono::nanoseconds pending_update{0}, pending_build{0}, pending_render{0};
+    std::chrono::nanoseconds pending_update{0}, pending_build{0}, pending_render{0}, pending_scripts{0};
     float slowest = 0;
     double slowest_update_ms = 0, slowest_build_ms = 0, slowest_render_ms = 0;
+    // Each drawn frame's CPU time, every loop since the frame before it (update, UI and snapshot, render call), and the
+    // part of it scripts took.
+    std::vector<float> cpu_frame_ms, script_frame_ms;
     // Filament may skip a frame when the GPU is behind, so only frames it drew count. `update` is the session's update
-    // this loop (ticks, particles, animation), `build` the UI and the frame snapshot, `took` the render call.
-    void rendered(bool drawn, std::chrono::nanoseconds took, std::chrono::nanoseconds update, std::chrono::nanoseconds build,
-                  const renderer::RendererStats &stats, int body_count, std::size_t animators) {
+    // this loop (ticks, particles, animation), `scripts` the part of it running scripts, `build` the UI and the frame
+    // snapshot, `took` the render call.
+    void rendered(bool drawn, std::chrono::nanoseconds took, std::chrono::nanoseconds update, std::chrono::nanoseconds scripts,
+                  std::chrono::nanoseconds build, const renderer::RendererStats &stats, int body_count, std::size_t animators) {
         ++loops;
         update_ms_total += std::chrono::duration<double, std::milli>(update).count();
         build_ms_total += std::chrono::duration<double, std::milli>(build).count();
-        pending_update += update; pending_build += build; pending_render += took;
+        pending_update += update; pending_build += build; pending_render += took; pending_scripts += scripts;
         if (!drawn) return;
         const auto now = std::chrono::steady_clock::now();
         if (frames++ > 10) { // Skips start-up frames.
             const float frame = std::chrono::duration<float, std::milli>(now - last_drawn).count();
             frame_ms.push_back(frame);
+            cpu_frame_ms.push_back(std::chrono::duration<float, std::milli>(pending_update + pending_build + pending_render).count());
+            script_frame_ms.push_back(std::chrono::duration<float, std::milli>(pending_scripts).count());
             if (frame > 100 && ++slow_frames <= 16) slow_at_s.push_back(std::chrono::duration<double>(now - began).count());
             if (frame > slowest) {
                 const auto ms = [](std::chrono::nanoseconds t) { return std::chrono::duration<double, std::milli>(t).count(); };
                 slowest = frame; slowest_update_ms = ms(pending_update); slowest_build_ms = ms(pending_build); slowest_render_ms = ms(pending_render);
             }
         }
-        pending_update = pending_build = pending_render = std::chrono::nanoseconds{0};
+        pending_update = pending_build = pending_render = pending_scripts = std::chrono::nanoseconds{0};
         last_drawn = now;
         render_ms_total += std::chrono::duration<double, std::milli>(took).count();
         if (stats.gpu_frame_ms > 0) { gpu_ms_total += stats.gpu_frame_ms; ++gpu_samples; }
@@ -227,8 +233,17 @@ struct PerformanceLog {
         animators_peak = std::max(animators_peak, animators);
         last = stats; bodies = body_count;
     }
-    void write(const std::filesystem::path &path, const editor::SimulationTiming &timing) {
+    void write(const std::filesystem::path &path, const editor::SimulationTiming &timing, std::size_t script_instances) {
         std::ofstream out(path);
+        // Mean, p99 and max of a per-frame series, sorting it.
+        const auto spread = [](std::vector<float> &v) {
+            std::sort(v.begin(), v.end());
+            double sum = 0;
+            for (const float x : v) sum += x;
+            const auto at = [&](double p) { return v.empty() ? 0.f : v[std::min(std::size_t(p * double(v.size())), v.size() - 1)]; };
+            return std::array<double, 3>{v.empty() ? 0.0 : sum / double(v.size()), at(0.99), at(1.0)};
+        };
+        const auto cpu = spread(cpu_frame_ms), script = spread(script_frame_ms);
         std::sort(frame_ms.begin(), frame_ms.end());
         const auto percentile = [&](double p) { return frame_ms.empty() ? 0.f : frame_ms[std::min(std::size_t(p * double(frame_ms.size())), frame_ms.size() - 1)]; };
         const auto per_tick = [&](std::chrono::nanoseconds total) { return timing.ticks ? std::chrono::duration<double, std::milli>(total).count() / double(timing.ticks) : 0.0; };
@@ -246,9 +261,12 @@ struct PerformanceLog {
             << "\nslowest_frame_render_ms " << slowest_render_ms
             << "\nupdate_ms_mean " << (loops ? update_ms_total / double(loops) : 0.0) << "\nui_and_snapshot_ms_mean " << (loops ? build_ms_total / double(loops) : 0.0)
             << "\nrender_submit_ms_mean " << (frames ? render_ms_total / double(frames) : 0.0)
+            << "\ncpu_frame_ms_mean " << cpu[0] << "\ncpu_frame_ms_p99 " << cpu[1] << "\ncpu_frame_ms_max " << cpu[2]
             << "\ngpu_frame_ms_mean " << (gpu_samples ? gpu_ms_total / double(gpu_samples) : 0.0)
             << "\nticks " << timing.ticks << "\nphysics_step_ms_mean " << per_tick(timing.physics) << "\nphysics_step_ms_max " << ms(timing.physics_max)
             << "\ngameplay_tick_ms_mean " << per_tick(timing.gameplay)
+            << "\nscript_instances " << script_instances << "\nscript_tick_ms_mean " << per_tick(timing.scripts) << "\nscript_tick_ms_max " << ms(timing.scripts_max)
+            << "\nscript_frame_ms_mean " << script[0] << "\nscript_frame_ms_p99 " << script[1] << "\nscript_frame_ms_max " << script[2]
             << "\nanimation_tick_ms_mean " << per_tick(timing.animation) << "\nanimation_tick_ms_max " << ms(timing.animation_max)
             << "\nparticle_update_ms_mean " << (timing.effect_updates ? ms(timing.effects) / double(timing.effect_updates) : 0.0) << "\nparticle_update_ms_max " << ms(timing.effects_max)
             << "\nparticles_drawn_mean " << (frames ? particles_total / double(frames) : 0.0) << "\nparticles_drawn_peak " << particles_peak
@@ -368,8 +386,10 @@ int main(int argc, char **argv) {
             auto *game = session.game();
             if (game && game_input.captured) session.set_game_input(game_input.feed(host.window, *game));
             const auto update_start = std::chrono::steady_clock::now();
+            const auto scripts_before = session.timing().scripts;
             session.update(elapsed);
             const auto update_took = std::chrono::steady_clock::now() - update_start;
+            const auto scripts_took = session.timing().scripts - scripts_before;
             if (game) game->update_view();
             if (state_log.out.is_open()) state_log.write(session, ui.log_fields());
             if (const auto title = ui.title(); title != shown_title) { glfwSetWindowTitle(host.window, title.c_str()); shown_title = title; }
@@ -386,7 +406,7 @@ int main(int argc, char **argv) {
             const auto render_start = std::chrono::steady_clock::now();
             const bool drawn = ui.frame && renderer.render(*ui.frame, session.resources(), ImGui::GetDrawData(), width, height);
             if (drawn) { ++rendered; ui.frame_drawn(); }
-            performance.rendered(drawn, std::chrono::steady_clock::now() - render_start, update_took, render_start - build_start, renderer.stats(),
+            performance.rendered(drawn, std::chrono::steady_clock::now() - render_start, update_took, scripts_took, render_start - build_start, renderer.stats(),
                                  session.physics_bridge().diagnostics().world.body_count, session.animation().stats().animators);
             if (rendered == 1 && drawn && !perf_run_start) performance.startup = std::chrono::steady_clock::now() - program_start;
             if (!drawn && !smoke) std::this_thread::sleep_for(std::chrono::milliseconds(1)); // The GPU is behind: wait, do not spin.
@@ -500,7 +520,7 @@ int main(int argc, char **argv) {
         }
         game_input.release(host.window);
         if (!perf_log.empty()) {
-            performance.write(perf_log, session.timing());
+            performance.write(perf_log, session.timing(), session.script_instances().size());
             std::ofstream imports(perf_log, std::ios::app);
             for (const auto &[path, ms] : ui.import_times) imports << "import_ms " << ms << ' ' << path << '\n';
             int width = 0, height = 0;

@@ -1,5 +1,6 @@
 ﻿#include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <engine/core/Application.hpp>
 #include <functional>
 #include <iomanip>
@@ -122,6 +123,143 @@ void delete_restore_and_ids() {
     error(b.redo(owner, b.revision()), ErrorCode::InvalidState);
     error(b.execute(owner, b.revision(), CreateEntity{"Recycled", {}, 0, root}),
           ErrorCode::InvalidArgument);
+}
+// Milestone 6, slice 6: a batch that keeps every entity, ID and parent runs in place, reading, checking and committing
+// only what it names. The same batch with a SetParent to the same parent at its end takes the whole-scene path. Both
+// must give the same scene, world transforms to the bit, receipts, errors and undo history, with and without history;
+// and only a change of more than transforms moves the structure revision.
+void in_place_matches_whole_scene() {
+    for (const std::size_t history : {std::size_t{128}, std::size_t{0}}) {
+        Scene fast_scene, full_scene;
+        CommandBus fast(fast_scene, history), full(full_scene, history);
+        // Rotated and scaled roots, children, grandchildren and great-grandchildren.
+        std::vector<EntityId> ids;
+        const double h = std::sqrt(0.5);
+        for (int i = 0; i < 12; ++i) {
+            Transform t;
+            t.position = {double(i), 0.5 * i, -double(i)};
+            if (i % 3 == 1)
+                t.rotation = {0, h, 0, h};
+            if (i % 4 == 2)
+                t.scale = {2, 0.5, 1.5};
+            const EntityId parent = i >= 4 ? ids[std::size_t(i - 4)] : 0;
+            const std::string name = "Entity " + std::to_string(i);
+            const auto a = create(fast, name, parent, t), b = create(full, name, parent, t);
+            check(a == b, "Both scenes number their entities alike");
+            ids.push_back(a);
+        }
+        std::uint64_t seed = 42;
+        const auto random = [&] {
+            seed = seed * 6364136223846793005ull + 1442695040888963407ull;
+            return double(seed >> 11) / double(1ull << 53);
+        };
+        const auto somewhere = [&] {
+            Transform t;
+            t.position = {random() * 10 - 5, random() * 10 - 5, random() * 10 - 5};
+            const double x = random() - 0.5, y = random() - 0.5, z = random() - 0.5, w = random() - 0.5;
+            const double length = std::sqrt(x * x + y * y + z * z + w * w);
+            t.rotation = {x / length, y / length, z / length, w / length};
+            t.scale = {0.5 + random() * 1.5, 0.5 + random() * 1.5, 0.5 + random() * 1.5};
+            return t;
+        };
+        const auto same = [&](const char *what) {
+            check(fast_scene.snapshot() == full_scene.snapshot(), what);
+            for (const EntityId id : ids)
+                check(std::memcmp(fast_scene.world_transform(id)->matrix.data(), full_scene.world_transform(id)->matrix.data(),
+                                  sizeof(double) * 16) == 0,
+                      what);
+            check(fast.revision() == full.revision() && fast.undo_size() == full.undo_size() && fast.redo_size() == full.redo_size(), what);
+        };
+        const auto run = [&](std::vector<Command> batch, const char *what) {
+            auto whole = batch;
+            whole.push_back(SetParent{ids[5], *full_scene.parent_of(ids[5])});
+            const auto a = fast.execute(owner, fast.revision(), batch);
+            const auto b = full.execute(owner, full.revision(), whole);
+            check(bool(a) == bool(b), what);
+            if (a) {
+                check(a.value().revision == b.value().revision && a.value().changed_entities == b.value().changed_entities, what);
+            } else {
+                check(a.error().code == b.error().code && a.error().message == b.error().message, what);
+                // A command's own error names it; what the scene refuses names the last command.
+                check(a.error().operation == b.error().operation ||
+                          (a.error().operation == batch.size() - 1 && b.error().operation == whole.size() - 1),
+                      what);
+            }
+            same(what);
+            return bool(a);
+        };
+        // Moves of a whole chain at once (each under another that moves), of leaves, and of one entity twice.
+        const auto structure = fast_scene.structure_revision();
+        for (int round = 0; round < 20; ++round) {
+            std::vector<Command> moves;
+            for (const std::size_t i : {std::size_t(0), std::size_t(4), std::size_t(8), std::size_t(11), std::size_t(round % 12)})
+                moves.push_back(SetTransform{ids[i], somewhere()});
+            check(run(moves, "Moves give the same outcome in place"), "Moves are accepted");
+        }
+        check(fast_scene.structure_revision() == structure, "Moves alone keep the structure revision");
+        check(fast_scene.local_transform(ids[3]) == fast_scene.inspect(ids[3])->transform && fast_scene.parent_of(ids[7]) == ids[3],
+              "A local transform and parent read alone");
+        // Changing nothing: the same transform, and minus zero for zero, commit nothing and keep the revision.
+        const auto revision = fast.revision();
+        Transform zero = *fast_scene.local_transform(ids[2]);
+        run({SetTransform{ids[2], zero}}, "A move to where it is");
+        check(fast.revision() == revision, "A move to where it is keeps the revision");
+        Transform flat;
+        check(run({CreateEntity{"Flat", flat, 0, 0}}, "A new entity at the origin"), "A new entity at the origin");
+        ids.push_back(fast_scene.snapshot().entities.back().id);
+        flat.position.x = -0.0;
+        run({SetTransform{ids.back(), flat}}, "Minus zero for zero");
+        check(std::signbit(fast_scene.local_transform(ids.back())->position.x) == std::signbit(full_scene.local_transform(ids.back())->position.x),
+              "Minus zero kept alike");
+        // Names, components and moves together, in place: they change the structure revision.
+        MeshComponent red;
+        red.color = {1, 0, 0};
+        const auto before_rename = fast_scene.structure_revision();
+        check(run({RenameEntity{ids[6], "Renamed"}, SetMesh{ids[6], red}, SetTransform{ids[2], somewhere()}, SetMesh{ids[9], red}},
+                  "Names, components and moves in place"),
+              "Names, components and moves are accepted");
+        check(fast_scene.structure_revision() != before_rename, "A rename and components change the structure revision");
+        // Errors, each refused whole, in place as on the whole scene.
+        Transform bad = somewhere();
+        bad.position.y = std::numeric_limits<double>::quiet_NaN();
+        check(!run({SetTransform{ids[1], somewhere()}, SetTransform{ids[3], bad}}, "A position that is not a number"), "NaN refused");
+        bad = somewhere();
+        bad.scale.z = 0;
+        check(!run({SetTransform{ids[3], bad}}, "A scale of zero"), "Zero scale refused");
+        bad = somewhere();
+        bad.rotation.w += 0.01;
+        check(!run({SetTransform{ids[10], bad}}, "A rotation that is not of unit length"), "Long quaternion refused");
+        check(!run({SetTransform{ids[1], somewhere()}, SetTransform{9999, somewhere()}}, "An entity that is not there"), "Missing entity refused");
+        check(!run({RenameEntity{ids[1], "Fine"}, RenameEntity{ids[2], ""}}, "An empty name"), "Empty name refused");
+        MeshComponent glowing;
+        glowing.color = {2, 0, 0};
+        check(!run({SetMesh{ids[4], glowing}}, "A mesh color out of range"), "Bad mesh refused");
+        // A subtree whose world overflows only below what moved.
+        Transform huge;
+        huge.scale = {1e200, 1e200, 1e200};
+        check(!run({SetTransform{ids[0], huge}, SetTransform{ids[4], huge}}, "A world transform that overflows under what moved"),
+              "Overflow refused");
+        // Undo and redo, and moves gathered into one transaction.
+        if (history) {
+            ok(fast.begin_transaction("Drag"));
+            ok(full.begin_transaction("Drag"));
+            for (int i = 0; i < 3; ++i)
+                run({SetTransform{ids[7], somewhere()}}, "A drag in place");
+            ok(fast.end_transaction());
+            ok(full.end_transaction());
+            same("One step for the drag");
+            for (int i = 0; i < 4; ++i) {
+                ok(fast.undo(owner, fast.revision()));
+                ok(full.undo(owner, full.revision()));
+                same("Undo of a change in place");
+            }
+            ok(fast.redo(owner, fast.revision()));
+            ok(full.redo(owner, full.revision()));
+            same("Redo of a change in place");
+        } else {
+            error(fast.undo(owner, fast.revision()), ErrorCode::InvalidState);
+        }
+    }
 }
 void transform_validation() {
     Scene s;
@@ -1095,6 +1233,7 @@ int main() {
         {"rotation_composition", rotation_composition},
         {"delete_restore_and_ids", delete_restore_and_ids},
         {"transform_validation", transform_validation},
+        {"in_place_matches_whole_scene", in_place_matches_whole_scene},
         {"serialization_roundtrip", serialization_roundtrip},
         {"components", components},
         {"duplication", duplication},

@@ -199,18 +199,21 @@ std::vector<std::string> ScriptWorld::take_issues() { return std::exchange(issue
 
 void ScriptWorld::apply()
 {
-	std::vector<commands::Command> batch;
+	// The moves, which come every tick, apart from the removals: a transaction of moves alone is the bus's quickest.
+	std::vector<commands::Command> moves, removals;
+	moves.reserve(moved_.size());
 	for (const auto& [id, transform] : moved_)
-		if (scene_.native(id) && !destroyed_.contains(id)) batch.emplace_back(commands::SetTransform{id, transform});
+		if (scene_.native(id) && !destroyed_.contains(id)) moves.emplace_back(commands::SetTransform{id, transform});
 	for (const EntityId id : destroyed_)
-		if (scene_.native(id)) batch.emplace_back(commands::DeleteEntity{id});
+		if (scene_.native(id)) removals.emplace_back(commands::DeleteEntity{id});
 	moved_.clear();
 	destroyed_.clear();
-	for (std::size_t first = 0; first < batch.size(); first += commands::CommandBus::max_transaction) {
-		const std::size_t count = std::min(batch.size() - first, commands::CommandBus::max_transaction);
-		if (auto done = bus_.execute(script_context, bus_.revision(), std::span<const commands::Command>(batch.data() + first, count)); !done)
-			issues_.push_back("A script's change could not be made: " + done.error().message);
-	}
+	for (const auto* batch : {&moves, &removals})
+		for (std::size_t first = 0; first < batch->size(); first += commands::CommandBus::max_transaction) {
+			const std::size_t count = std::min(batch->size() - first, commands::CommandBus::max_transaction);
+			if (auto done = bus_.execute(script_context, bus_.revision(), std::span<const commands::Command>(batch->data() + first, count)); !done)
+				issues_.push_back("A script's change could not be made: " + done.error().message);
+		}
 }
 
 void ScriptWorld::forget_gone()
@@ -231,11 +234,17 @@ std::optional<EntityRecord> ScriptWorld::record(EntityId entity) const
 	return found;
 }
 
+Transform ScriptWorld::transform_of(EntityId entity) const
+{
+	if (const auto moved = moved_.find(entity); moved != moved_.end()) return moved->second;
+	return scene_.local_transform(entity).value();
+}
+
 std::array<double, 16> ScriptWorld::world_matrix(EntityId entity) const
 {
 	// Up the parents, with what scripts set and the scene has not seen yet.
-	Matrix world = trs(record(entity)->transform);
-	for (EntityId up = record(entity)->parent; up; up = record(up)->parent) world = multiply(trs(record(up)->transform), world);
+	Matrix world = trs(transform_of(entity));
+	for (EntityId up = parent(entity); up; up = parent(up)) world = multiply(trs(transform_of(up)), world);
 	return world;
 }
 
@@ -258,7 +267,7 @@ EntityId ScriptWorld::find(std::string_view name) const
 	return 0;
 }
 
-EntityId ScriptWorld::parent(EntityId entity) const { return record(entity)->parent; }
+EntityId ScriptWorld::parent(EntityId entity) const { return scene_.parent_of(entity).value(); }
 
 std::vector<EntityId> ScriptWorld::children(EntityId entity) const
 {
@@ -270,7 +279,7 @@ std::vector<EntityId> ScriptWorld::children(EntityId entity) const
 
 LocalTransform ScriptWorld::local(EntityId entity) const
 {
-	const auto& t = record(entity)->transform;
+	const Transform t = transform_of(entity);
 	return {from_scene(t.position), {t.rotation.x, t.rotation.y, t.rotation.z, t.rotation.w}, from_scene(t.scale)};
 }
 

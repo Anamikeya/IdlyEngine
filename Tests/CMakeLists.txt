@@ -57,6 +57,12 @@ if(TARGET engine::script_world)
 		LABELS scripting gameplay integration
 		SOURCES Scripting/script_world_tests.cpp
 		LIBRARIES engine::script_world)
+	# What scripts cost, without a window: a tool that prints times, not a test (Milestone 6, slice 6).
+	add_executable(script_benchmark Performance/script_benchmark.cpp)
+	target_link_libraries(script_benchmark PRIVATE engine::script_world)
+	gameengine_target_defaults(script_benchmark)
+	target_compile_definitions(script_benchmark PRIVATE "GAMEENGINE_SAMPLES_DIR=\"${CMAKE_SOURCE_DIR}/Samples\"")
+	set_target_properties(script_benchmark PROPERTIES FOLDER "Tests")
 endif()
 
 if(TARGET engine::effects)

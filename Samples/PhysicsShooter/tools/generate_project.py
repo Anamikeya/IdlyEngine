@@ -72,6 +72,7 @@ PICKUP_TIME = material("pickup_time", base=(0.2, 0.9, 1, 1), roughness=0.2, emis
 PICKUP_AMMO = material("pickup_ammo", base=(1, 0.9, 0.2, 1), roughness=0.2, emissive=(1, 0.85, 0.15), strength=2.5)
 GATE = material("vault_gate", base=(0.78, 0.56, 0.12, 1), metallic=0.6, roughness=0.4)
 BUTTON = material("vault_button", base=(0.15, 0.9, 0.35, 1), roughness=0.3, emissive=(0.15, 1, 0.35), strength=3)
+STRESS_MOVER = material("stress_mover", base=(0.35, 0.8, 1, 1), roughness=0.35, emissive=(0.2, 0.6, 1), strength=1.2)
 BOTTLE = "models/WaterBottle.glb"
 MANNEQUIN = "models/Mannequin.glb"
 SKY = "environments/sky_1k.hdr"
@@ -222,9 +223,10 @@ def crate(s, name, position, size=1.0, density=70):
     return id
 
 
-def physics_shooter(stress=False):
+def physics_shooter(stress=False, movers=0):
     """The sample's arena. With `stress`, the performance scene: ten enemies in view of the player and ten fountains that
-    keep 5,000 particles alive."""
+    keep 5,000 particles alive. With `movers`, the scripting performance scene: that many cubes above the arena, each
+    moved by Mover.lua."""
     s = Scene()
     rules = s.add("Game Rules")
     s.behavior(rules, "game_mode", time_limit=90)
@@ -424,7 +426,19 @@ def physics_shooter(stress=False):
     s.mesh(button, mat=BUTTON)
     s.script(button, SCRIPTS["Button"], points=300, time=20, message="+300  Vault, and 20 seconds", hint="Press E for the vault's prize",
              travel=(-0.08, 0, 0))
-    s.write(ROOT / ("stress_test.scene" if stress else "physics_shooter.scene"))
+    # The scripting performance scene (Milestone 6): a sheet of small cubes over the arena, in the player's view, 25 to
+    # a row a meter apart, each going up and down 2 m at its own speed, half of them starting at the top. Models only,
+    # with no bodies, so physics does not move them and their cost is the scripts' and the drawing's.
+    for i in range(movers):
+        column, row = i % 25, i // 25
+        x, z = -12 + column, -12 + row
+        low, high = (x, 5.5, z), (x, 7.5, z)
+        if (column + row) % 2:
+            low, high = high, low
+        mover = s.add(f"Script Mover {i + 1}", low, (0.3, 0.3, 0.3))
+        s.mesh(mover, mat=STRESS_MOVER)
+        s.script(mover, SCRIPTS["Mover"], a=low, b=high, speed=round(1 + (column * 7 + row * 3) % 10 * 0.2, 1))
+    s.write(ROOT / ("stress_test.scene" if stress else "script_stress.scene" if movers else "physics_shooter.scene"))
 
 
 def lighting_test():
@@ -458,5 +472,6 @@ def lighting_test():
 
 physics_shooter()
 physics_shooter(stress=True)
+physics_shooter(movers=500)
 lighting_test()
 print("Wrote the sample's scenes, materials and .meta files.")

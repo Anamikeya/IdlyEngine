@@ -260,6 +260,30 @@ struct ScriptRuntime::Impl {
 			[](const AssetRef& a) { return a.name.empty() ? std::string("Asset(none)") : "Asset(" + a.name + ")"; });
 		bind_rotations();
 		bind_world(entity);
+		// sol2 gives every type a finalizer, even one with nothing to destroy, and Lua keeps every object with a
+		// finalizer on a list it walks each cycle and frees each one a cycle later. Scripts make these values by the
+		// thousand each tick, so collecting them was slow and came in long pauses (36 to 51 ms with 500 movers). They
+		// own nothing, so they go without one.
+		without_finalizer<Vector3>();
+		without_finalizer<Color>();
+		without_finalizer<Quaternion>();
+		without_finalizer<EntityRef>();
+	}
+
+	// Takes the finalizer off the metatables of a type's values, so new ones are not marked for finalization.
+	template <class T>
+	void without_finalizer()
+	{
+		static_assert(std::is_trivially_destructible_v<T>, "a type that owns something needs its finalizer");
+		lua_State* L = lua.lua_state();
+		for (const std::string* name : {&sol::usertype_traits<T>::metatable(), &sol::usertype_traits<const T>::metatable()}) {
+			if (luaL_getmetatable(L, name->c_str()) == LUA_TTABLE) {
+				lua_pushliteral(L, "__gc");
+				lua_pushnil(L);
+				lua_rawset(L, -3);
+			}
+			lua_pop(L, 1);
+		}
 	}
 
 	// Quat: rotations, with Euler angles in degrees as Details shows them (glm's convention: x, then y, then z).
