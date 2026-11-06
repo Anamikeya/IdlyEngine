@@ -20,6 +20,9 @@ default, fatal with `GAMEENGINE_STRICT_DEPENDENCY_LOCK=ON`, which CI uses).
 | miniaudio | github.com/mackron/miniaudio | `9634bedb` | 0.11.25 | Public domain / MIT-0 | Not yet built |
 | spdlog | github.com/gabime/spdlog | `6d9805df` | v1.17.0-66 | MIT | Codex (headers) |
 | ozz-animation | github.com/guillaumeblanc/ozz-animation | `744eb9d9` | 0.17.0 | MIT | **Linked** as `gameengine::ozz` (runtime and offline libraries, `/MD`). Added 2026-11-03 for Milestone 5 |
+| Lua | github.com/lua/lua | `312b9efa` | v5.4.9 | MIT | **Built** as `gameengine::lua`, compiled as C++. Added 2026-11-06 for Milestone 6 |
+| sol2 | github.com/ThePhD/sol2 | `9190880c` | v3.5.0 | MIT | **Header-only** target `gameengine::sol2` on Lua. Added 2026-11-06 for Milestone 6 |
+| ImGuiColorTextEdit | github.com/goossens/ImGuiColorTextEdit | `12a5a01d` | development | MIT | **Built** as `gameengine::imgui_text_edit` (`TextEditor.cpp` only). Added 2026-11-06 for Milestone 6 |
 | Tracy | github.com/wolfpld/tracy | `1f4c5357` | v0.14.1-262 | BSD-3-Clause | Not yet built |
 | glTF-Transform | github.com/donmccurdy/glTF-Transform | `8e2a94a2` | v4.5.1-6 | MIT | JavaScript asset tooling, not a C++ dependency |
 | Ninja (source) | github.com/ninja-build/ninja | `3ccb2270` | development | Apache-2.0 | Not used; builds use an installed Ninja binary |
@@ -88,4 +91,39 @@ Read and built on 2026-11-03 at `744eb9d9` (release 0.17.0), approved by the use
 - Its CMake writes only under the binary dir. Its `BUILD_CLANG_FORMAT` target would reformat the read-only sources in
   place; it is not part of `all`, and must never be built.
 - Rotation keys are stored as three 16-bit components: a sampled pose is within about 0.5 mm per metre of exact.
+
+## Lua, sol2 and ImGuiColorTextEdit (added 2026-11-06)
+
+Read and built on 2026-11-06, approved by the user for Milestone 6 (scripting).
+
+**Lua 5.4.9** (`312b9efa`, tag `v5.4.9` of github.com/lua/lua, the Lua team's own repository). The final 5.4 release.
+- Checked against the release: `lua-5.4.9.tar.gz` from lua.org (373,429 bytes, SHA-256 `2335b6c5...6fb8e6`, as lua.org
+  lists it) was compared file by file with the tag: the 60 `.c` and `.h` files of its `src` that the tag also has are
+  identical. Only the release has `lua.hpp` and `luac.c`, which the engine does not use; only the repository has
+  `ltests.c`, `onelua.c` and the test suite.
+- Only the library is built (the 32 files listed in `cmake/GameEngineDependencies.cmake`), not `lua.c`, `onelua.c` or
+  `ltests.c`. The repository has no license file; the MIT license is at the end of `lua.h`.
+- **Compiled as C++** (`/TP`), so a Lua error is a C++ exception and unwinds engine frames, running their destructors,
+  instead of `longjmp`ing over them. A consequence: Lua's functions have C++ names, so code including `lua.h` must not
+  wrap it in `extern "C"`. sol2 is told with `SOL_USING_CXX_LUA`.
+- **Fixed string hash seed.** Lua normally mixes the time and addresses into it (`luai_makeseed` in `lstate.c`), so
+  `pairs` would visit a table in a different order in each run, and a script's run would not repeat.
+  `cmake/thirdparty/engine_lua_user.h`, included through `LUA_USER_H`, fixes it. A control build of Lua without that
+  header gave two states different orders on three runs out of three; with it, `scripting_tests` checks they match.
+  Scripts are the project's own code, so the hash flooding a random seed defends against does not arise.
+- Debug builds define `LUA_USE_APICHECK`, so a misuse of Lua's C API in a binding stops at once.
+- Built with MSVC 19.44 in C++20 at the compiler's default warning level, the library gives no warnings.
+
+**sol2 3.5.0** (`9190880c`, 2025-02-25). Header-only.
+- Documented for Lua 5.1 to 5.4 and LuaJIT. It has had no commits since March 2025.
+- `SOL_ALL_SAFETIES_ON`: arguments, types, userdata and numbers are checked on every call, in every build, as scripts
+  are the project's to get wrong. `SOL_PRINT_ERRORS=0`, as the safeties would otherwise write every error to
+  `std::cerr`. `SOL_EXCEPTIONS_ALWAYS_UNSAFE`: an exception from engine code bound to Lua is caught at the call and
+  becomes a Lua error with its message, which a script's `pcall` can catch.
+- Its users need `/bigobj` under MSVC; the target adds it.
+
+**ImGuiColorTextEdit** (`12a5a01d`, goossens' fork, a development commit). Maintained in 2026, made for Dear ImGui
+1.92.9 and 1.93.0; it builds against the engine's 1.93.1 WIP docking commit. It needs only ImGui and C++17. Only
+`TextEditor.cpp` is built: `TextDiff` (which needs the BSD-licensed `dtl.h`) and the extras (a language server bridge and
+autocomplete) stay out. It has Lua coloring built in, line markers and squiggles with tooltips, and its own undo.
 

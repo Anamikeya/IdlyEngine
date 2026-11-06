@@ -28,6 +28,11 @@ if(TARGET engine::gameplay)
 		SOURCES Gameplay/gameplay_tests.cpp
 		LIBRARIES engine::gameplay)
 	target_compile_definitions(gameplay_tests PRIVATE "GAMEENGINE_SAMPLES_DIR=\"${CMAKE_SOURCE_DIR}/Samples\"")
+	# Milestone 6: the sample's scripted behaviors against the C++ ones, and its scripted vault.
+	if(TARGET engine::script_world)
+		target_sources(gameplay_tests PRIVATE Gameplay/scripted_behavior_tests.cpp)
+		target_link_libraries(gameplay_tests PRIVATE engine::script_world)
+	endif()
 endif()
 
 # ozz-animation as the engine builds it, and Engine/Animation on it.
@@ -37,6 +42,27 @@ if(TARGET engine::animation)
 		SOURCES Animation/ozz_smoke_tests.cpp Animation/animation_tests.cpp
 		LIBRARIES gameengine::ozz engine::animation)
 	target_compile_definitions(animation_tests PRIVATE "GAMEENGINE_TEST_RESOURCES_DIR=\"${GAMEENGINE_RESOURCES_DIR}\"")
+endif()
+
+# Lua and sol2 as the engine builds them, and Engine/Scripting on them.
+if(TARGET engine::scripting)
+	gameengine_add_test_executable(scripting_tests
+		LABELS scripting unit
+		SOURCES Scripting/lua_smoke_tests.cpp Scripting/script_runtime_tests.cpp
+		LIBRARIES gameengine::sol2 engine::scripting)
+endif()
+# Scripts in a running world: the real scene, Box3D and game.
+if(TARGET engine::script_world)
+	gameengine_add_test_executable(script_world_tests
+		LABELS scripting gameplay integration
+		SOURCES Scripting/script_world_tests.cpp
+		LIBRARIES engine::script_world)
+	# What scripts cost, without a window: a tool that prints times, not a test (Milestone 6, slice 6).
+	add_executable(script_benchmark Performance/script_benchmark.cpp)
+	target_link_libraries(script_benchmark PRIVATE engine::script_world)
+	gameengine_target_defaults(script_benchmark)
+	target_compile_definitions(script_benchmark PRIVATE "GAMEENGINE_SAMPLES_DIR=\"${CMAKE_SOURCE_DIR}/Samples\"")
+	set_target_properties(script_benchmark PROPERTIES FOLDER "Tests")
 endif()
 
 if(TARGET engine::effects)
@@ -99,6 +125,10 @@ if(TARGET engine_editor_session)
 		LABELS editor assets unit
 		SOURCES Editor/editor_asset_path_tests.cpp
 		LIBRARIES engine_editor_session)
+	gameengine_add_test_executable(editor_script_tests
+		LABELS editor scripting unit
+		SOURCES Editor/editor_script_tests.cpp
+		LIBRARIES engine_editor_session)
 	gameengine_add_test_executable(editor_shooter_tests
 		LABELS editor gameplay unit
 		SOURCES Editor/editor_shooter_tests.cpp
@@ -141,5 +171,5 @@ if(TARGET gameengine::imgui)
 	gameengine_add_test_executable(editor_dependency_smoke
 		LABELS editor smoke
 		SOURCES Editor/editor_dependency_smoke.cpp
-		LIBRARIES gameengine_imgui_null)
+		LIBRARIES gameengine_imgui_null gameengine::imgui_text_edit)
 endif()

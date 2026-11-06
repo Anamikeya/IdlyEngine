@@ -41,6 +41,8 @@ void EditorUI::open_link(const LogLink &link) {
         registry.run("Viewport.FocusSelected");
     } else if (link.kind == LogLink::Kind::Asset) {
         reveal_asset(assets::AssetId{link.id});
+    } else if (link.kind == LogLink::Kind::Script) {
+        open_script(assets::AssetId{link.id}, link.line);
     }
 }
 void EditorUI::draw_log_entry(const LogEntry &entry, int index, const char *where) {

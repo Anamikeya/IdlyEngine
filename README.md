@@ -5,7 +5,7 @@ the **Physics Shooter**, made entirely from data on top of the engine's reusable
 
 ![The Physics Shooter running inside the editor](docs/evidence/m4/02_arena_playing.jpg)
 
-**Status:** Windows x64 with MSVC is the built and tested platform. Linux GCC has a preset but is not verified. 555 CTest entries
+**Status:** Windows x64 with MSVC is the built and tested platform. Linux GCC has a preset but is not verified. 603 CTest entries
 pass, along with GPU smoke tests and scripted runs that use real mouse and keyboard input. Hosted CI is set up in
 `.github/workflows/ci.yml` and runs for the first time with this repository.
 
@@ -100,6 +100,8 @@ between them.
 | GLM | MIT | Math |
 | spdlog | MIT | Logging |
 | ozz-animation | MIT | Skeletal animation (Milestone 5) |
+| Lua 5.4 and sol2 | MIT | Scripts (Milestone 6) |
+| ImGuiColorTextEdit (goossens' fork) | MIT | The Script Editor (Milestone 6) |
 | GameNetworkingSockets | BSD-style | Networking backend, headers only for now |
 
 The full list, with commits, is in [`docs/build/dependencies.md`](docs/build/dependencies.md).
@@ -216,15 +218,17 @@ Open **Project... > Open Physics Shooter Sample**, or start the editor with `--s
 | LMB | Fire |
 | `Space` / `Shift` | Jump / sprint |
 | `R` | Reload, or restart once the game has ended |
+| `E` | Interact: what a script makes of it, such as pressing a button |
 | `Esc` | Free the mouse and pause. Press it again to stop |
 
 Shots push what they hit. Crates topple, a row of dominoes can knock over the last target, glass breaks, and a crate that lands in the
 green zone scores points. Static targets stay put, kinematic ones follow a path, and dynamic ones can also be destroyed by a hard fall.
-A shot enemy flinches, and a killed one falls as a ragdoll, pushed the way the shot went. **Stop** puts the scene back exactly as it
-was.
+A shot enemy flinches, and a killed one falls as a ragdoll, pushed the way the shot went. Beside the start, a vault through the west
+wall stays shut until the pillar's target and the nearest enemy have fallen; inside, `E` at the green button gives 300 points and 20
+seconds. The vault's gate and button are Lua scripts. **Stop** puts the scene back exactly as it was.
 
-Everything specific to the shooter is data in [`Samples/PhysicsShooter`](Samples/PhysicsShooter): the scenes, materials and a
-generator script. Its textures, HDR sky and model are CC0, listed in
+Everything specific to the shooter is data in [`Samples/PhysicsShooter`](Samples/PhysicsShooter): the scenes, materials, scripts and
+a generator script. Its textures, HDR sky and model are CC0, listed in
 [`ASSET_LICENSES.md`](Samples/PhysicsShooter/ASSET_LICENSES.md). The sample opens from the source tree, so to experiment, copy the
 folder and open the copy with `--project <copy> --scene <copy>\physics_shooter.scene`.
 
@@ -236,7 +240,7 @@ folder and open the copy with `--project <copy> --scene <copy>\physics_shooter.s
 ./cmake/scripts/dev-shell.ps1 ctest --preset windows-msvc-debug -L smoke     # headless smoke tests
 ```
 
-There are **555 CTest entries**, covering physics and ragdolls, the scene bridge, animation, particles, gameplay, assets and package names, networking,
+There are **603 CTest entries**, covering physics and ragdolls, the scene bridge, animation, particles, Lua scripting, gameplay, assets and package names, networking,
 online services, the core, the renderer snapshot and the editor. The editor tests run without a window: the commands, the viewport camera, the panels, the workflow
 and the feedback. Each test case runs in its own process. The test framework in `Tests/Framework` has no third-party dependencies.
 
@@ -249,7 +253,8 @@ powershell -ExecutionPolicy Bypass -File Tests/RealInput/editor_ux_phase5.ps1 -E
 
 They wait for the desktop to be idle and stop if the editor loses focus, so don't use the PC while they run. A run that stops exits
 with code 2 and proves nothing either way. `Tests/Performance/milestone5_performance.ps1` measures the Release editor playing the
-sample and a stress scene; it sends no input, but also waits for an idle desktop.
+sample and a stress scene, and `milestone6_performance.ps1` what 500 scripts cost; they send no input, but also wait for an idle
+desktop.
 
 Details are in [`docs/testing/README.md`](docs/testing/README.md). Results and screenshots from every milestone and phase are in
 [`docs/evidence`](docs/evidence).

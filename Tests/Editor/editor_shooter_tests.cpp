@@ -270,3 +270,72 @@ ENGINE_TEST(stress_scene_has_ten_walking_enemies_and_five_thousand_particles)
 	ENGINE_CHECK(timing.effect_updates >= 180 && timing.effects.count() > 0);
 	play.stop_and_check_the_editor_scene();
 }
+
+// Milestone 6, slice 5: the vault's scripts run in Play through the project's asset database, as in the editor. Its
+// gate opens once the west wing's targets have fallen; inside, E at the button gives its prize. Stop leaves nothing.
+ENGINE_TEST(sample_vault_scripts_run_in_play_and_stop_leaves_the_scene_as_it_was)
+{
+	Shooter play;
+	auto& s = play.s;
+	const EntityId gate = play.find("Vault Gate"), button = play.find("Vault Button");
+	ENGINE_REQUIRE(gate != 0 && button != 0);
+	ENGINE_CHECK(s.script_instances() == (std::vector<EntityId>{gate, button}));
+	const Vec3 closed = play.position(gate);
+	play.ticks(30);
+	ENGINE_CHECK(play.position(gate) == closed);
+	for (const char* name : {"Static Target 3", "Enemy 1"}) play.game->damage(play.find(name), 1000, {});
+	play.ticks(150);
+	ENGINE_CHECK_NEAR(play.position(gate).z, closed.z + 3, 1e-9);
+	ENGINE_CHECK(s.script_field(gate, "opened") == std::optional<scripting::Value>(scripting::Value{true}));
+	// In the vault, E at the button.
+	const Vec3 at = play.position(button);
+	play.stand({at.x + 1.5, 1.0, at.z});
+	play.ticks(5);
+	gameplay::InputFrame press;
+	press.held[std::size_t(gameplay::Action::Interact)] = press.pressed[std::size_t(gameplay::Action::Interact)] = true;
+	(void)play.frame();
+	s.set_game_input(press);
+	s.update(EditorSession::fixed_step);
+	const auto hud = play.game->hud();
+	ENGINE_CHECK_EQ(hud.score, 200 + 100 + 300); // The two targets, then the prize.
+	ENGINE_CHECK(hud.last_event == "+300  Vault, and 20 seconds");
+	ENGINE_CHECK(s.script_errors_since_play() == 0);
+	ENGINE_CHECK(s.take_script_errors().empty());
+	play.stop_and_check_the_editor_scene();
+}
+
+// Milestone 6, slice 6: the scripting performance scene holds what its numbers claim. 500 cubes, each moved by the
+// sample's Mover.lua at its own speed, run beside the vault's two scripts, and the session times scripts apart.
+ENGINE_TEST(script_stress_scene_moves_its_500_cubes_by_script_and_times_the_scripts)
+{
+	Shooter play("script_stress.scene");
+	auto& s = play.s;
+	std::vector<EntityId> movers;
+	std::vector<Vec3> starts;
+	for (int i = 1; i <= 500; ++i) {
+		movers.push_back(play.find("Script Mover " + std::to_string(i)));
+		ENGINE_REQUIRE(movers.back() != 0);
+		starts.push_back(play.position(movers.back()));
+	}
+	ENGINE_CHECK_EQ(play.find("Script Mover 501"), EntityId{0});
+	ENGINE_CHECK_EQ(s.script_instances().size(), std::size_t{502});
+	play.ticks(60);
+	// One second: the first, at 1 m/s from the bottom, is 1 m up; the second, at 2.4 m/s from the top, went down its
+	// 2 m and back up 0.4 m.
+	ENGINE_CHECK_NEAR(play.position(movers[0]).y, 6.5, 1e-6);
+	ENGINE_CHECK_NEAR(play.position(movers[1]).y, 5.9, 1e-6);
+	// At 1 to 2.8 m/s on a 2 m path, every one is at least a meter from where it started, and only up or down.
+	for (std::size_t i = 0; i < movers.size(); ++i) {
+		const Vec3 now = play.position(movers[i]);
+		ENGINE_CHECK(std::abs(now.y - starts[i].y) > 0.99);
+		ENGINE_CHECK(now.y >= 5.5 - 1e-9 && now.y <= 7.5 + 1e-9);
+		ENGINE_CHECK(now.x == starts[i].x && now.z == starts[i].z);
+	}
+	ENGINE_CHECK(s.script_errors_since_play() == 0);
+	ENGINE_CHECK(s.game_issues().empty());
+	const auto& timing = s.timing();
+	ENGINE_CHECK(timing.ticks >= 60);
+	ENGINE_CHECK(timing.scripts.count() > 0 && timing.scripts_max.count() > 0);
+	ENGINE_CHECK(timing.scripts_max <= timing.scripts);
+	play.stop_and_check_the_editor_scene();
+}

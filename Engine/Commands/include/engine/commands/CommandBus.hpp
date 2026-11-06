@@ -53,7 +53,8 @@ struct SetLight {
 };
 // Copies the entity and its whole subtree, components included, under the same parent. Copies get new
 // stable IDs in breadth-first order (Receipt::created, the copy of `id` first). An empty name keeps the
-// original name for the copied root; descendants always keep theirs.
+// original name for the copied root; descendants always keep theirs. Script properties naming an entity of the
+// subtree name its copy; those naming anything else are kept.
 struct DuplicateEntity {
     EntityId id;
     std::string name;
@@ -92,10 +93,14 @@ struct SetRagdoll {
     EntityId id;
     std::optional<RagdollComponent> ragdoll;
 };
+struct SetScript {
+    EntityId id;
+    std::optional<ScriptComponent> script;
+};
 using Command = std::variant<CreateEntity, DeleteEntity, RenameEntity, SetTransform, SetParent,
                              ReplaceScene, SetMesh, SetCamera, SetLight, DuplicateEntity,
                              SetRigidBody, SetColliders, SetEnvironment, SetBehaviors, SetParticleEmitter,
-                             SetAnimator, SetAttachToBone, SetRagdoll>;
+                             SetAnimator, SetAttachToBone, SetRagdoll, SetScript>;
 struct CommandDescriptor {
     std::string_view name;
     Capability permission;
@@ -129,6 +134,13 @@ class CommandBus final {
     static void merge(History &into, std::vector<Delta> deltas);
     Result<void> authorize(const Context &, Capability) const;
     Result<Receipt> replay(const Context &, std::uint64_t, bool undo);
+    // A batch that keeps every entity, ID and parent runs in place: only what it names is read, checked and
+    // committed, so it costs what it changes rather than what the scene holds. The outcome is the whole-scene path's.
+    // Moves alone (SetTransform) copy no record unless the bus keeps history.
+    Result<Receipt> execute_in_place(std::span<const Command>, std::string_view name);
+    Result<Receipt> execute_moves(std::span<const Command>, std::string_view name);
+    // A committed change: the next revision, and the step for undo.
+    Receipt finish(History history, Receipt receipt, std::size_t changed);
 
   public:
     explicit CommandBus(Scene &scene, std::size_t history_limit = 128);

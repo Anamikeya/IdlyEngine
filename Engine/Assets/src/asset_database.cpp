@@ -395,7 +395,7 @@ Result<std::size_t> AssetDatabase::scan()
 		meta.path = std::move(path.value());
 		meta.type = asset_type_for(meta.path);
 		if (meta.type == AssetType::Unknown) {
-			issues.push_back({meta.path, "unsupported format (supported: .glb, .obj, .png, .jpg, .jpeg, .tga, .ppm, .material, .effect, .hdr)"});
+			issues.push_back({meta.path, "unsupported format (supported: .glb, .obj, .png, .jpg, .jpeg, .tga, .ppm, .material, .effect, .lua, .hdr)"});
 			continue;
 		}
 		meta.source_bytes = it->file_size(ec);
@@ -675,6 +675,11 @@ Result<AssetId> AssetDatabase::create_effect(std::string_view path, const Effect
 	return impl_->create_text(*this, path, AssetType::Effect, "effect", ".effect", write_effect(effect));
 }
 
+Result<AssetId> AssetDatabase::create_script(std::string_view path, std::string_view text)
+{
+	return impl_->create_text(*this, path, AssetType::Script, "script", ".lua", std::string(text));
+}
+
 Result<void> AssetDatabase::save_effect(AssetId id, const EffectData& effect)
 {
 	const auto it = impl_->by_id.find(id);
@@ -743,7 +748,7 @@ Result<AssetId> AssetDatabase::import_source(const fs::path& source, const Prepa
 		const std::string extension = utf8(source.extension());
 		return fail(ErrorCode::InvalidArgument, "unsupported file type '" + extension + "'" +
 			(lowercase(extension) == ".gltf" ? " (re-export the model as a self-contained .glb)" : "") +
-			"; supported: .glb, .obj, .png, .jpg, .jpeg, .tga, .ppm, .material, .effect, .hdr");
+			"; supported: .glb, .obj, .png, .jpg, .jpeg, .tga, .ppm, .material, .effect, .lua, .hdr");
 	}
 	const auto load = [&](AssetId id) -> Result<void> {
 		if (prepared && prepared->type == type) {
@@ -769,6 +774,8 @@ Result<AssetId> AssetDatabase::import_source(const fs::path& source, const Prepa
 			return done(load_effect(id));
 		case AssetType::Environment:
 			return done(load_environment(id));
+		case AssetType::Script:
+			return Result<void>{}; // Text the scripting runtime reads itself.
 		default:
 			return done(load_texture(id));
 		}
@@ -867,6 +874,8 @@ std::vector<AssetIssue> AssetDatabase::validate_all()
 		case AssetType::Environment:
 			check(impl_->import_environment(meta));
 			break;
+		case AssetType::Script:
+			break; // Compiled by the scripting runtime, which reports its errors.
 		default:
 			check(impl_->import_texture(meta));
 			break;
@@ -1005,6 +1014,8 @@ Result<PreparedImport> prepare_import(const fs::path& source, const ImportLimits
 		prepared.environment = std::make_shared<const EnvironmentData>(std::move(environment.value()));
 		break;
 	}
+	case AssetType::Script:
+		break; // Copied as it is: nothing to decode.
 	default: {
 		auto texture = has_extension(name, ".ppm")   ? import_ppm(bytes, {}, limits)
 			: has_extension(name, ".tga") ? import_tga(bytes, {}, limits)

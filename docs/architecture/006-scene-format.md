@@ -1,15 +1,15 @@
 # Scene file format
 
 Implemented in `Engine/Scene/src/Serialization.cpp` (`write_scene`, `read_scene`). The writer always emits the
-current version, `engine::scene_format_version` (7). The reader accepts versions 1 to 7.
+current version, `engine::scene_format_version` (8). The reader accepts versions 1 to 8.
 
-## Version 7
+## Version 8
 
 Line-based UTF-8 text, tokens separated by whitespace, numbers in the classic C locale. Doubles are written with
 `max_digits10`, so a save/load round trip is exact.
 
 ```
-ENGINE_SCENE 7 <next_id> <entity_count>
+ENGINE_SCENE 8 <next_id> <entity_count>
 ENTITY <id> <parent> "<name>" <px> <py> <pz> <qx> <qy> <qz> <qw> <sx> <sy> <sz>
 ...                                    (exactly entity_count ENTITY lines)
 COMPONENTS <component_count>
@@ -19,10 +19,10 @@ COMPONENTS <component_count>
 - `next_id`: the next stable entity ID the scene will allocate. IDs are never recycled.
 - `ENTITY`: stable ID, parent ID (0 = root), quoted name (`\"` and `\\` escapes, at most 256 bytes, no control
   characters), local translation, rotation quaternion (x, y, z, w) and scale.
-- `COMPONENTS`: at most one `MESH`, `CAMERA`, `LIGHT`, `BODY`, `ENVIRONMENT`, `EMITTER`, `ANIMATOR`, `ATTACH` and `RAGDOLL` per
-  entity, and up to 64 `COLLIDER`, 64 `MATSLOT`, 16 `BEHAVIOR` and 256 `RAGBONE` records per entity. The writer sorts them by
+- `COMPONENTS`: at most one `MESH`, `CAMERA`, `LIGHT`, `BODY`, `ENVIRONMENT`, `EMITTER`, `ANIMATOR`, `ATTACH`, `RAGDOLL` and `SCRIPT`
+  per entity, and up to 64 `COLLIDER`, 64 `MATSLOT`, 16 `BEHAVIOR` and 256 `RAGBONE` records per entity. The writer sorts them by
   entity, then `MESH` with its `MATSLOT`s, `CAMERA`, `LIGHT`, `BODY`, `COLLIDER`, `ENVIRONMENT`, `BEHAVIOR`, `EMITTER`, `ANIMATOR`,
-  `ATTACH`, `RAGDOLL` with its `RAGBONE`s; the reader accepts any order, keeping colliders, behaviors and ragdoll bones in file
+  `ATTACH`, `RAGDOLL` with its `RAGBONE`s, `SCRIPT`; the reader accepts any order, keeping colliders, behaviors and ragdoll bones in file
   order and slots sorted, except that a `RAGBONE` must come after its entity's `RAGDOLL`.
 
 ### Component records
@@ -44,6 +44,7 @@ Colors are sRGB in [0, 1], as picked in the editor. Renderers convert them to li
 | `ATTACH <entity> "<bone>"` | joint name quoted, 1 to 256 bytes | Draws the entity, and what is under it, on that joint of its parent's model: its transform is then relative to the joint. A joint the parent's model does not have leaves it on the parent. Physics and gameplay see the plain parent transform |
 | `RAGDOLL <entity> <trigger> <density> <swing> <twist> <friction>` | `trigger`: `0` on death, `1` on demand, `2` never; density in [1, 100000] kg/m³; swing in [0, 180] and twist in [0, 178] degrees; friction in [0, 10] | Turns the entity's skinned model into jointed bodies that fall from its pose. The bodies are generated from the skeleton when it falls and live in the run's physics, never in a scene: a capsule per long enough bone, sized from the skin, and ball joints that let each bone swing up to `swing` from its rest direction and turn up to `twist` about itself. `friction` is how much the joints resist turning, as a fraction of each part's own weight |
 | `RAGBONE <entity> "<bone>" <body> <radius> <density> <swing> <twist>` | joint name quoted, 1 to 256 bytes, each at most once per entity; `body`: `0` as generated, `1` a body of its own, `2` none; radius in [0, 100] m, `0` sized from the skin; density in [0, 100000], `0` the ragdoll's; swing `-1` or [0, 180], twist `-1` or [0, 178], `-1` the ragdoll's | Settings for one bone of the entity's `RAGDOLL`, over what is generated for it. With `body` none the bone has neither a body nor a capsule and only follows its parent |
+| `SCRIPT <entity> <script> <count> [<name> <type> <value>]...` | `script`: asset reference to a `.lua` file, or `-`; at most 64 values, each name 1 to 64 letters, digits or `_` not starting with a digit, at most once; `type` and value: `n` a finite number, `b` `0` or `1`, `t` quoted text of at most 4096 bytes without control characters, `v` three finite numbers, `c` four in [0, 1] (an sRGB color with linear alpha), `e` an entity ID (`0` none), `a` an asset reference | Runs a Lua script on the entity in Play and Simulate (Milestone 6). The values are those that differ from the defaults the script declares; the others come from the script, so changing a default there reaches every entity that kept it. A value for a property the script no longer declares is kept, so nothing is lost by renaming one. An entity value may name an entity that no longer exists; duplicating a subtree points the values naming its entities at their copies |
 
 An asset reference is `-` (none), or the 16 hex digit asset ID followed by the quoted path inside the project's
 `Assets` folder (at most 1024 bytes, no control characters): `MESH 1 cube 1 1 1 0.65 0 6a1f0c3e9b2d4a01 "models/helmet.glb" - - 1 1`.
@@ -59,7 +60,7 @@ exists, only scene lights are used.
 Example:
 
 ```
-ENGINE_SCENE 7 5 4
+ENGINE_SCENE 8 5 4
 ENTITY 1 0 "Ball" 0 0.5 0 0 0 0 1 1 1 1
 ENTITY 2 0 "Sun" 0 4 0 0 0 0 1 1 1 1
 ENTITY 3 0 "Camera" 0 1.5 6 0 0 0 1 1 1 1
@@ -142,6 +143,7 @@ reference or `-` for a soft round dot. `max_particles` is 1 to 20000.
 
 ## Earlier versions
 
+- **Version 7** (Milestone 5): no `SCRIPT` record.
 - **Version 6** (Milestone 4): no `EMITTER`, `ANIMATOR`, `ATTACH`, `RAGDOLL` or `RAGBONE` record.
 - **Version 5** (Milestone 3 slice S5): `MESH` has no material or UV scale, `LIGHT` no cones or shadows, `BODY` no rotation
   lock, `COLLIDER` no filter; `MATSLOT`, `ENVIRONMENT`, `BEHAVIOR` and the `spot` type are rejected.
@@ -171,5 +173,5 @@ Loading is all-or-nothing: a file that fails any check leaves the open scene unt
   scene it could not save.
 
 Tests: `Engine/Core/tests/CoreTests.cpp` (`serialization_roundtrip`, `components`, `malformed_serialization`,
-`bounded_parser_and_stream_flags`, `physics_components`, `asset_references`) and the editor's `persistence`,
+`bounded_parser_and_stream_flags`, `physics_components`, `asset_references`, `format_v6` to `format_v8_scripts`) and the editor's `persistence`,
 `documents`, `components_and_rendering`, `physics_play`, `asset_workflow` and `acceptance_workflow` groups.

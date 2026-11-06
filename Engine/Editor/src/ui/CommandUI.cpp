@@ -198,6 +198,7 @@ void EditorUI::bind_commands() {
     bind("Asset.Assign", [this, selected_asset_meta] {
         const auto meta = selected_asset_meta();
         if (meta->type == assets::AssetType::Effect) report(session.assign_effect(session.selection(), selected_asset), "Effect assigned to the selected entity");
+        else if (meta->type == assets::AssetType::Script) report(session.assign_script(session.selection(), selected_asset), "Script assigned to the selected entity");
         else report(meta->type == assets::AssetType::Material ? session.assign_material(session.selection(), selected_asset) : session.assign_asset(session.selection(), selected_asset), "Asset assigned to the selected entity");
     }, [this, selected_asset_meta] { const auto meta = selected_asset_meta(); return meta && session.selection() && meta->type != assets::AssetType::Environment; });
     bind("Asset.AddToScene", [this] { report(session.place_asset(selected_asset), "Added to the scene"); }, [selected_asset_meta] {
@@ -206,8 +207,14 @@ void EditorUI::bind_commands() {
     });
     bind("Asset.Edit", [this, selected_asset_meta] {
         if (selected_asset_meta()->type == assets::AssetType::Effect) { show_effect = true; ImGui::SetWindowFocus("Effect Editor"); }
+        else if (selected_asset_meta()->type == assets::AssetType::Script) open_script(selected_asset);
         else { show_material = true; ImGui::SetWindowFocus("Material Editor"); }
-    }, [selected_asset_meta] { const auto meta = selected_asset_meta(); return meta && (meta->type == assets::AssetType::Material || meta->type == assets::AssetType::Effect); });
+    }, [selected_asset_meta] {
+        const auto meta = selected_asset_meta();
+        return meta && (meta->type == assets::AssetType::Material || meta->type == assets::AssetType::Effect || meta->type == assets::AssetType::Script);
+    });
+    bind("Script.Save", [this] { save_open_script(); }, [this] { return script_edit.text != nullptr; });
+    bind("Script.OpenExternal", [this] { open_script_externally(); }, [this] { return !script_edit.id.is_null(); });
     bind("Asset.Reload", [this] {
         report(session.reload_asset(selected_asset), "Asset re-imported from disk");
         thumbnails.erase(selected_asset);
@@ -369,6 +376,7 @@ void EditorUI::bind_commands() {
     panel("Window.Lighting", show_lighting);
     panel("Window.MaterialEditor", show_material);
     panel("Window.EffectEditor", show_effect);
+    panel("Window.ScriptEditor", show_script);
     bind("Window.Animation", [this] { show_animation = !show_animation; focus_animation = show_animation; }, {}, [this] { return show_animation; });
     panel("Window.AssetBrowser", show_assets);
     panel("Window.Console", show_console);
@@ -376,7 +384,7 @@ void EditorUI::bind_commands() {
     bind("Window.SaveLayout", [this] { layout_prompt = true; }, [this] { return !config_folder.empty(); });
     bind("Window.ResetLayout", [this] {
         show_toolbar = show_hierarchy = show_inspector = show_lighting = show_material = show_assets = show_console = show_message_log = show_effect = true;
-        show_animation = false;
+        show_animation = show_script = false;
         layout_reset_requested = true;
     });
 }
@@ -402,7 +410,8 @@ void EditorUI::route_shortcuts(bool rebinding_at_frame_start) {
     if (panels != saved_panels) save_settings();
     const auto &io = ImGui::GetIO();
     InputBlock block;
-    block.text_input = io.WantTextInput;
+    // The Script Editor's text area types without telling ImGui so: its keys are the text's, not the editor's.
+    block.text_input = io.WantTextInput || script_edit.focused;
     block.modal = popup_before_frame || ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel);
     block.captured = game_input.captured;
     // A field being typed in is active too, but that is `text_input`, not a drag.
@@ -708,7 +717,7 @@ void EditorUI::load_settings() {
     session.view_flags.animations = settings.flag("view.animations", session.view_flags.animations);
     session.view_flags.bones = settings.flag("view.bones", session.view_flags.bones);
     session.view_flags.ragdolls = settings.flag("view.ragdolls", session.view_flags.ragdolls);
-    constexpr const char *panel_keys[] = {"toolbar", "hierarchy", "inspector", "lighting", "material", "assets", "console", "message_log", "effect", "animation"};
+    constexpr const char *panel_keys[] = {"toolbar", "hierarchy", "inspector", "lighting", "material", "assets", "console", "message_log", "effect", "animation", "script"};
     const auto flags = panel_flags();
     for (std::size_t i = 0; i < flags.size(); ++i) *flags[i] = settings.flag(std::string("panel.") + panel_keys[i], *flags[i]);
     saved_panels.clear();
@@ -750,7 +759,7 @@ void EditorUI::save_settings() {
     settings.set("view.animations", session.view_flags.animations);
     settings.set("view.bones", session.view_flags.bones);
     settings.set("view.ragdolls", session.view_flags.ragdolls);
-    constexpr const char *panel_keys[] = {"toolbar", "hierarchy", "inspector", "lighting", "material", "assets", "console", "message_log", "effect", "animation"};
+    constexpr const char *panel_keys[] = {"toolbar", "hierarchy", "inspector", "lighting", "material", "assets", "console", "message_log", "effect", "animation", "script"};
     const auto flags = panel_flags();
     saved_panels.clear();
     for (std::size_t i = 0; i < flags.size(); ++i) {
@@ -786,7 +795,26 @@ std::string EditorUI::log_fields() const {
            " primary_scale=" + primary_scale + " primary_rot=" + primary_rot +
            " gizmo_typed=" + (gizmo_entry.active() ? gizmo_entry.text() : std::string("-")) + " tooltip=" + tooltip_for_log(shown_tooltip) +
            " thumbnails=" + std::to_string(std::ranges::count_if(thumbnails, [this](const auto &entry) { return renderer.thumbnail(entry.first.value).texture != 0; })) +
-           " selected_asset=" + assets::to_string(selected_asset) + effect_fields() + animation_fields() + ragdoll_fields();
+           " selected_asset=" + assets::to_string(selected_asset) + effect_fields() + animation_fields() + ragdoll_fields() + script_fields();
+}
+// The Script Editor and running scripts for real-input runs (Milestone 6).
+std::string EditorUI::script_fields() const {
+    const auto &e = script_edit;
+    const std::string open = e.text ? session.package_name_of(e.id) : std::string("-");
+    const auto problems = script_problems.find(open);
+    std::string primary_script = "-", primary_pos = "-";
+    if (const auto record = session.scene().inspect(session.selection())) {
+        const auto &p = record->transform.position;
+        char text[96];
+        std::snprintf(text, sizeof text, "%.4f,%.4f,%.4f", p.x, p.y, p.z);
+        primary_pos = text;
+        if (record->components.script && !record->components.script->script.empty()) primary_script = session.package_name_of(assets::AssetId{record->components.script->script.id});
+    }
+    return " script_open=" + open + " script_unsaved=" + std::to_string(script_unsaved() ? 1 : 0) + " script_problem_line=" + std::to_string(e.problem_line) +
+           " script_focused=" + std::to_string(e.focused ? 1 : 0) + " script_cursor=" + std::to_string(e.text ? e.text->GetMainCursorPosition().line + 1 : 0) +
+           " script_lines=" + std::to_string(e.text ? e.text->GetLineCount() : 0) + " script_problems=" + std::to_string(problems == script_problems.end() ? 0 : problems->second.size()) +
+           " script_instances=" + std::to_string(session.script_instances().size()) + " script_panel=" + std::to_string(show_script ? 1 : 0) +
+           " primary_script=" + primary_script + " primary_pos=" + primary_pos;
 }
 // Ragdolls and debris for real-input runs: the selected entity's Ragdoll and plan, what lies as a ragdoll, how high the
 // selected skeleton reaches, and the pieces of debris.
@@ -945,7 +973,7 @@ void EditorUI::cheat_sheet_overlay() {
     }
     ImGui::End();
 }
-std::array<bool *, 10> EditorUI::panel_flags() { return {&show_toolbar, &show_hierarchy, &show_inspector, &show_lighting, &show_material, &show_assets, &show_console, &show_message_log, &show_effect, &show_animation}; }
+std::array<bool *, 11> EditorUI::panel_flags() { return {&show_toolbar, &show_hierarchy, &show_inspector, &show_lighting, &show_material, &show_assets, &show_console, &show_message_log, &show_effect, &show_animation, &show_script}; }
 void EditorUI::layout_dialog() {
     if (std::exchange(layout_prompt, false)) ImGui::OpenPopup("Save layout");
     if (!ImGui::BeginPopupModal("Save layout", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) return;

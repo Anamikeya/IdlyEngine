@@ -1,5 +1,6 @@
 ﻿#include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <engine/core/Application.hpp>
 #include <functional>
 #include <iomanip>
@@ -42,8 +43,9 @@ void creation_and_flecs() {
         ++count;
     });
     check(count == 1, "Entity not stored in Flecs");
-    check(registry().size() == 18, "Registry incomplete");
+    check(registry().size() == 19, "Registry incomplete");
     check(describe(Command{DeleteEntity{id}}).name == "entity.delete", "Typed registry mismatch");
+    check(describe(Command{SetScript{id, std::nullopt}}).name == "component.script.set", "Typed registry mismatch for scripts");
 }
 void permissions_and_revision() {
     Scene s;
@@ -121,6 +123,143 @@ void delete_restore_and_ids() {
     error(b.redo(owner, b.revision()), ErrorCode::InvalidState);
     error(b.execute(owner, b.revision(), CreateEntity{"Recycled", {}, 0, root}),
           ErrorCode::InvalidArgument);
+}
+// Milestone 6, slice 6: a batch that keeps every entity, ID and parent runs in place, reading, checking and committing
+// only what it names. The same batch with a SetParent to the same parent at its end takes the whole-scene path. Both
+// must give the same scene, world transforms to the bit, receipts, errors and undo history, with and without history;
+// and only a change of more than transforms moves the structure revision.
+void in_place_matches_whole_scene() {
+    for (const std::size_t history : {std::size_t{128}, std::size_t{0}}) {
+        Scene fast_scene, full_scene;
+        CommandBus fast(fast_scene, history), full(full_scene, history);
+        // Rotated and scaled roots, children, grandchildren and great-grandchildren.
+        std::vector<EntityId> ids;
+        const double h = std::sqrt(0.5);
+        for (int i = 0; i < 12; ++i) {
+            Transform t;
+            t.position = {double(i), 0.5 * i, -double(i)};
+            if (i % 3 == 1)
+                t.rotation = {0, h, 0, h};
+            if (i % 4 == 2)
+                t.scale = {2, 0.5, 1.5};
+            const EntityId parent = i >= 4 ? ids[std::size_t(i - 4)] : 0;
+            const std::string name = "Entity " + std::to_string(i);
+            const auto a = create(fast, name, parent, t), b = create(full, name, parent, t);
+            check(a == b, "Both scenes number their entities alike");
+            ids.push_back(a);
+        }
+        std::uint64_t seed = 42;
+        const auto random = [&] {
+            seed = seed * 6364136223846793005ull + 1442695040888963407ull;
+            return double(seed >> 11) / double(1ull << 53);
+        };
+        const auto somewhere = [&] {
+            Transform t;
+            t.position = {random() * 10 - 5, random() * 10 - 5, random() * 10 - 5};
+            const double x = random() - 0.5, y = random() - 0.5, z = random() - 0.5, w = random() - 0.5;
+            const double length = std::sqrt(x * x + y * y + z * z + w * w);
+            t.rotation = {x / length, y / length, z / length, w / length};
+            t.scale = {0.5 + random() * 1.5, 0.5 + random() * 1.5, 0.5 + random() * 1.5};
+            return t;
+        };
+        const auto same = [&](const char *what) {
+            check(fast_scene.snapshot() == full_scene.snapshot(), what);
+            for (const EntityId id : ids)
+                check(std::memcmp(fast_scene.world_transform(id)->matrix.data(), full_scene.world_transform(id)->matrix.data(),
+                                  sizeof(double) * 16) == 0,
+                      what);
+            check(fast.revision() == full.revision() && fast.undo_size() == full.undo_size() && fast.redo_size() == full.redo_size(), what);
+        };
+        const auto run = [&](std::vector<Command> batch, const char *what) {
+            auto whole = batch;
+            whole.push_back(SetParent{ids[5], *full_scene.parent_of(ids[5])});
+            const auto a = fast.execute(owner, fast.revision(), batch);
+            const auto b = full.execute(owner, full.revision(), whole);
+            check(bool(a) == bool(b), what);
+            if (a) {
+                check(a.value().revision == b.value().revision && a.value().changed_entities == b.value().changed_entities, what);
+            } else {
+                check(a.error().code == b.error().code && a.error().message == b.error().message, what);
+                // A command's own error names it; what the scene refuses names the last command.
+                check(a.error().operation == b.error().operation ||
+                          (a.error().operation == batch.size() - 1 && b.error().operation == whole.size() - 1),
+                      what);
+            }
+            same(what);
+            return bool(a);
+        };
+        // Moves of a whole chain at once (each under another that moves), of leaves, and of one entity twice.
+        const auto structure = fast_scene.structure_revision();
+        for (int round = 0; round < 20; ++round) {
+            std::vector<Command> moves;
+            for (const std::size_t i : {std::size_t(0), std::size_t(4), std::size_t(8), std::size_t(11), std::size_t(round % 12)})
+                moves.push_back(SetTransform{ids[i], somewhere()});
+            check(run(moves, "Moves give the same outcome in place"), "Moves are accepted");
+        }
+        check(fast_scene.structure_revision() == structure, "Moves alone keep the structure revision");
+        check(fast_scene.local_transform(ids[3]) == fast_scene.inspect(ids[3])->transform && fast_scene.parent_of(ids[7]) == ids[3],
+              "A local transform and parent read alone");
+        // Changing nothing: the same transform, and minus zero for zero, commit nothing and keep the revision.
+        const auto revision = fast.revision();
+        Transform zero = *fast_scene.local_transform(ids[2]);
+        run({SetTransform{ids[2], zero}}, "A move to where it is");
+        check(fast.revision() == revision, "A move to where it is keeps the revision");
+        Transform flat;
+        check(run({CreateEntity{"Flat", flat, 0, 0}}, "A new entity at the origin"), "A new entity at the origin");
+        ids.push_back(fast_scene.snapshot().entities.back().id);
+        flat.position.x = -0.0;
+        run({SetTransform{ids.back(), flat}}, "Minus zero for zero");
+        check(std::signbit(fast_scene.local_transform(ids.back())->position.x) == std::signbit(full_scene.local_transform(ids.back())->position.x),
+              "Minus zero kept alike");
+        // Names, components and moves together, in place: they change the structure revision.
+        MeshComponent red;
+        red.color = {1, 0, 0};
+        const auto before_rename = fast_scene.structure_revision();
+        check(run({RenameEntity{ids[6], "Renamed"}, SetMesh{ids[6], red}, SetTransform{ids[2], somewhere()}, SetMesh{ids[9], red}},
+                  "Names, components and moves in place"),
+              "Names, components and moves are accepted");
+        check(fast_scene.structure_revision() != before_rename, "A rename and components change the structure revision");
+        // Errors, each refused whole, in place as on the whole scene.
+        Transform bad = somewhere();
+        bad.position.y = std::numeric_limits<double>::quiet_NaN();
+        check(!run({SetTransform{ids[1], somewhere()}, SetTransform{ids[3], bad}}, "A position that is not a number"), "NaN refused");
+        bad = somewhere();
+        bad.scale.z = 0;
+        check(!run({SetTransform{ids[3], bad}}, "A scale of zero"), "Zero scale refused");
+        bad = somewhere();
+        bad.rotation.w += 0.01;
+        check(!run({SetTransform{ids[10], bad}}, "A rotation that is not of unit length"), "Long quaternion refused");
+        check(!run({SetTransform{ids[1], somewhere()}, SetTransform{9999, somewhere()}}, "An entity that is not there"), "Missing entity refused");
+        check(!run({RenameEntity{ids[1], "Fine"}, RenameEntity{ids[2], ""}}, "An empty name"), "Empty name refused");
+        MeshComponent glowing;
+        glowing.color = {2, 0, 0};
+        check(!run({SetMesh{ids[4], glowing}}, "A mesh color out of range"), "Bad mesh refused");
+        // A subtree whose world overflows only below what moved.
+        Transform huge;
+        huge.scale = {1e200, 1e200, 1e200};
+        check(!run({SetTransform{ids[0], huge}, SetTransform{ids[4], huge}}, "A world transform that overflows under what moved"),
+              "Overflow refused");
+        // Undo and redo, and moves gathered into one transaction.
+        if (history) {
+            ok(fast.begin_transaction("Drag"));
+            ok(full.begin_transaction("Drag"));
+            for (int i = 0; i < 3; ++i)
+                run({SetTransform{ids[7], somewhere()}}, "A drag in place");
+            ok(fast.end_transaction());
+            ok(full.end_transaction());
+            same("One step for the drag");
+            for (int i = 0; i < 4; ++i) {
+                ok(fast.undo(owner, fast.revision()));
+                ok(full.undo(owner, full.revision()));
+                same("Undo of a change in place");
+            }
+            ok(fast.redo(owner, fast.revision()));
+            ok(full.redo(owner, full.revision()));
+            same("Redo of a change in place");
+        } else {
+            error(fast.undo(owner, fast.revision()), ErrorCode::InvalidState);
+        }
+    }
 }
 void transform_validation() {
     Scene s;
@@ -225,7 +364,7 @@ void physics_components() {
     check(parsed.value().entities[0].components.colliders.size() == 2 && parsed.value().entities[0].components.body,
           "Several colliders and one body per entity");
     // The example in docs/architecture/006-scene-format.md, verbatim: it loads and is what the writer emits.
-    const std::string documented = "ENGINE_SCENE 7 5 4\n"
+    const std::string documented = "ENGINE_SCENE 8 5 4\n"
                                    "ENTITY 1 0 \"Ball\" 0 0.5 0 0 0 0 1 1 1 1\n"
                                    "ENTITY 2 0 \"Sun\" 0 4 0 0 0 0 1 1 1 1\n"
                                    "ENTITY 3 0 \"Camera\" 0 1.5 6 0 0 0 1 1 1 1\n"
@@ -456,7 +595,7 @@ void format_v6() {
     std::ostringstream out;
     ok(write_scene(out, scene.snapshot()));
     const std::string text = out.str();
-    for (const char *expected : {"ENGINE_SCENE 7 ", "MATSLOT 1 3 0000000000000002 \"materials/two.material\"\n",
+    for (const char *expected : {"ENGINE_SCENE 8 ", "MATSLOT 1 3 0000000000000002 \"materials/two.material\"\n",
                                  "LIGHT 1 spot 1 1 1 100000 10 10 20 1\n", " 1 0 1\n", "ENVIRONMENT 1 image 0000000000000009 \"environments/sky.hdr\" ",
                                  " 7.5 pbr_neutral high 60 1 0\n", "BEHAVIOR 1 health 2 max 50 regen 0.25\n", "BEHAVIOR 1 target 0\n", " 0 0 4 3\n"})
         check(text.find(expected) != std::string::npos, expected);
@@ -553,7 +692,7 @@ void malformed_serialization() {
     for (const auto *text :
          {"WRONG 1 1 0", "ENGINE_SCENE 2 1 0", "ENGINE_SCENE 1 0 0", "ENGINE_SCENE 1 1 100001",
           "ENGINE_SCENE 1 1 0 trailing", "ENGINE_SCENE 1 2 1 ENTITY 1 0 \"x\" 0 0",
-          "ENGINE_SCENE 0 1 0", "ENGINE_SCENE 8 1 0 COMPONENTS 0", "ENGINE_SCENE 2 1 0 COMPONENTS",
+          "ENGINE_SCENE 0 1 0", "ENGINE_SCENE 9 1 0 COMPONENTS 0", "ENGINE_SCENE 2 1 0 COMPONENTS",
           "ENGINE_SCENE 2 1 0 COMPONENTS -1", "ENGINE_SCENE 2 1 0 COMPONENTS 1 MESH 1",
           "ENGINE_SCENE 2 1 0 COMPONENTS 0 trailing", "ENGINE_SCENE 1 1 0 COMPONENTS 0"}) {
         std::istringstream in(text);
@@ -981,6 +1120,104 @@ void format_v7_ragdoll() {
     }
 }
 
+// Version 8: one SCRIPT per entity, with the property values that differ from the script's defaults (Milestone 6).
+void format_v8_scripts() {
+    Scene scene;
+    CommandBus b(scene);
+    Components gate;
+    gate.script = ScriptComponent{{0x00000000000000ef, "scripts/gate \"main\".lua"},
+                                  {{"speed", 2.5},
+                                   {"locked", true},
+                                   {"message", std::string("Say \"open\" \\ now")},
+                                   {"offset", Vec3{0, 1.5, -2}},
+                                   {"tint", ScriptColor{1, 0.5, 0, 0.25}},
+                                   {"trigger", EntityLink{1}},
+                                   {"sound", AssetRef{0x12, "sounds/creak.wav"}}}};
+    auto made = b.execute(owner, 0, CreateEntity{"Gate", {}, 0, 0, gate});
+    ok(made);
+    const auto id = made.value().created.front();
+    check(scene.inspect(id)->components == gate, "The script and its values are stored");
+    std::ostringstream out;
+    ok(write_scene(out, scene.snapshot()));
+    const std::string text = out.str();
+    check(text.rfind("ENGINE_SCENE 8 ", 0) == 0, text.c_str());
+    check(text.find(R"(SCRIPT 1 00000000000000ef "scripts/gate \"main\".lua" 7 speed n 2.5 locked b 1 message t "Say \"open\" \\ now" )"
+                    R"(offset v 0 1.5 -2 tint c 1 0.5 0 0.25 trigger e 1 sound a 0000000000000012 "sounds/creak.wav")" "\n") != std::string::npos,
+          text.c_str());
+    std::istringstream in(text);
+    auto parsed = read_scene(in);
+    ok(parsed);
+    check(parsed.value() == scene.snapshot(), "Scripts round trip");
+    std::ostringstream again;
+    ok(write_scene(again, parsed.value()));
+    check(again.str() == text, "Format 8 writes the same text twice");
+    // Changed and removed through its command, with undo.
+    auto changed = gate.script;
+    changed->properties.resize(1);
+    ok(b.execute(owner, b.revision(), SetScript{id, changed}));
+    check(scene.inspect(id)->components.script == changed, "The script command changes it");
+    ok(b.execute(owner, b.revision(), SetScript{id, std::nullopt}));
+    check(!scene.inspect(id)->components.script, "An empty script command removes it");
+    ok(b.undo(owner, b.revision()));
+    check(scene.inspect(id)->components.script == changed, "Undo restores it");
+    // Duplicating a subtree points its own links at the copies and leaves the others alone.
+    const auto door = b.execute(owner, b.revision(), CreateEntity{"Door", {}, 0, 0, {}});
+    ok(door);
+    const auto door_id = door.value().created.front();
+    Components lever;
+    lever.script = ScriptComponent{{0x00000000000000ef, "scripts/gate \"main\".lua"}, {{"opens", EntityLink{door_id}}, {"gate", EntityLink{id}}}};
+    const auto made_lever = b.execute(owner, b.revision(), CreateEntity{"Lever", {}, door_id, 0, lever});
+    ok(made_lever);
+    const auto copied = b.execute(owner, b.revision(), DuplicateEntity{door_id, ""});
+    ok(copied);
+    check(copied.value().created.size() == 2, "The door and its lever are copied");
+    const auto lever_copy = scene.inspect(copied.value().created[1]);
+    check(lever_copy && lever_copy->components.script, "The lever's copy has the script");
+    check(std::get<EntityLink>(lever_copy->components.script->find("opens")->value).id == copied.value().created[0],
+          "A link inside the copied subtree names the copy");
+    check(std::get<EntityLink>(lever_copy->components.script->find("gate")->value).id == id, "A link outside it is kept");
+    check(std::get<EntityLink>(scene.inspect(made_lever.value().created.front())->components.script->find("opens")->value).id == door_id,
+          "The original is untouched");
+    // Invalid values are refused by the command and by the reader.
+    const auto refused = [&](auto change) {
+        auto bad = *gate.script;
+        change(bad);
+        Components c;
+        c.script = bad;
+        check(!b.execute(owner, b.revision(), CreateEntity{"Bad", {}, 0, 0, c}), "An invalid script component was accepted");
+    };
+    refused([](ScriptComponent &s) { s.properties.front().name = "2fast"; });
+    refused([](ScriptComponent &s) { s.properties.front().name = "two words"; });
+    refused([](ScriptComponent &s) { s.properties.push_back(s.properties.front()); });
+    refused([](ScriptComponent &s) { s.properties.front().value = std::numeric_limits<double>::infinity(); });
+    refused([](ScriptComponent &s) { s.properties.front().value = ScriptColor{1.5, 0, 0, 1}; });
+    refused([](ScriptComponent &s) { s.properties.front().value = std::string("two\nlines"); });
+    refused([](ScriptComponent &s) { s.properties.front().value = std::string(max_script_text_bytes + 1, 'x'); });
+    refused([](ScriptComponent &s) { s.properties.front().value = Vec3{0, std::nan(""), 0}; });
+    refused([](ScriptComponent &s) { s.properties.front().value = AssetRef{0, "orphan.lua"}; });
+    refused([](ScriptComponent &s) { s.script = AssetRef{0, "orphan.lua"}; });
+    refused([](ScriptComponent &s) {
+        s.properties.clear();
+        for (std::size_t i = 0; i <= max_script_properties; ++i) s.properties.push_back({"p" + std::to_string(i), 1.0});
+    });
+    const std::string head = " 2 1 ENTITY 1 0 \"A\" 0 0 0 0 0 0 1 1 1 1 COMPONENTS ";
+    for (const std::string bad : {"ENGINE_SCENE 7" + head + "1 SCRIPT 1 - 0",
+                                  "ENGINE_SCENE 8" + head + "2 SCRIPT 1 - 0 SCRIPT 1 - 0",
+                                  "ENGINE_SCENE 8" + head + "1 SCRIPT 1 - 1 speed x 1",
+                                  "ENGINE_SCENE 8" + head + "1 SCRIPT 1 - 1 locked b 2",
+                                  "ENGINE_SCENE 8" + head + "1 SCRIPT 1 - 2 speed n 1",
+                                  "ENGINE_SCENE 8" + head + "1 SCRIPT 1 - 1 tint c 1 1 1",
+                                  "ENGINE_SCENE 8" + head + "1 SCRIPT 1 - 1 note t unquoted",
+                                  "ENGINE_SCENE 8" + head + "1 SCRIPT 1 - 65"}) {
+        std::istringstream rejected(bad);
+        check(!read_scene(rejected), bad.c_str());
+    }
+    std::istringstream empty("ENGINE_SCENE 8" + head + "1 SCRIPT 1 - 0");
+    auto plain = read_scene(empty);
+    ok(plain);
+    check(plain.value().entities[0].components.script == ScriptComponent{}, "A script component without a script is allowed");
+}
+
 } // namespace
 int main() {
     const std::pair<const char *, std::function<void()>> tests[] = {
@@ -989,12 +1226,14 @@ int main() {
         {"format_v7", format_v7},
         {"format_v7_animation", format_v7_animation},
         {"format_v7_ragdoll", format_v7_ragdoll},
+        {"format_v8_scripts", format_v8_scripts},
         {"permissions_and_revision", permissions_and_revision},
         {"atomic_batch", atomic_batch},
         {"hierarchy_and_cycles", hierarchy_and_cycles},
         {"rotation_composition", rotation_composition},
         {"delete_restore_and_ids", delete_restore_and_ids},
         {"transform_validation", transform_validation},
+        {"in_place_matches_whole_scene", in_place_matches_whole_scene},
         {"serialization_roundtrip", serialization_roundtrip},
         {"components", components},
         {"duplication", duplication},

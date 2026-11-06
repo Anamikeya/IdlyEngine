@@ -70,6 +70,9 @@ GLASS = material("glass", base=(0.75, 0.9, 1, 0.14), roughness=0.08, alpha="blen
 BONUS = material("bonus_zone", base=(0.25, 0.95, 0.4, 0.16), roughness=0.6, emissive=(0.1, 0.8, 0.25), strength=0.25, alpha="blend", double_sided=1)
 PICKUP_TIME = material("pickup_time", base=(0.2, 0.9, 1, 1), roughness=0.2, emissive=(0.2, 0.9, 1), strength=2.5)
 PICKUP_AMMO = material("pickup_ammo", base=(1, 0.9, 0.2, 1), roughness=0.2, emissive=(1, 0.85, 0.15), strength=2.5)
+GATE = material("vault_gate", base=(0.78, 0.56, 0.12, 1), metallic=0.6, roughness=0.4)
+BUTTON = material("vault_button", base=(0.15, 0.9, 0.35, 1), roughness=0.3, emissive=(0.15, 1, 0.35), strength=3)
+STRESS_MOVER = material("stress_mover", base=(0.35, 0.8, 1, 1), roughness=0.35, emissive=(0.2, 0.6, 1), strength=1.2)
 BOTTLE = "models/WaterBottle.glb"
 MANNEQUIN = "models/Mannequin.glb"
 SKY = "environments/sky_1k.hdr"
@@ -90,6 +93,13 @@ def effect(name, **values):
     target.write_text("\n".join(lines) + "\n", newline="\n")
     write_meta(path)
     return path
+
+
+# Scripts (Milestone 6). Mover, Pickup and BonusZone play the same as the C++ behaviors of those names; Gate and Button
+# make the vault. The scenes keep the C++ behaviors; Tests/Gameplay/scripted_behavior_tests.cpp plays them both ways.
+SCRIPTS = {name: f"Scripts/{name}.lua" for name in ("Mover", "Pickup", "BonusZone", "Gate", "Button")}
+for script_path in SCRIPTS.values():
+    write_meta(script_path)
 
 
 # One-shot effects gameplay fires: each a burst at the start of a short cycle.
@@ -159,6 +169,22 @@ class Scene:
         fields = " ".join(f"{k} {number(v)}" for k, v in values.items())
         self.components.append(f"BEHAVIOR {id} {kind} {len(values)}" + (f" {fields}" if fields else ""))
 
+    def script(self, id, path, **values):
+        """A Script component: the script, then the values that differ from its defaults, in name order as the editor
+        keeps them. A number, a bool, text, or three numbers for a Vec3."""
+        fields = []
+        for key, value in sorted(values.items()):
+            if isinstance(value, bool):
+                fields.append(f"{key} b {int(value)}")
+            elif isinstance(value, (int, float)):
+                fields.append(f"{key} n {number(value)}")
+            elif isinstance(value, str):
+                assert '"' not in value and "\\" not in value
+                fields.append(f'{key} t "{value}"')
+            else:
+                fields.append(f"{key} v " + " ".join(map(number, value)))
+        self.components.append(f"SCRIPT {id} {ref(path)} {len(fields)}" + (" " + " ".join(fields) if fields else ""))
+
     def emitter(self, id, effect_path, auto_play=0, loop=0, rate_scale=1):
         self.components.append(f"EMITTER {id} {ref(effect_path)} {auto_play} {loop} {number(rate_scale)}")
 
@@ -175,10 +201,10 @@ class Scene:
 
     def write(self, path):
         order = {"MESH": 0, "CAMERA": 1, "LIGHT": 2, "BODY": 3, "COLLIDER": 4, "ENVIRONMENT": 5, "BEHAVIOR": 6, "EMITTER": 7,
-                 "ANIMATOR": 8, "RAGDOLL": 9}
+                 "ANIMATOR": 8, "RAGDOLL": 9, "SCRIPT": 10}
         # A stable sort keeps colliders and behaviors in the order they were added.
         records = sorted(self.components, key=lambda r: (int(r.split()[1]), order[r.split()[0]]))
-        text = [f"ENGINE_SCENE 7 {self.next} {len(self.entities)}"] + self.entities + [f"COMPONENTS {len(records)}"] + records
+        text = [f"ENGINE_SCENE 8 {self.next} {len(self.entities)}"] + self.entities + [f"COMPONENTS {len(records)}"] + records
         path.write_text("\n".join(text) + "\n", newline="\n")
 
 
@@ -197,9 +223,10 @@ def crate(s, name, position, size=1.0, density=70):
     return id
 
 
-def physics_shooter(stress=False):
+def physics_shooter(stress=False, movers=0):
     """The sample's arena. With `stress`, the performance scene: ten enemies in view of the player and ten fountains that
-    keep 5,000 particles alive."""
+    keep 5,000 particles alive. With `movers`, the scripting performance scene: that many cubes above the arena, each
+    moved by Mover.lua."""
     s = Scene()
     rules = s.add("Game Rules")
     s.behavior(rules, "game_mode", time_limit=90)
@@ -227,7 +254,8 @@ def physics_shooter(stress=False):
     solid(s, "Floor", (0, -0.5, 0), (32, 1, 32), FLOOR, uv=(10, 10))
     solid(s, "Wall North", (0, 2.5, -16.5), (34, 5, 1), WALL, uv=(9, 1.4))
     solid(s, "Wall South", (0, 2.5, 16.5), (34, 5, 1), WALL, uv=(9, 1.4))
-    solid(s, "Wall West", (-16.5, 2.5, 0), (1, 5, 32), WALL, uv=(9, 1.4))
+    # The west wall stops short of the south-west corner, where the vault's doorway is (see the end).
+    solid(s, "Wall West", (-16.5, 2.5, -2.75), (1, 5, 26.5), WALL, uv=(7.5, 1.4))
     solid(s, "Wall East", (16.5, 2.5, 0), (1, 5, 32), WALL, uv=(9, 1.4))
 
     # The player: a capsule kept upright, with no friction so it slides along walls instead of sticking to them.
@@ -379,7 +407,38 @@ def physics_shooter(stress=False):
         for i in range(10):
             fountain = s.add(f"Stress Fountain {i + 1}", (-13.5 + 3 * i, 0.05, -14.6))
             s.emitter(fountain, FOUNTAIN_GLOW if i % 2 == 0 else FOUNTAIN_SMOKE, auto_play=1, loop=1)
-    s.write(ROOT / ("stress_test.scene" if stress else "physics_shooter.scene"))
+
+    # The vault, through the west wall by the start: scripts. Its gate opens once the targets of the west wing (the
+    # pillar's and Enemy 1) have fallen, sliding into the wall; inside, a button pressed with E gives points and time.
+    # Added last, so the entities before keep their IDs.
+    solid(s, "Wall West End", (-16.5, 2.5, 14.75), (1, 5, 2.5), WALL, uv=(0.7, 1.4))
+    solid(s, "Vault Lintel", (-16.5, 4, 12), (1, 2, 3), WALL, uv=(0.85, 0.55))
+    solid(s, "Vault Floor", (-20, -0.5, 12), (8, 1, 7), FLOOR, uv=(2.5, 2.2))
+    solid(s, "Vault Wall North", (-20.5, 2.5, 9), (7, 5, 1), WALL, uv=(2, 1.4))
+    solid(s, "Vault Wall South", (-20.5, 2.5, 15), (7, 5, 1), WALL, uv=(2, 1.4))
+    solid(s, "Vault Wall Back", (-23.5, 2.5, 12), (1, 5, 5), WALL, uv=(1.4, 1.4))
+    gate = s.add("Vault Gate", (-16.5, 1.5, 12), (0.3, 3, 3))
+    s.mesh(gate, mat=GATE)
+    s.body(gate, "kinematic", sleep=0)
+    s.collider(gate)
+    s.script(gate, SCRIPTS["Gate"], room_min=(-16, -1, -6), room_max=(-6, 8, 16), open_offset=(0, 0, 3), message="The vault is open")
+    button = s.add("Vault Button", (-22.9, 1.3, 12), (0.2, 0.35, 0.35))
+    s.mesh(button, mat=BUTTON)
+    s.script(button, SCRIPTS["Button"], points=300, time=20, message="+300  Vault, and 20 seconds", hint="Press E for the vault's prize",
+             travel=(-0.08, 0, 0))
+    # The scripting performance scene (Milestone 6): a sheet of small cubes over the arena, in the player's view, 25 to
+    # a row a meter apart, each going up and down 2 m at its own speed, half of them starting at the top. Models only,
+    # with no bodies, so physics does not move them and their cost is the scripts' and the drawing's.
+    for i in range(movers):
+        column, row = i % 25, i // 25
+        x, z = -12 + column, -12 + row
+        low, high = (x, 5.5, z), (x, 7.5, z)
+        if (column + row) % 2:
+            low, high = high, low
+        mover = s.add(f"Script Mover {i + 1}", low, (0.3, 0.3, 0.3))
+        s.mesh(mover, mat=STRESS_MOVER)
+        s.script(mover, SCRIPTS["Mover"], a=low, b=high, speed=round(1 + (column * 7 + row * 3) % 10 * 0.2, 1))
+    s.write(ROOT / ("stress_test.scene" if stress else "script_stress.scene" if movers else "physics_shooter.scene"))
 
 
 def lighting_test():
@@ -413,5 +472,6 @@ def lighting_test():
 
 physics_shooter()
 physics_shooter(stress=True)
+physics_shooter(movers=500)
 lighting_test()
 print("Wrote the sample's scenes, materials and .meta files.")

@@ -7,7 +7,9 @@
 #include <map>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
+#include <variant>
 #include <vector>
 namespace engine::commands {
 class CommandBus;
@@ -194,6 +196,37 @@ struct RagdollComponent {
     std::vector<RagdollBone> bones; // Settings for single bones, each at most once.
     bool operator==(const RagdollComponent &) const = default;
 };
+// A script property's value as the scene stores it (Milestone 6, D6). The scene gives it no meaning beyond its type:
+// number, boolean, text, vector, color, entity or asset, in that order of the variant.
+struct ScriptColor {
+    double r = 1, g = 1, b = 1, a = 1; // sRGB in [0, 1]; alpha is linear.
+    bool operator==(const ScriptColor &) const = default;
+};
+struct EntityLink {
+    EntityId id = 0; // 0: none. May name an entity that no longer exists; the runtime reports it when used.
+    bool operator==(const EntityLink &) const = default;
+};
+using ScriptValue = std::variant<double, bool, std::string, Vec3, ScriptColor, EntityLink, AssetRef>;
+struct ScriptProperty {
+    std::string name; // A Lua name: a letter or '_', then letters, digits or '_'; 1 to 64 bytes.
+    ScriptValue value;
+    bool operator==(const ScriptProperty &) const = default;
+};
+inline constexpr std::size_t max_script_properties = 64, max_script_text_bytes = 4096;
+// Runs a Lua script asset (.lua) on the entity in Play and Simulate (Milestone 6). It holds only the values that differ
+// from the script's defaults, so a default changed in the script reaches every entity that kept it. Text values are
+// one line: no control characters.
+struct ScriptComponent {
+    AssetRef script;                        // Empty: nothing runs.
+    std::vector<ScriptProperty> properties; // Each name at most once.
+    const ScriptProperty *find(std::string_view property) const noexcept {
+        for (const auto &p : properties)
+            if (p.name == property)
+                return &p;
+        return nullptr;
+    }
+    bool operator==(const ScriptComponent &) const = default;
+};
 struct Components {
     std::optional<MeshComponent> mesh;
     std::optional<CameraComponent> camera;
@@ -206,6 +239,7 @@ struct Components {
     std::optional<AnimatorComponent> animator;
     std::optional<AttachToBoneComponent> attach;
     std::optional<RagdollComponent> ragdoll;
+    std::optional<ScriptComponent> script;
     bool operator==(const Components &) const = default;
 };
 struct EntityRecord {
@@ -224,9 +258,19 @@ struct SceneSnapshot {
 class Scene final {
     ecs::World world_;
     std::map<EntityId, flecs::entity_t> entities_;
+    std::map<EntityId, std::vector<EntityId>> children_; // Ascending; rebuilt by commit(), kept by the in-place commits.
     EntityId next_id_ = 1;
+    std::uint64_t structure_revision_ = 0;
     friend class commands::CommandBus;
     Result<void> commit(const SceneSnapshot &);
+    // The command bus's paths for changes that keep every entity, ID and parent: names, transforms and components.
+    // Each checks the changed entities as validate() checks a scene, then the world transforms of their subtrees, and
+    // reads and writes nothing else, so its cost is that of what changed, not of the scene. The outcome is the same as
+    // commit() of the whole scene with those changes.
+    Result<void> commit_in_place(const std::map<EntityId, EntityRecord> &changed);
+    Result<void> commit_transforms(const std::map<EntityId, Transform> &moved);
+    // The world transforms of what moves, and of everything under it, with `moved` as their new local transforms.
+    Result<std::vector<std::pair<flecs::entity_t, WorldTransform>>> moved_worlds(const std::map<EntityId, Transform> &moved) const;
 
   public:
     static constexpr std::size_t max_entities = 100000;
@@ -242,6 +286,14 @@ class Scene final {
     std::optional<EntityRecord> inspect(EntityId) const;
     SceneSnapshot snapshot() const;
     std::optional<WorldTransform> world_transform(EntityId) const;
+    // An entity's local transform or parent, without copying the rest of it; nullopt when there is no such entity.
+    std::optional<Transform> local_transform(EntityId) const;
+    std::optional<EntityId> parent_of(EntityId) const;
+    // Changes when an entity is created, removed, renamed or reparented or a component changes, and not when only
+    // transforms do. No two scenes share a value, so a system mirroring components may skip its scan while it stands.
+    std::uint64_t structure_revision() const noexcept {
+        return structure_revision_;
+    }
     ecs::World &ecs() noexcept {
         return world_;
     } // Trusted engine systems only.
@@ -256,7 +308,7 @@ class Scene final {
     static Result<void> validate(const SceneSnapshot &);
 };
 // Text scene format, docs/architecture/006-scene-format.md. Writes the current version; reads 1..current.
-inline constexpr unsigned scene_format_version = 7;
+inline constexpr unsigned scene_format_version = 8;
 Result<void> write_scene(std::ostream &, const SceneSnapshot &);
 Result<SceneSnapshot> read_scene(std::istream &);
 } // namespace engine

@@ -456,7 +456,7 @@ void EditorUI::game_overlay(gameplay::Game &game, ImVec2 origin, ImVec2 size, bo
 void EditorUI::free_mouse() {
     game_input.release(window);
     // Whatever was held stays held in the game otherwise, and the player would walk on by itself.
-    if (auto *game = session.game()) game->set_input({});
+    if (session.game()) session.set_game_input({});
 }
 void EditorUI::stop_play() {
     game_input.release(window);

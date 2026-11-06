@@ -37,6 +37,8 @@ std::optional<KeyChord> parse_chord(std::string_view);
 
 namespace context {
 inline constexpr std::string_view global = "Global", viewport = "Viewport", outliner = "Outliner", details = "Details", asset_browser = "AssetBrowser";
+// The Script Editor, whose text area has the keyboard while one types in it (Milestone 6).
+inline constexpr std::string_view script_editor = "ScriptEditor";
 // Keys held while flying with RMB. Never dispatched: the camera reads them, so the same keys can mean something else otherwise.
 inline constexpr std::string_view flying = "Flying";
 // Asked first while something is running, so Esc can mean "stop" there and "deselect" otherwise.

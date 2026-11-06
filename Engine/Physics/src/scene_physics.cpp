@@ -268,6 +268,8 @@ struct ScenePhysics::Impl {
 
 	PhysicsWorld world;
 	std::map<EntityId, Entry> entries;
+	// The scene structure the entries were last mirrored from (Scene::structure_revision); 0 for none yet.
+	std::uint64_t mirrored_structure = 0;
 	bool simulating = false;
 	std::uint64_t ticks = 0;
 	std::uint64_t simulated_ticks = 0;
@@ -669,44 +671,49 @@ Result<void> ScenePhysics::sync(const Scene& scene)
 	// A ragdoll goes with its entity.
 	for (auto it = impl_->ragdolls.begin(); it != impl_->ragdolls.end();) {
 		const auto next = std::next(it);
-		if (!scene.inspect(it->second.owner)) {
+		if (!scene.native(it->second.owner)) {
 			impl_->destroy_ragdoll(it);
 		}
 		it = next;
 	}
-	// Mirror the scene's physics components: add or update entries, then drop entities that lost them.
+	// Mirror the scene's physics components: add or update entries, then drop entities that lost them. Only when the
+	// scene's structure changed since the last time, as nothing else changes them; moves are followed entry by entry
+	// below, so a tick that only moved things costs what has a body, not what the scene holds.
 	auto& entries = impl_->entries;
-	std::vector<EntityId> authored;
-	for (const EntityRecord& record : scene.snapshot().entities) {
-		const Components& c = record.components;
-		if (!c.body && c.colliders.empty()) {
-			continue;
-		}
-		authored.push_back(record.id);
-		auto [it, created] = entries.try_emplace(record.id);
-		Impl::Entry& e = it->second;
-		if (created || e.body_source != c.body || e.collider_source != c.colliders) {
-			e.body_source = c.body;
-			e.collider_source = c.colliders;
-			e.body = to_rigid_body(c.body);
-			e.colliders.clear();
-			for (const ColliderComponent& collider : c.colliders) {
-				e.colliders.push_back(to_collider(collider));
+	if (scene.structure_revision() != impl_->mirrored_structure) {
+		impl_->mirrored_structure = scene.structure_revision();
+		std::vector<EntityId> authored;
+		for (const EntityRecord& record : scene.snapshot().entities) {
+			const Components& c = record.components;
+			if (!c.body && c.colliders.empty()) {
+				continue;
 			}
-			e.authoring_issue.clear();
-			if (!valid_body(e.body) || !std::all_of(e.colliders.begin(), e.colliders.end(), [](const Collider& k) { return is_valid(k); })) {
-				e.authoring_issue = "rigid body or collider values are not accepted by the physics world";
+			authored.push_back(record.id);
+			auto [it, created] = entries.try_emplace(record.id);
+			Impl::Entry& e = it->second;
+			if (created || e.body_source != c.body || e.collider_source != c.colliders) {
+				e.body_source = c.body;
+				e.collider_source = c.colliders;
+				e.body = to_rigid_body(c.body);
+				e.colliders.clear();
+				for (const ColliderComponent& collider : c.colliders) {
+					e.colliders.push_back(to_collider(collider));
+				}
+				e.authoring_issue.clear();
+				if (!valid_body(e.body) || !std::all_of(e.colliders.begin(), e.colliders.end(), [](const Collider& k) { return is_valid(k); })) {
+					e.authoring_issue = "rigid body or collider values are not accepted by the physics world";
+				}
+				e.dirty = true;
 			}
-			e.dirty = true;
 		}
-	}
-	for (auto it = entries.begin(); it != entries.end();) {
-		if (!std::binary_search(authored.begin(), authored.end(), it->first)) {
-			impl_->destroy_body(it->second);
-			std::erase_if(impl_->pending, [id = it->first](const auto& p) { return p.first == id; });
-			it = entries.erase(it);
-		} else {
-			++it;
+		for (auto it = entries.begin(); it != entries.end();) {
+			if (!std::binary_search(authored.begin(), authored.end(), it->first)) {
+				impl_->destroy_body(it->second);
+				std::erase_if(impl_->pending, [id = it->first](const auto& p) { return p.first == id; });
+				it = entries.erase(it);
+			} else {
+				++it;
+			}
 		}
 	}
 	for (auto& [id, e] : entries) {

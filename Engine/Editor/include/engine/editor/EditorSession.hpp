@@ -9,6 +9,9 @@
 #include <engine/physics/scene_physics.h>
 #include <engine/renderer/RenderSnapshot.hpp>
 #include <engine/renderer/ResourceRegistry.hpp>
+#include <engine/scripting/scene_values.h>
+#include <engine/scripting/script_loader.h>
+#include <engine/scripting/script_runtime.h>
 #include <array>
 #include <chrono>
 #include <deque>
@@ -72,11 +75,14 @@ struct ViewFlags {
 
 enum class PlayState { Editing, Playing, Paused };
 
-// Time spent in fixed ticks, since the session began. `animation` is posing animators and ragdolls in a tick, apart from
-// `gameplay`. `effects` is advancing Play's particles, once an update, over `effect_updates` updates.
+// Time spent in fixed ticks, since the session began. `animation` is posing animators and ragdolls in a tick, and
+// `scripts` running scripts (both of a tick's calls, applying what they changed and carrying out what they asked), each
+// apart from `gameplay`, which is the C++ game. `effects` is advancing Play's particles, once an update, over
+// `effect_updates` updates.
 struct SimulationTiming {
     std::uint64_t ticks = 0, effect_updates = 0;
     std::chrono::nanoseconds physics{0}, physics_max{0}, gameplay{0}, animation{0}, animation_max{0}, effects{0}, effects_max{0};
+    std::chrono::nanoseconds scripts{0}, scripts_max{0};
 };
 
 // What an import left in the asset folder.
@@ -146,6 +152,15 @@ class EditorSession {
     std::map<assets::AssetId, assets::MaterialData> material_drafts_;
     // The same for particle effects in the Effect Editor.
     std::map<assets::AssetId, assets::EffectData> effect_drafts_;
+    // What each script declares, as read when its file was last written or moved (script_info).
+    struct ScriptInfoEntry {
+        std::filesystem::file_time_type written;
+        std::string path;
+        bool read = false;
+        std::optional<scripting::ScriptInfo> info;
+        std::optional<Error> error;
+    };
+    mutable std::map<std::uint64_t, ScriptInfoEntry> script_infos_;
     // Plays the editor scene's emitters while editing (view_flags.effects). Play mode has its own, in Runtime.
     effects::ParticleSystem edit_particles_{1};
     // Plays the editor scene's animators while editing (view_flags.animations). Play mode has its own, in Runtime.
@@ -520,6 +535,40 @@ public:
     Result<commands::Receipt> assign_effect(EntityId, assets::AssetId);
     // Starts every emitter of the shown scene again from its beginning, and drops one-shot effects.
     void restart_effects();
+
+    // ---- Scripts: .lua files in the asset folder (Milestone 6) ----
+    // Creates "Scripts/<name>.lua" under a free name, from a template with one property and every function the engine calls.
+    Result<assets::AssetId> create_script(const std::string &name);
+    // What a script declares, read without running a game: its top level runs in a throwaway sandbox. Read again when its
+    // file changes. The error says why it cannot be read, with the line when there is one.
+    Result<scripting::ScriptInfo> script_info(assets::AssetId) const;
+    // Gives the entity a Script component running the script, or changes its script, keeping the values it holds. An empty
+    // id leaves the component with no script. One undo step.
+    Result<commands::Receipt> assign_script(EntityId, assets::AssetId);
+    // Sets a property's value on the entity, one undo step. A value equal to the script's default removes the entity's own,
+    // so it follows the default again; a value of the wrong type is refused.
+    Result<commands::Receipt> set_script_property(EntityId, const std::string &name, const ScriptValue &);
+    // Removes the entity's own value, so the script's default applies. Also how a value the script no longer declares goes.
+    Result<commands::Receipt> reset_script_property(EntityId, const std::string &name);
+    // A script's value as a scene holds it: an asset named by package name resolves through the project.
+    ScriptValue scene_value(const scripting::Value &) const;
+    // A scene's value as the script sees it.
+    scripting::Value script_value(const ScriptValue &) const;
+    // ---- The Script Editor and hot reload (Milestone 6, D8, D9) ----
+    // A script's file on disk, and its text as the file holds it.
+    std::filesystem::path script_file(assets::AssetId) const;
+    Result<std::string> script_text(assets::AssetId) const;
+    // Writes a script's text to its file in one step. In Play the running scripts take it at once (hot reload).
+    Result<void> save_script(assets::AssetId, std::string_view text);
+    // What a script's text would declare if it were saved, for marking errors as it is typed. Like script_info, its top
+    // level runs in a throwaway sandbox; scripts it requires come from their files.
+    Result<scripting::ScriptInfo> check_script(assets::AssetId, std::string_view text) const;
+    // In Play: loads again every script and module whose file changed since it was loaded, whoever changed it.
+    // update() calls it twice a second; each reload is reported as a printed line or a script error.
+    void reload_changed_scripts();
+    // The command that opens a file at a line in another editor: `pattern` with {file} and {line} put in.
+    static constexpr std::string_view default_external_editor = "code -g \"{file}:{line}\"";
+    static std::string external_command(std::string_view pattern, const std::filesystem::path &file, int line);
     // What the shown scene's particle system holds now.
     effects::Stats effect_stats() const;
     // Advances the edit-mode preview; update() calls it, and so can a host that is not playing.
@@ -585,6 +634,19 @@ public:
     // What the run's game asked for that could not be done, such as a ragdoll for a model without a skeleton.
     const std::vector<std::string> &game_issues() const;
 
+    // ---- Scripts in Play and Simulate (Milestone 6, scripting/script_world.h) ----
+    // Actions for the game and the scripts, while the game holds the mouse.
+    void set_game_input(const gameplay::InputFrame &);
+    // What scripts got wrong and printed since the last take, oldest first; each kept at most 512 deep.
+    std::vector<scripting::ScriptError> take_script_errors();
+    std::vector<scripting::ScriptOutput> take_script_output();
+    // Script errors since Play began, taken or not: for logs and acceptance runs.
+    std::size_t script_errors_since_play() const { return script_errors_seen_; }
+    // The entities whose scripts run, ascending; empty outside Play.
+    std::vector<EntityId> script_instances() const;
+    // A field of a running script's `self`, when it holds a plain value.
+    std::optional<scripting::Value> script_field(EntityId, std::string_view name) const;
+
     // ---- Lighting ----
     // The environment in force for the shown scene: the first by entity ID, or the defaults.
     EnvironmentComponent environment() const;
@@ -632,6 +694,17 @@ private:
     // Plays what the game asked for on the run's animator: Walk is the Animator's clip, Idle a clip named "idle", Flinch
     // one named "hit", layered on top. A name that starts with the word wins over one that only has it.
     void play_cue(EntityId, gameplay::AnimationCue);
+    // Fires the effect of the source's emitter, for the game or a script. Visual only.
+    void fire_effect(const gameplay::EffectEvent &);
+    // on_stop for the run's scripts, before the run ends.
+    void stop_scripts();
+    void collect_script_messages();
+    std::vector<scripting::ScriptError> script_errors_;
+    std::vector<scripting::ScriptOutput> script_output_;
+    // The files of the run's loaded scripts as they were when loaded, and the time since they were last looked at.
+    std::map<std::string, std::filesystem::file_time_type> script_times_;
+    std::chrono::nanoseconds script_watch_{0};
+    std::size_t script_errors_seen_ = 0;
 };
 // Keeps a transaction open for a scope. Nested guards join the outer one.
 class ScopedTransaction {

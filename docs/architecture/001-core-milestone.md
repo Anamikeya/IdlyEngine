@@ -57,11 +57,18 @@ Core modules are static parts of one process. No dynamic plugin host or second r
 The first command planner materializes ordered snapshots and validates the full
 hierarchy: O(n log n) for ordinary authoring transactions; batches containing several
 subtree deletions can cost more. This is a deliberate, documented correctness tradeoff, not a
-claim of production-scale editor performance. Gameplay fixed ticks do not take those
-snapshots. History retains only changed entities. World matrices are recomputed on
-successful authoring commits; unchanged matrix components are not rewritten. Fixed
-updates do not rescan the managed transform hierarchy. Optimize profiled hot paths before adding
-generic storage or plugin frameworks.
+claim of production-scale editor performance. Batches that create, delete, duplicate, reparent or
+replace still take that path. Since Milestone 6 (slice 6), a batch that only renames, moves or sets
+components runs in place: it reads, checks and commits only the entities it names and the world
+matrices of their subtrees, with the same checks in the same order, errors, receipts and history
+as the whole-scene path (`engine.core.acceptance` compares the two to the bit). Moves alone copy
+no entity record unless the bus keeps history. Physics, gameplay and scripts send that kind every
+fixed tick; until then each such transaction copied and validated the whole scene, so a tick cost
+what the scene held (moving all 500 entities of a scene: 4.7 ms, and 0.45 ms in place).
+`Scene::structure_revision()` moves only when more than transforms change, and physics mirrors
+components only when it does. History retains only changed entities. World matrices are recomputed
+on successful commits; unchanged matrix components are not rewritten. Optimize profiled hot paths
+before adding generic storage or plugin frameworks.
 
 ## Boundaries and safety
 Single owner thread for world, scene, commands and lifecycle. Expected revisions

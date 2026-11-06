@@ -775,6 +775,8 @@ const char* to_string(AssetType type) noexcept
 		return "environment";
 	case AssetType::Effect:
 		return "effect";
+	case AssetType::Script:
+		return "script";
 	}
 	return "unknown";
 }
@@ -801,6 +803,9 @@ AssetType asset_type_for(std::string_view path) noexcept
 	}
 	if (iequals(ext, "effect")) {
 		return AssetType::Effect;
+	}
+	if (iequals(ext, "lua")) {
+		return AssetType::Script;
 	}
 	return AssetType::Unknown;
 }

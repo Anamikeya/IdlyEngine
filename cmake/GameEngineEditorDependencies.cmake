@@ -36,3 +36,14 @@ target_compile_features(gameengine_imgui PUBLIC cxx_std_20)
 set_target_properties(gameengine_imgui PROPERTIES FOLDER "ThirdParty")
 set(GAMEENGINE_IMGUI_DIR "${_imgui_dir}" CACHE INTERNAL "Dear ImGui source directory, for optional backends")
 unset(_imgui_dir)
+
+# gameengine::imgui_text_edit: the code editor widget of goossens' ImGuiColorTextEdit, for the Script Editor. Only
+# TextEditor.cpp: TextDiff and the extras (language server bridge, autocomplete) stay out.
+gameengine_verify_dependency(ImGuiColorTextEdit)
+set(_text_edit_dir "${GAMEENGINE_RESOURCES_DIR}/ImGuiColorTextEdit")
+add_library(gameengine_imgui_text_edit STATIC EXCLUDE_FROM_ALL "${_text_edit_dir}/TextEditor.cpp")
+add_library(gameengine::imgui_text_edit ALIAS gameengine_imgui_text_edit)
+target_include_directories(gameengine_imgui_text_edit SYSTEM PUBLIC "${_text_edit_dir}")
+target_link_libraries(gameengine_imgui_text_edit PUBLIC gameengine_imgui)
+set_target_properties(gameengine_imgui_text_edit PROPERTIES FOLDER "ThirdParty")
+unset(_text_edit_dir)

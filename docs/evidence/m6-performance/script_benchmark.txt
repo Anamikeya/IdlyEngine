@@ -1,0 +1,9 @@
+entities 500
+ticks 600
+snapshot_ms 0.1319
+bus_moves_ms 0.4559
+empty instances 500 errors 0 | first tick 0.454 ms | scripts before physics 0.1484 ms mean 0.2406 max | physics 0.0004 ms | after 0.0229 ms | per instance 0.34 us
+math  instances 500 errors 0 | first tick 1.023 ms | scripts before physics 0.6275 ms mean 1.1262 max | physics 0.0006 ms | after 0.0281 ms | per instance 1.31 us
+read  instances 500 errors 0 | first tick 0.798 ms | scripts before physics 0.3583 ms mean 0.6590 max | physics 0.0005 ms | after 0.0304 ms | per instance 0.78 us
+write instances 500 errors 0 | first tick 1.004 ms | scripts before physics 0.9330 ms mean 1.4508 max | physics 0.0007 ms | after 0.0405 ms | per instance 1.95 us
+mover instances 500 errors 0 | first tick 1.868 ms | scripts before physics 1.3577 ms mean 2.7725 max | physics 0.0007 ms | after 0.0411 ms | per instance 2.80 us

@@ -172,6 +172,7 @@ void EditorUI::docking() {
         ImGui::DockBuilderDockWindow("Effect Editor", right);
         ImGui::DockBuilderDockWindow("###3D Viewport", center);
         ImGui::DockBuilderDockWindow("Asset Browser", assets);
+        ImGui::DockBuilderDockWindow("Script Editor", assets);
         ImGui::DockBuilderDockWindow("Message Log", messages_dock);
         ImGui::DockBuilderDockWindow("Console", messages_dock);
         ImGui::DockBuilderFinish(dock);
@@ -224,6 +225,26 @@ void EditorUI::toolbar() {
     ImGui::SameLine(); command_checkbox("Viewport.ToggleColliders", "Colliders");
     ImGui::End();
 }
+// What scripts got wrong, with a toast, and what they printed, to the Message Log; each links to its line in the Script
+// Editor. Errors also stay as markers there until the script is saved.
+void EditorUI::report_scripts() {
+    const auto link_to = [this](const std::string &script, int line) {
+        const auto found = script.empty() ? Result<assets::PackageResolution>(fail(ErrorCode::NotFound, "")) : session.resolve_package(script);
+        if (!found) return LogLink{};
+        return LogLink::script(found.value().id.value, line > 0 ? script + ":" + std::to_string(line) : script, line);
+    };
+    for (auto &error : session.take_script_errors()) {
+        std::string text = error.message;
+        if (!error.callback.empty()) text += "  (in " + error.callback + ")";
+        notify(Severity::Error, std::move(text), link_to(error.script, error.line));
+        auto &kept = script_problems[error.script];
+        kept.push_back(std::move(error));
+        if (kept.size() > 8) kept.erase(kept.begin());
+        script_edit.markers_stale = true;
+    }
+    for (const auto &line : session.take_script_output())
+        log(line.warning ? Severity::Warning : Severity::Info, line.text, link_to(line.script, line.line));
+}
 void EditorUI::duplicate_selection() { if (session.selection()) report(session.duplicate_selection(), "Duplicated entity subtree"); }
 void EditorUI::delete_selection() { if (session.selection()) report(session.delete_selection(), "Deleted entity subtree"); }
 void EditorUI::draw() {
@@ -235,9 +256,10 @@ void EditorUI::draw() {
     const bool rebinding_at_frame_start = !rebind_command.empty();
     for (const auto &file : std::exchange(dropped_files, {})) import_file(file);
     finish_imports();
+    report_scripts();
     main_menu();
     // Before the viewport: it extracts the frame, whose handles must be those of the latest import or reload.
-    docking(); toolbar(); hierarchy(); lighting(); material_editor(); effect_editor(); animation_panel(); inspector(); assets(); viewport();
+    docking(); toolbar(); hierarchy(); lighting(); material_editor(); effect_editor(); animation_panel(); inspector(); assets(); script_editor(); viewport();
     console_panel();
     message_log_panel();
     picker_window();

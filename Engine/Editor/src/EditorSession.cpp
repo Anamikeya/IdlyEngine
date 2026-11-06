@@ -2,6 +2,7 @@
 #include <engine/assets/importers.h>
 #include <engine/assets/skeleton.h>
 #include <engine/editor/EditorPrefs.hpp>
+#include <engine/scripting/script_world.h>
 #include <algorithm>
 #include <cctype>
 #include <cmath>
@@ -86,6 +87,38 @@ double hit(const renderer::MeshHandle &mesh, const glm::dvec3 &origin, const glm
 glm::dvec3 vector(const std::array<float, 3> &v) { return {v[0], v[1], v[2]}; }
 constexpr Vec3 placeholder_color{1, 0, 1}; // Marks an asset that cannot be drawn.
 AssetRef reference(const assets::AssetMetadata &meta) { return {meta.id.value, meta.path}; }
+// The script a Script component runs and the assets its values name; how many `fix` changed.
+std::size_t fix_script_references(ScriptComponent &script, const std::function<bool(AssetRef &)> &fix) {
+    std::size_t changed = fix(script.script);
+    for (auto &property : script.properties)
+        if (auto *asset = std::get_if<AssetRef>(&property.value)) changed += fix(*asset);
+    return changed;
+}
+std::filesystem::path utf8_file(const std::string &text) { return std::filesystem::path(std::u8string(reinterpret_cast<const char8_t *>(text.data()), text.size())); }
+// The text New Script starts from: one property, and every function the engine calls, so a script is easy to begin.
+constexpr std::string_view script_template = R"lua(-- Runs on every entity whose Script component names this script, in Play and Simulate.
+-- `properties` are what Details shows; each entity can give them its own values. `self` holds them,
+-- and `self.entity` is the entity.
+local Script = {
+	properties = {
+		speed = 1.0,
+	},
+}
+
+-- Once, before the first tick.
+function Script:start()
+end
+
+-- Every fixed step, 60 times a second, before physics. `dt` is the step in seconds.
+function Script:tick(dt)
+end
+
+-- The engine also calls, when a script has them: late_tick(dt) after physics, on_hit(other, speed, point, normal),
+-- on_trigger_enter(other), on_trigger_exit(other), on_damage(amount, cause, point), on_death(),
+-- on_clip_event(name, point) and on_stop().
+
+return Script
+)lua";
 std::string trimmed_name(std::string name) {
     if (name.size() > 256) {
         name.resize(256);
@@ -150,6 +183,7 @@ struct EditorSession::Runtime {
     commands::CommandBus bus{scene, 0}; // Runtime edits are discarded on stop, so they keep no history.
     std::unique_ptr<physics::ScenePhysics> physics; // Destroyed before the bus and scene (C-3).
     std::unique_ptr<gameplay::Game> game; // Holds references to the three above.
+    std::unique_ptr<scripting::ScriptWorld> scripts; // Holds references to the four above (Milestone 6).
     effects::ParticleSystem particles{1}; // The same seed each run, so a run's particles repeat.
     animation::AnimationSystem animation; // Ticks with the game, so what gameplay plays is in step with it.
     // Entities lying as ragdolls: their bodies are in `physics`; this turns them back into a pose each tick (D7).
@@ -852,6 +886,20 @@ Result<void> EditorSession::paste(std::string_view text) {
         });
         if (waiting.size() == before) { transaction.cancel(); return fail(ErrorCode::InvalidArgument, "The clipboard's entities could not be added"); }
     }
+    // Script values naming a pasted entity name its new copy. Those naming an entity of this scene keep it; the
+    // clipboard may come from another scene, so those naming no entity here are cleared rather than left to name
+    // whatever later takes that ID.
+    for (const auto &e : entities) {
+        if (!e.components.script) continue;
+        auto script = *e.components.script;
+        for (auto &property : script.properties)
+            if (auto *link = std::get_if<EntityLink>(&property.value); link && link->id) {
+                if (const auto copy = created.find(link->id); copy != created.end()) link->id = copy->second;
+                else if (!scene().inspect(link->id)) link->id = 0;
+            }
+        if (script == *e.components.script) continue;
+        if (auto linked = execute(commands::SetScript{created.at(e.id), std::move(script)}); !linked) { transaction.cancel(); return linked.error(); }
+    }
     selection_.set(std::span<const EntityId>(roots));
     return {};
 }
@@ -885,6 +933,7 @@ std::vector<commands::Command> EditorSession::reference_edits(const std::functio
         if (auto environment = e.components.environment; environment && fix(environment->image)) edits.emplace_back(commands::SetEnvironment{e.id, std::move(environment)});
         if (auto emitter = e.components.emitter; emitter && fix(emitter->effect)) edits.emplace_back(commands::SetParticleEmitter{e.id, std::move(emitter)});
         if (auto animator = e.components.animator; animator && fix(animator->clips)) edits.emplace_back(commands::SetAnimator{e.id, std::move(animator)});
+        if (auto script = e.components.script; script && fix_script_references(*script, fix)) edits.emplace_back(commands::SetScript{e.id, std::move(script)});
     }
     return edits;
 }
@@ -1018,6 +1067,7 @@ Result<EditorSession::FixUpReport> EditorSession::fix_up_redirectors() {
             if (c.environment) changed += fix(c.environment->image);
             if (c.emitter) changed += fix(c.emitter->effect);
             if (c.animator) changed += fix(c.animator->clips);
+            if (c.script) changed += fix_script_references(*c.script, fix);
         }
         if (!changed) continue;
         auto temporary = file; temporary += ".tmp";
@@ -1426,7 +1476,20 @@ Result<void> EditorSession::play() {
     // The first sync builds the bodies, so the game's first tick can already query them.
     if (auto synced = runtime->physics->sync(runtime->scene); !synced) return synced.error();
     runtime->game = gameplay::Game::create(runtime->scene, runtime->bus, *runtime->physics, fixed_step);
+    // Scripts, after the game whose rules they can reach. The same seed every run, so a run repeats (Milestone 6, D2).
+    scripting::ScriptWorld::Setup setup;
+    setup.loader = scripting::package_loader(packages());
+    setup.names = [this](const AssetRef &ref) {
+        const auto name = package_name_of(assets::AssetId{ref.id});
+        return name.empty() ? std::string(game_mount) + "/" + ref.path : name;
+    };
+    runtime->scripts = scripting::ScriptWorld::create(runtime->scene, runtime->bus, *runtime->physics, runtime->game.get(), fixed_step, std::move(setup));
     runtime_ = std::move(runtime);
+    script_times_.clear();
+    script_watch_ = {};
+    script_errors_seen_ = 0;
+    reload_changed_scripts(); // Notes the files' times, so a later change is seen.
+    collect_script_messages();
     physics_error_.clear();
     ++play_sessions_;
     reconcile();
@@ -1459,7 +1522,9 @@ Result<void> EditorSession::step() {
 }
 Result<void> EditorSession::stop() {
     if (!runtime_) return fail(ErrorCode::InvalidState, "Not in Play mode");
+    stop_scripts();
     runtime_.reset();
+    script_times_.clear();
     physics_error_.clear();
     transaction_depth_ = 0; drag_start_.clear(); // A runtime transaction has nothing to finish.
     ejected_ = simulating_ = false;
@@ -1468,6 +1533,7 @@ Result<void> EditorSession::stop() {
 }
 Result<void> EditorSession::restart() {
     if (!runtime_) return fail(ErrorCode::InvalidState, "Not in Play mode");
+    stop_scripts();
     runtime_.reset();
     physics_error_.clear();
     transaction_depth_ = 0; drag_start_.clear();
@@ -1478,6 +1544,11 @@ gameplay::Game *EditorSession::game() const { return runtime_ ? runtime_->game.g
 void EditorSession::update(std::chrono::nanoseconds elapsed) {
     advance_effects(elapsed);
     advance_animations(elapsed);
+    // Scripts changed on disk, by the Script Editor or another one, run again: paused or not (D8).
+    if (runtime_ && runtime_->scripts && elapsed.count() > 0 && (script_watch_ += elapsed) >= std::chrono::milliseconds(500)) {
+        script_watch_ = {};
+        reload_changed_scripts();
+    }
     if (!runtime_ || runtime_->paused || elapsed.count() <= 0) return;
     auto &r = *runtime_;
     const auto before_effects = std::chrono::steady_clock::now();
@@ -1499,7 +1570,10 @@ void EditorSession::tick() {
     ++r.ticks;
     const auto start = std::chrono::steady_clock::now();
     if (r.game) r.game->pre_physics();
+    const auto before_scripts = std::chrono::steady_clock::now();
+    if (r.scripts) r.scripts->pre_physics();
     const auto before_physics = std::chrono::steady_clock::now();
+    auto scripts_took = before_physics - before_scripts;
     if (auto report = r.physics->fixed_update(fixed_step, r.scene, r.bus, physics_context); !report) {
         physics_error_ = "Physics stopped: " + report.error().message;
         r.paused = true;
@@ -1509,13 +1583,12 @@ void EditorSession::tick() {
     r.animation.update(std::chrono::duration<double>(fixed_step).count());
     auto animation_took = std::chrono::steady_clock::now() - after_physics;
     auto heard = r.animation.take_events();
-    if (r.game) {
-        // The game hears clip events where the entity's foot is: its lowest joint. A ragdoll's animator is not its pose.
-        std::vector<gameplay::AnimationNotice> notices;
+    // The game and scripts hear clip events where the entity's foot is: its lowest joint. A ragdoll's animator is not its pose.
+    std::vector<gameplay::AnimationNotice> notices;
+    if (r.game || r.scripts)
         for (const auto &event : heard)
             if (!r.ragdolls.contains(event.entity)) notices.push_back({event.entity, event.name, lowest_joint(event.entity)});
-        r.game->hear(notices);
-    }
+    if (r.game) r.game->hear(notices);
     keep_events(std::move(heard));
     const auto before_ragdolls = std::chrono::steady_clock::now();
     pose_ragdolls();
@@ -1530,21 +1603,32 @@ void EditorSession::tick() {
                                              : std::nullopt;
             if (auto fell = start_ragdoll(request.entity, push); !fell) r.game_issues.push_back(fell.error().message);
         }
-        // One-shot effects the game asked for, from the emitter on their source entity. Visual only.
-        for (const auto &event : r.game->effect_events()) {
-            const auto source = r.scene.inspect(event.source);
-            if (!source || !source->components.emitter) continue;
-            std::string why;
-            if (const auto effect = effect_source(source->components.emitter->effect, why))
-                r.particles.fire(event.source, effect->data, {event.point.x, event.point.y, event.point.z},
-                                 {event.direction.x, event.direction.y, event.direction.z}, event.strength * source->components.emitter->rate_scale);
+        for (const auto &event : r.game->effect_events()) fire_effect(event);
+    }
+    if (r.scripts) {
+        const auto before_late_scripts = std::chrono::steady_clock::now();
+        r.scripts->post_physics(notices);
+        // What scripts asked of the animations, ragdolls and effects, as for the game's.
+        for (const auto &request : r.scripts->clip_requests()) {
+            if (r.ragdolls.contains(request.entity)) continue;
+            if (auto played = r.animation.play(request.entity, request.clip, request.blend_seconds, true); !played)
+                r.game_issues.push_back("Entity " + std::to_string(request.entity) + ": " + played.error().message);
         }
+        for (const auto id : r.scripts->ragdoll_requests())
+            if (!r.ragdolls.contains(id))
+                if (auto fell = start_ragdoll(id, std::nullopt); !fell) r.game_issues.push_back(fell.error().message);
+        for (const auto &event : r.scripts->effect_requests()) fire_effect(event);
+        for (auto &issue : r.scripts->take_issues()) r.game_issues.push_back(std::move(issue));
+        collect_script_messages();
+        scripts_took += std::chrono::steady_clock::now() - before_late_scripts;
     }
     const auto end = std::chrono::steady_clock::now();
     ++timing_.ticks;
     timing_.physics += after_physics - before_physics;
     timing_.physics_max = std::max<std::chrono::nanoseconds>(timing_.physics_max, after_physics - before_physics);
-    timing_.gameplay += (before_physics - start) + (end - after_physics) - animation_took;
+    timing_.gameplay += (before_physics - start) + (end - after_physics) - animation_took - scripts_took;
+    timing_.scripts += scripts_took;
+    timing_.scripts_max = std::max<std::chrono::nanoseconds>(timing_.scripts_max, scripts_took);
     timing_.animation += animation_took;
     timing_.animation_max = std::max<std::chrono::nanoseconds>(timing_.animation_max, animation_took);
     reconcile();
@@ -1854,6 +1938,103 @@ Result<commands::Receipt> EditorSession::assign_effect(EntityId id, assets::Asse
     auto emitter = record->components.emitter.value_or(ParticleEmitterComponent{});
     emitter.effect = reference(*meta);
     return execute(commands::SetParticleEmitter{id, emitter}, "Assign Effect");
+}
+Result<assets::AssetId> EditorSession::create_script(const std::string &name) {
+    if (project_.empty()) return fail(ErrorCode::InvalidState, "No project is open");
+    if (!assets_) {
+        std::error_code ec;
+        std::filesystem::create_directories(asset_folder(), ec);
+        if (ec) return fail(ErrorCode::InvalidState, "Cannot create the asset folder: " + ec.message());
+        auto database = assets::AssetDatabase::open(asset_folder());
+        if (!database) return database.error();
+        assets_.emplace(std::move(database.value()));
+    }
+    auto id = assets_->create_script("Scripts/" + name + ".lua", script_template);
+    if (id) resolved_.clear();
+    return id;
+}
+Result<scripting::ScriptInfo> EditorSession::script_info(assets::AssetId id) const {
+    const auto meta = assets_ ? assets_->find(id) : std::nullopt;
+    if (!meta) return fail(ErrorCode::NotFound, "The script is not in the asset folder");
+    if (meta->type != assets::AssetType::Script) return fail(ErrorCode::InvalidArgument, meta->path + " is not a script");
+    std::error_code ec;
+    const auto written = std::filesystem::last_write_time(asset_folder() / utf8_file(meta->path), ec);
+    if (ec) return fail(ErrorCode::NotFound, meta->path + " cannot be read: " + ec.message());
+    auto &entry = script_infos_[id.value];
+    // A move keeps the file's time, but changes the name the script is known by.
+    if (!entry.read || entry.written != written || entry.path != meta->path) {
+        entry = {written, meta->path, true, std::nullopt, std::nullopt};
+        // By package name, as Play will load it; the path when the name is not known yet.
+        const std::string name = package_name_of(id);
+        auto read = scripting::inspect_script(name.empty() ? std::string(game_mount) + "/" + meta->path : name, scripting::package_loader(packages()));
+        if (read) entry.info = std::move(read.value());
+        else entry.error = read.error();
+    }
+    if (entry.error) return *entry.error;
+    return *entry.info;
+}
+ScriptValue EditorSession::scene_value(const scripting::Value &value) const {
+    return scripting::to_scene_value(value, [this](const scripting::AssetRef &asset) -> AssetRef {
+        if (!assets_) return {};
+        if (asset.id)
+            if (const auto meta = assets_->find(assets::AssetId{asset.id})) return reference(*meta);
+        if (!asset.name.empty())
+            if (const auto found = resolve_package(asset.name))
+                if (const auto meta = assets_->find(found.value().id)) return reference(*meta);
+        return {};
+    });
+}
+scripting::Value EditorSession::script_value(const ScriptValue &value) const {
+    return scripting::to_script_value(value, [this](const AssetRef &ref) {
+        const auto name = package_name_of(assets::AssetId{ref.id});
+        return name.empty() ? ref.path : name;
+    });
+}
+Result<commands::Receipt> EditorSession::assign_script(EntityId id, assets::AssetId asset) {
+    const auto record = scene().inspect(id);
+    if (!record) return fail(ErrorCode::NotFound, "Entity no longer exists");
+    auto script = record->components.script.value_or(ScriptComponent{});
+    if (asset.is_null()) {
+        script.script = {};
+    } else {
+        const auto meta = assets_ ? assets_->find(asset) : std::nullopt;
+        if (!meta) return fail(ErrorCode::NotFound, "The script is not in the asset folder");
+        if (meta->type != assets::AssetType::Script) return fail(ErrorCode::InvalidArgument, meta->path + " is not a script");
+        script.script = reference(*meta);
+    }
+    return execute(commands::SetScript{id, std::move(script)}, "Assign Script");
+}
+Result<commands::Receipt> EditorSession::set_script_property(EntityId id, const std::string &name, const ScriptValue &value) {
+    const auto record = scene().inspect(id);
+    if (!record) return fail(ErrorCode::NotFound, "Entity no longer exists");
+    if (!record->components.script) return fail(ErrorCode::InvalidState, record->name + " has no Script component");
+    auto script = *record->components.script;
+    // The default, when the script can be read: a value equal to it is not kept, so the entity follows the default.
+    std::optional<ScriptValue> standard;
+    if (!script.script.empty())
+        if (const auto info = script_info(assets::AssetId{script.script.id}))
+            if (const auto *declared = info.value().property(name)) {
+                if (declared->default_value.index() != value.index())
+                    return fail(ErrorCode::InvalidArgument, "'" + name + "' is a " + scripting::to_string(scripting::type_of(declared->default_value)) + " property");
+                standard = scene_value(declared->default_value);
+            }
+    std::erase_if(script.properties, [&](const ScriptProperty &p) { return p.name == name; });
+    if (!standard || *standard != value) {
+        // Kept in name order, so a scene file changes only where a value did.
+        const auto at = std::ranges::find_if(script.properties, [&](const ScriptProperty &p) { return p.name > name; });
+        script.properties.insert(at, ScriptProperty{name, value});
+    }
+    if (script == *record->components.script) return commands::Receipt{scene_revision(), {}, 0};
+    return execute(commands::SetScript{id, std::move(script)}, "Change " + name);
+}
+Result<commands::Receipt> EditorSession::reset_script_property(EntityId id, const std::string &name) {
+    const auto record = scene().inspect(id);
+    if (!record) return fail(ErrorCode::NotFound, "Entity no longer exists");
+    if (!record->components.script || !record->components.script->find(name))
+        return fail(ErrorCode::NotFound, record->name + " has no value of its own for '" + name + "'");
+    auto script = *record->components.script;
+    std::erase_if(script.properties, [&](const ScriptProperty &p) { return p.name == name; });
+    return execute(commands::SetScript{id, std::move(script)}, "Reset " + name);
 }
 void EditorSession::discard_material_draft(assets::AssetId id) {
     if (material_drafts_.erase(id)) forget_materials();
@@ -2596,6 +2777,107 @@ void EditorSession::play_cue(EntityId id, gameplay::AnimationCue cue) {
     if (clip.empty()) return;
     if (cue == gameplay::AnimationCue::Flinch) (void)runtime_->animation.play_layered(id, clip, 1.0, 0.08);
     else (void)runtime_->animation.play(id, clip, 0.25, true);
+}
+void EditorSession::fire_effect(const gameplay::EffectEvent &event) {
+    auto &r = *runtime_;
+    const auto source = r.scene.inspect(event.source);
+    if (!source || !source->components.emitter) return;
+    std::string why;
+    if (const auto effect = effect_source(source->components.emitter->effect, why))
+        r.particles.fire(event.source, effect->data, {event.point.x, event.point.y, event.point.z}, {event.direction.x, event.direction.y, event.direction.z},
+                         event.strength * source->components.emitter->rate_scale);
+}
+void EditorSession::stop_scripts() {
+    if (!runtime_ || !runtime_->scripts) return;
+    runtime_->scripts->stop();
+    collect_script_messages();
+}
+void EditorSession::collect_script_messages() {
+    if (!runtime_ || !runtime_->scripts) return;
+    auto &scripts = runtime_->scripts->runtime();
+    // Kept for whoever shows them; a session nobody reads keeps only the newest.
+    constexpr std::size_t keep = 512;
+    for (auto &error : scripts.take_errors()) {
+        script_errors_.push_back(std::move(error));
+        ++script_errors_seen_;
+    }
+    for (auto &line : scripts.take_output()) script_output_.push_back(std::move(line));
+    if (script_errors_.size() > keep) script_errors_.erase(script_errors_.begin(), script_errors_.end() - keep);
+    if (script_output_.size() > keep) script_output_.erase(script_output_.begin(), script_output_.end() - keep);
+}
+void EditorSession::set_game_input(const gameplay::InputFrame &input) {
+    if (!runtime_) return;
+    if (runtime_->game) runtime_->game->set_input(input);
+    if (runtime_->scripts) runtime_->scripts->set_input(input);
+}
+std::vector<scripting::ScriptError> EditorSession::take_script_errors() { return std::exchange(script_errors_, {}); }
+std::filesystem::path EditorSession::script_file(assets::AssetId id) const {
+    const auto meta = assets_ ? assets_->find(id) : std::nullopt;
+    if (!meta || meta->type != assets::AssetType::Script) return {};
+    return asset_folder() / utf8_file(meta->path);
+}
+Result<std::string> EditorSession::script_text(assets::AssetId id) const {
+    const auto file = script_file(id);
+    if (file.empty()) return fail(ErrorCode::NotFound, "The script is not in the asset folder");
+    return read_text_file(file);
+}
+Result<void> EditorSession::save_script(assets::AssetId id, std::string_view text) {
+    const auto file = script_file(id);
+    if (file.empty()) return fail(ErrorCode::NotFound, "The script is not in the asset folder");
+    if (text.size() > scripting::max_script_bytes) return fail(ErrorCode::InvalidArgument, "A script is at most 1 MB");
+    if (auto written = write_text_file(file, std::string(text)); !written) return written;
+    if (runtime_ && runtime_->scripts) reload_changed_scripts();
+    return {};
+}
+Result<scripting::ScriptInfo> EditorSession::check_script(assets::AssetId id, std::string_view text) const {
+    const auto meta = assets_ ? assets_->find(id) : std::nullopt;
+    if (!meta || meta->type != assets::AssetType::Script) return fail(ErrorCode::NotFound, "The script is not in the asset folder");
+    std::string name = package_name_of(id);
+    if (name.empty()) name = std::string(game_mount) + "/" + meta->path;
+    const auto files = scripting::package_loader(packages());
+    const std::string typed(text);
+    // This script as typed, under its own name; what it requires as saved.
+    const scripting::ScriptLoader loader = [&](std::string_view wanted) -> Result<scripting::ScriptSource> {
+        auto found = files(wanted);
+        if ((found && found.value().name == name) || wanted == name) return scripting::ScriptSource{name, typed};
+        return found;
+    };
+    return scripting::inspect_script(name, loader);
+}
+void EditorSession::reload_changed_scripts() {
+    if (!runtime_ || !runtime_->scripts) return;
+    auto &scripts = runtime_->scripts->runtime();
+    for (const auto &name : scripts.loaded()) {
+        const auto found = packages().resolve(name);
+        if (!found) continue;
+        std::error_code ec;
+        const auto written = std::filesystem::last_write_time(found.value().file, ec);
+        if (ec) continue;
+        const auto [known, fresh] = script_times_.try_emplace(name, written);
+        if (fresh || known->second == written) continue;
+        known->second = written;
+        // A failure keeps the old code running; the runtime reports it with its line.
+        if (scripts.reload(name)) script_output_.push_back({name, 0, "Reloaded: the running scripts use it from now on", false});
+    }
+    collect_script_messages();
+}
+std::string EditorSession::external_command(std::string_view pattern, const std::filesystem::path &file, int line) {
+    std::string command(pattern.empty() ? default_external_editor : pattern);
+    const auto put = [&](std::string_view key, const std::string &value) {
+        for (auto at = command.find(key); at != std::string::npos; at = command.find(key, at + value.size())) command.replace(at, key.size(), value);
+    };
+    const auto text = file.u8string();
+    put("{file}", std::string(reinterpret_cast<const char *>(text.data()), text.size()));
+    put("{line}", std::to_string(std::max(line, 1)));
+    return command;
+}
+std::vector<scripting::ScriptOutput> EditorSession::take_script_output() { return std::exchange(script_output_, {}); }
+std::vector<EntityId> EditorSession::script_instances() const {
+    return runtime_ && runtime_->scripts ? runtime_->scripts->runtime().instances() : std::vector<EntityId>{};
+}
+std::optional<scripting::Value> EditorSession::script_field(EntityId id, std::string_view name) const {
+    if (!runtime_ || !runtime_->scripts) return std::nullopt;
+    return runtime_->scripts->runtime().field(id, name);
 }
 const std::vector<std::string> &EditorSession::game_issues() const {
     static const std::vector<std::string> none;
