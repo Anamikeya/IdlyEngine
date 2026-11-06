@@ -2,8 +2,8 @@
 
 Branch `milestone-5`, worktree `D:\AI\GameEngine-Integration`. Plan: [`MILESTONE_5_PLAN.md`](MILESTONE_5_PLAN.md).
 Every result below was produced at commit `cabee69` (code, tests, sample), except the earlier slices' own real-input runs,
-which were made on their slices' commits. The commit holding this report adds only documents and evidence. **Not merged into
-`main`, and not pushed.** It awaits your approval.
+which were made on their slices' commits. The commits after it add only documents and evidence. **Merged into `main` on
+2026-11-06 with your approval**, and pushed to `origin` with the `milestone-5` branch.
 
 ## Verdict: done, every acceptance criterion met
 

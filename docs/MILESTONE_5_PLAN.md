@@ -1,7 +1,7 @@
 # Milestone 5 plan: characters and effects
 
 Branch `milestone-5`, worktree `D:\AI\GameEngine-Integration`, created from `main` at `14c6642`.
-**Status: approved 2026-11-03. Slices 0 to 7 done 2026-11-05 (slice 7 added at the user's request before pushing); see the [report](MILESTONE_5_REPORT.md).** Do not merge into `main` without the user's approval.
+**Status: approved 2026-11-03. Slices 0 to 7 done 2026-11-05 (slice 7 added at the user's request before pushing); see the [report](MILESTONE_5_REPORT.md). Merged into `main` 2026-11-06 with the user's approval.**
 
 Decisions (2026-11-03): the plan is approved as written. ozz-animation 0.17.0 goes into `resources` at its pinned commit.
 The enemy is Quaternius' Universal Animation Library (CC0), downloaded in glTF. Edit-mode preview is on by default.
