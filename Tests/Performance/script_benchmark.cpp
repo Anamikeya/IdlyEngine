@@ -47,12 +47,12 @@ std::string math_script()
 {
 	return std::string(header) +
 		"function S:tick(dt)\n"
-		"  local a, b = self.a, self.b\n"
-		"  local length = (b - a):length()\n"
+		"  local a, path = self.a, self.b - self.a\n"
+		"  local length = path:length()\n"
 		"  if length <= 0 then return end\n"
 		"  self.travelled = math.fmod(self.travelled + math.max(self.speed, 0) * dt, 2 * length)\n"
 		"  local along = (self.travelled <= length and self.travelled or 2 * length - self.travelled) / length\n"
-		"  self.last = a + (b - a) * along\n"
+		"  self.last = a + path * along\n"
 		"end\nreturn S\n";
 }
 std::string read_script() { return std::string(header) + "function S:tick(dt) self.last = self.entity.position end\nreturn S\n"; }

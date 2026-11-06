@@ -17,14 +17,14 @@ function Mover:start()
 end
 
 function Mover:tick(dt)
-  local a, b = self.a, self.b
-  local length = (b - a):length()
+  local a, path = self.a, self.b - self.a
+  local length = path:length()
   if length <= 0 then
     return
   end
   self.travelled = math.fmod(self.travelled + math.max(self.speed, 0) * dt, 2 * length)
   local along = (self.travelled <= length and self.travelled or 2 * length - self.travelled) / length
-  self.entity.position = a + (b - a) * along
+  self.entity.position = a + path * along
 end
 
 return Mover

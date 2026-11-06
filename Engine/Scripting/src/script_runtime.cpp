@@ -9,6 +9,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <map>
+#include <new>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -268,6 +269,103 @@ struct ScriptRuntime::Impl {
 		without_finalizer<Color>();
 		without_finalizer<Quaternion>();
 		without_finalizer<EntityRef>();
+		quick_vector_operators();
+	}
+
+	// Vec3's operators are what scripts use most, a few times each tick of each instance, and sol2's checks and overload
+	// resolution made each cost 0.25 µs, most of a mover's arithmetic. These do the same arithmetic as plain C functions
+	// for two Vec3 values, or a value and a number, and hand anything else to sol2's own, kept as their second upvalue,
+	// so other operands still work or fail as they did.
+	void quick_vector_operators()
+	{
+		lua_State* L = lua.lua_state();
+		if (luaL_getmetatable(L, sol::usertype_traits<Vector3>::metatable().c_str()) != LUA_TTABLE)
+			throw std::runtime_error("Vec3 has no metatable to speed up");
+		const int meta = lua_gettop(L);
+		const std::pair<const char*, lua_CFunction> operators[] = {{"__add", &vector_add}, {"__sub", &vector_subtract},
+			{"__mul", &vector_multiply}, {"__div", &vector_divide}, {"__unm", &vector_negate}, {"__eq", &vector_equal}};
+		for (const auto& [key, function] : operators) {
+			lua_pushstring(L, key);
+			lua_pushvalue(L, meta); // Upvalue 1: what a Vec3 value's metatable is.
+			lua_pushstring(L, key);
+			lua_rawget(L, meta); // Upvalue 2: sol2's function.
+			if (lua_type(L, -1) != LUA_TFUNCTION) throw std::runtime_error(std::string("Vec3 has no ") + key);
+			lua_pushcclosure(L, function, 2);
+			lua_rawset(L, meta);
+		}
+		lua_pop(L, 1);
+	}
+
+	// The Vec3 value at an index of the stack, when it is one: a full userdata whose metatable is Vec3's.
+	static bool vector_at(lua_State* L, int index, Vector3& out)
+	{
+		if (lua_type(L, index) != LUA_TUSERDATA || !lua_getmetatable(L, index)) return false;
+		const bool vector = lua_rawequal(L, -1, lua_upvalueindex(1));
+		lua_pop(L, 1);
+		if (!vector) return false;
+		out = **static_cast<Vector3**>(sol::detail::align_usertype_pointer(lua_touserdata(L, index)));
+		return true;
+	}
+	// A new Vec3 value, laid out as sol2 lays out its own.
+	static int push_vector(lua_State* L, const Vector3& v)
+	{
+		new (sol::detail::usertype_allocate<Vector3>(L)) Vector3(v);
+		lua_pushvalue(L, lua_upvalueindex(1));
+		lua_setmetatable(L, -2);
+		return 1;
+	}
+	static int sol2_instead(lua_State* L)
+	{
+		const int args = lua_gettop(L);
+		lua_pushvalue(L, lua_upvalueindex(2));
+		lua_insert(L, 1);
+		lua_call(L, args, LUA_MULTRET);
+		return lua_gettop(L);
+	}
+	static int vector_add(lua_State* L)
+	{
+		Vector3 a{}, b{};
+		if (!vector_at(L, 1, a) || !vector_at(L, 2, b)) return sol2_instead(L);
+		return push_vector(L, {a.x + b.x, a.y + b.y, a.z + b.z});
+	}
+	static int vector_subtract(lua_State* L)
+	{
+		Vector3 a{}, b{};
+		if (!vector_at(L, 1, a) || !vector_at(L, 2, b)) return sol2_instead(L);
+		return push_vector(L, {a.x - b.x, a.y - b.y, a.z - b.z});
+	}
+	static int vector_multiply(lua_State* L)
+	{
+		Vector3 v{};
+		if (lua_type(L, 2) == LUA_TNUMBER && vector_at(L, 1, v)) {
+			const double s = lua_tonumber(L, 2);
+			return push_vector(L, {v.x * s, v.y * s, v.z * s});
+		}
+		if (lua_type(L, 1) == LUA_TNUMBER && vector_at(L, 2, v)) {
+			const double s = lua_tonumber(L, 1);
+			return push_vector(L, {v.x * s, v.y * s, v.z * s});
+		}
+		return sol2_instead(L);
+	}
+	static int vector_divide(lua_State* L)
+	{
+		Vector3 v{};
+		if (lua_type(L, 2) != LUA_TNUMBER || !vector_at(L, 1, v)) return sol2_instead(L);
+		const double s = lua_tonumber(L, 2);
+		return push_vector(L, {v.x / s, v.y / s, v.z / s});
+	}
+	static int vector_negate(lua_State* L)
+	{
+		Vector3 v{};
+		if (!vector_at(L, 1, v)) return sol2_instead(L);
+		return push_vector(L, {-v.x, -v.y, -v.z});
+	}
+	static int vector_equal(lua_State* L)
+	{
+		Vector3 a{}, b{};
+		if (!vector_at(L, 1, a) || !vector_at(L, 2, b)) return sol2_instead(L);
+		lua_pushboolean(L, a == b);
+		return 1;
 	}
 
 	// Takes the finalizer off the metatables of a type's values, so new ones are not marked for finalization.

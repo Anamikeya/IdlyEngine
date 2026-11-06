@@ -443,6 +443,50 @@ return C
 	ENGINE_CHECK(number_field(runtime, 1, "after") - number_field(runtime, 1, "before") < 256);
 }
 
+// Slice 6: Vec3's operators are plain C functions for two values, or a value and a number, and sol2's own for anything
+// else, so they give the same numbers and refuse the same operands as before.
+ENGINE_TEST(vector_operators_compute_and_refuse_as_before)
+{
+	const Scripts scripts{{"/Game/Scripts/Ops", R"lua(local O = {}
+function O:start()
+	local a, b = Vec3(1, 2, 3), Vec3(0.5, -4, 8)
+	self.sum, self.difference = a + b, a - b
+	self.scaled, self.scaled_left, self.by_integer = a * 0.25, 3 * a, a * 2
+	self.divided, self.negated = b / 4, -b
+	self.equal, self.unequal = a == Vec3(1, 2, 3), a == b
+	self.chained = (a - b):length() + (a + b * 2 - a / 2):dot(Vec3(1, 1, 1))
+	local refused = 0
+	for _, f in ipairs({ function() return a + 1 end, function() return 1 - a end, function() return a * b end,
+		function() return a / b end, function() return 2 / a end, function() return a + Color(1, 1, 1) end }) do
+		if not pcall(f) then refused = refused + 1 end
+	end
+	self.refused = refused
+end
+return O
+)lua"}};
+	ScriptRuntime runtime(memory_loader(scripts));
+	ENGINE_REQUIRE(runtime.attach(1, "/Game/Scripts/Ops"));
+	ENGINE_REQUIRE(runtime.call(1, "start"));
+	ENGINE_CHECK(runtime.take_errors().empty());
+	const auto vector = [&](const char* name) {
+		const auto value = runtime.field(1, name);
+		ENGINE_REQUIRE(value.has_value() && std::holds_alternative<Vector3>(*value));
+		return std::get<Vector3>(*value);
+	};
+	ENGINE_CHECK(vector("sum") == (Vector3{1.5, -2, 11}));
+	ENGINE_CHECK(vector("difference") == (Vector3{0.5, 6, -5}));
+	ENGINE_CHECK(vector("scaled") == (Vector3{0.25, 0.5, 0.75}));
+	ENGINE_CHECK(vector("scaled_left") == (Vector3{3, 6, 9}));
+	ENGINE_CHECK(vector("by_integer") == (Vector3{2, 4, 6}));
+	ENGINE_CHECK(vector("divided") == (Vector3{0.125, -1, 2}));
+	ENGINE_CHECK(vector("negated") == (Vector3{-0.5, 4, -8}));
+	ENGINE_CHECK(bool_field(runtime, 1, "equal"));
+	ENGINE_CHECK(!bool_field(runtime, 1, "unequal"));
+	// |(0.5, 6, -5)| plus (1, 2, 3) + (1, -8, 16) - (0.5, 1, 1.5) summed.
+	ENGINE_CHECK_NEAR(number_field(runtime, 1, "chained"), std::hypot(0.5, 6.0, -5.0) + (1.5 - 7 + 17.5), 1e-12);
+	ENGINE_CHECK_NEAR(number_field(runtime, 1, "refused"), 6.0, 0);
+}
+
 ENGINE_TEST(inspecting_a_script_runs_only_its_top_level_within_a_budget)
 {
 	const Scripts scripts{
