@@ -53,7 +53,8 @@ struct SetLight {
 };
 // Copies the entity and its whole subtree, components included, under the same parent. Copies get new
 // stable IDs in breadth-first order (Receipt::created, the copy of `id` first). An empty name keeps the
-// original name for the copied root; descendants always keep theirs.
+// original name for the copied root; descendants always keep theirs. Script properties naming an entity of the
+// subtree name its copy; those naming anything else are kept.
 struct DuplicateEntity {
     EntityId id;
     std::string name;
@@ -92,10 +93,14 @@ struct SetRagdoll {
     EntityId id;
     std::optional<RagdollComponent> ragdoll;
 };
+struct SetScript {
+    EntityId id;
+    std::optional<ScriptComponent> script;
+};
 using Command = std::variant<CreateEntity, DeleteEntity, RenameEntity, SetTransform, SetParent,
                              ReplaceScene, SetMesh, SetCamera, SetLight, DuplicateEntity,
                              SetRigidBody, SetColliders, SetEnvironment, SetBehaviors, SetParticleEmitter,
-                             SetAnimator, SetAttachToBone, SetRagdoll>;
+                             SetAnimator, SetAttachToBone, SetRagdoll, SetScript>;
 struct CommandDescriptor {
     std::string_view name;
     Capability permission;

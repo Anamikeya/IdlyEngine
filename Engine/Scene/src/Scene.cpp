@@ -7,6 +7,7 @@
 #include <glm/gtc/type_ptr.hpp>
 #include <limits>
 #include <stdexcept>
+#include <type_traits>
 namespace engine {
 namespace {
 bool unit(double v) { return std::isfinite(v) && v >= 0 && v <= 1; }
@@ -131,6 +132,46 @@ Result<void> validate_components(const Components &c) {
                 !(b.twist_degrees == -1 || within(b.twist_degrees, 0, 178)))
                 return fail(ErrorCode::InvalidArgument, "Ragdoll bone '" + b.bone +
                                                             "': radius within [0, 100], density [0, 100000], swing -1 or [0, 180], twist -1 or [0, 178]");
+        }
+    }
+    if (const auto &s = c.script) {
+        if (!valid_ref(s->script))
+            return fail(ErrorCode::InvalidArgument, "An asset reference needs both an ID and a short path, or neither");
+        if (s->properties.size() > max_script_properties)
+            return fail(ErrorCode::InvalidArgument, "A script component holds at most 64 property values");
+        const auto lua_name = [](const std::string &text) {
+            const auto letter = [](char ch) { return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || ch == '_'; };
+            return !text.empty() && text.size() <= 64 && letter(text[0]) &&
+                   std::all_of(text.begin(), text.end(), [&](char ch) { return letter(ch) || (ch >= '0' && ch <= '9'); });
+        };
+        for (std::size_t i = 0; i < s->properties.size(); ++i) {
+            const auto &p = s->properties[i];
+            if (!lua_name(p.name))
+                return fail(ErrorCode::InvalidArgument, "A script property is named by 1 to 64 letters, digits or '_', not starting with a digit");
+            for (std::size_t k = 0; k < i; ++k)
+                if (s->properties[k].name == p.name)
+                    return fail(ErrorCode::InvalidArgument, "Script property '" + p.name + "' appears twice");
+            const bool valid = std::visit(
+                [&](const auto &v) {
+                    using T = std::decay_t<decltype(v)>;
+                    if constexpr (std::is_same_v<T, double>)
+                        return std::isfinite(v);
+                    else if constexpr (std::is_same_v<T, std::string>)
+                        return v.size() <= max_script_text_bytes &&
+                               std::none_of(v.begin(), v.end(), [](char ch) { return static_cast<unsigned char>(ch) < 32; });
+                    else if constexpr (std::is_same_v<T, Vec3>)
+                        return finite(v);
+                    else if constexpr (std::is_same_v<T, ScriptColor>)
+                        return unit(v.r) && unit(v.g) && unit(v.b) && unit(v.a);
+                    else if constexpr (std::is_same_v<T, AssetRef>)
+                        return valid_ref(v);
+                    else
+                        return true;
+                },
+                p.value);
+            if (!valid)
+                return fail(ErrorCode::InvalidArgument, "Script property '" + p.name +
+                                                            "': numbers and vectors must be finite, colors within [0, 1], text one line of at most 4096 bytes");
         }
     }
     if (const auto &b = c.body) {
@@ -270,6 +311,7 @@ Scene::Scene() {
     w.component<AnimatorComponent>();
     w.component<AttachToBoneComponent>();
     w.component<RagdollComponent>();
+    w.component<ScriptComponent>();
 }
 std::optional<EntityRecord> Scene::inspect(EntityId id) const {
     if (!on_owner_thread())
@@ -282,7 +324,7 @@ std::optional<EntityRecord> Scene::inspect(EntityId id) const {
                         {read<MeshComponent>(e), read<CameraComponent>(e), read<LightComponent>(e),
                          read<RigidBodyComponent>(e), read_colliders(e), read<EnvironmentComponent>(e), read_behaviors(e),
                          read<ParticleEmitterComponent>(e), read<AnimatorComponent>(e), read<AttachToBoneComponent>(e),
-                         read<RagdollComponent>(e)}};
+                         read<RagdollComponent>(e), read<ScriptComponent>(e)}};
 }
 SceneSnapshot Scene::snapshot() const {
     if (!on_owner_thread())
@@ -359,6 +401,7 @@ Result<void> Scene::commit(const SceneSnapshot &s) {
         mirror(e, record.components.animator);
         mirror(e, record.components.attach);
         mirror(e, record.components.ragdoll);
+        mirror(e, record.components.script);
         const auto &desired_transform = transforms.value().at(record.id);
         if (!e.has<WorldTransform>() || e.get<WorldTransform>().matrix != desired_transform.matrix)
             e.set<WorldTransform>(desired_transform);

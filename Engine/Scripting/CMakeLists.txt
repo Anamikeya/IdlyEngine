@@ -5,11 +5,13 @@ add_library(engine_scripting STATIC
 	include/engine/scripting/script_types.h
 	include/engine/scripting/script_runtime.h
 	include/engine/scripting/script_loader.h
+	include/engine/scripting/scene_values.h
 	src/script_runtime.cpp
 	src/script_loader.cpp
+	src/scene_values.cpp
 )
 add_library(engine::scripting ALIAS engine_scripting)
 target_include_directories(engine_scripting PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
-target_link_libraries(engine_scripting PUBLIC engine::assets PRIVATE gameengine::sol2)
+target_link_libraries(engine_scripting PUBLIC engine::assets engine::core PRIVATE gameengine::sol2)
 gameengine_target_defaults(engine_scripting)
 set_target_properties(engine_scripting PROPERTIES FOLDER "Engine")

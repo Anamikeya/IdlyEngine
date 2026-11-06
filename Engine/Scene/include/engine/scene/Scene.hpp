@@ -7,7 +7,9 @@
 #include <map>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
+#include <variant>
 #include <vector>
 namespace engine::commands {
 class CommandBus;
@@ -194,6 +196,37 @@ struct RagdollComponent {
     std::vector<RagdollBone> bones; // Settings for single bones, each at most once.
     bool operator==(const RagdollComponent &) const = default;
 };
+// A script property's value as the scene stores it (Milestone 6, D6). The scene gives it no meaning beyond its type:
+// number, boolean, text, vector, color, entity or asset, in that order of the variant.
+struct ScriptColor {
+    double r = 1, g = 1, b = 1, a = 1; // sRGB in [0, 1]; alpha is linear.
+    bool operator==(const ScriptColor &) const = default;
+};
+struct EntityLink {
+    EntityId id = 0; // 0: none. May name an entity that no longer exists; the runtime reports it when used.
+    bool operator==(const EntityLink &) const = default;
+};
+using ScriptValue = std::variant<double, bool, std::string, Vec3, ScriptColor, EntityLink, AssetRef>;
+struct ScriptProperty {
+    std::string name; // A Lua name: a letter or '_', then letters, digits or '_'; 1 to 64 bytes.
+    ScriptValue value;
+    bool operator==(const ScriptProperty &) const = default;
+};
+inline constexpr std::size_t max_script_properties = 64, max_script_text_bytes = 4096;
+// Runs a Lua script asset (.lua) on the entity in Play and Simulate (Milestone 6). It holds only the values that differ
+// from the script's defaults, so a default changed in the script reaches every entity that kept it. Text values are
+// one line: no control characters.
+struct ScriptComponent {
+    AssetRef script;                        // Empty: nothing runs.
+    std::vector<ScriptProperty> properties; // Each name at most once.
+    const ScriptProperty *find(std::string_view property) const noexcept {
+        for (const auto &p : properties)
+            if (p.name == property)
+                return &p;
+        return nullptr;
+    }
+    bool operator==(const ScriptComponent &) const = default;
+};
 struct Components {
     std::optional<MeshComponent> mesh;
     std::optional<CameraComponent> camera;
@@ -206,6 +239,7 @@ struct Components {
     std::optional<AnimatorComponent> animator;
     std::optional<AttachToBoneComponent> attach;
     std::optional<RagdollComponent> ragdoll;
+    std::optional<ScriptComponent> script;
     bool operator==(const Components &) const = default;
 };
 struct EntityRecord {
@@ -256,7 +290,7 @@ class Scene final {
     static Result<void> validate(const SceneSnapshot &);
 };
 // Text scene format, docs/architecture/006-scene-format.md. Writes the current version; reads 1..current.
-inline constexpr unsigned scene_format_version = 7;
+inline constexpr unsigned scene_format_version = 8;
 Result<void> write_scene(std::ostream &, const SceneSnapshot &);
 Result<SceneSnapshot> read_scene(std::istream &);
 } // namespace engine

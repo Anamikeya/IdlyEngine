@@ -300,6 +300,8 @@ struct EditorUI {
     void details_add(const char *what, const std::function<std::optional<commands::Command>(const EntityRecord &)> &make);
     void finish_details_edit();
     void behavior_sections();
+    // The Script component: its script, and a field for each property the script declares (Milestone 6).
+    void script_section();
     // Field helpers the Lighting panel also uses: drags commit on release; combos and checkboxes at once.
     static bool committed(bool changed);
     static bool color_edit(const char *label, Vec3 &c);
@@ -323,6 +325,9 @@ struct EditorUI {
     // Names the Details panel offers for a text property: "clip" (the entity's clips) or "bone" (its parent's joints).
     std::vector<std::string> name_suggestions(std::string_view kind, EntityId id) const;
     std::array<char, 257> name_typed{};
+    // A script's text property while it is typed in, and which one it is.
+    std::array<char, max_script_text_bytes + 1> script_text{};
+    std::string script_text_key;
     // Lines between joints of the shown skeletons (View > Show Bones).
     void bone_overlay(ImVec2 origin, ImVec2 size);
     std::string animation_fields() const;
@@ -359,7 +364,7 @@ struct EditorUI {
     AssetSource asset_source = AssetSource::All;
     std::string asset_folder;
     std::array<char, 128> asset_search{}, asset_field_search{};
-    std::array<bool, 5> asset_chips{};
+    std::array<bool, 6> asset_chips{};
     bool asset_list_view = false;
     assets::AssetId asset_scroll_to;
     bool asset_drawer_open = false, asset_drawer_focus = false;

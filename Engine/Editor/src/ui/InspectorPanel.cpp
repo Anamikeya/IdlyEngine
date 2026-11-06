@@ -665,6 +665,7 @@ void EditorUI::inspector() {
             ImGui::TextWrapped("Physics: %s", issue.message.c_str());
             ImGui::PopStyleColor();
         }
+    script_section();
     behavior_sections();
     // ---- Adding ----
     ImGui::Spacing();
@@ -680,6 +681,18 @@ void EditorUI::inspector() {
         mark("Details.Add.Light");
         if (add_light)
             details_add("Light", [](const EntityRecord &r) -> std::optional<commands::Command> { if (r.components.light) return std::nullopt; return commands::SetLight{r.id, LightComponent{}}; });
+        const bool add_script = ImGui::MenuItem("Script", nullptr, false, any_missing([](const EntityRecord &r) { return r.components.script.has_value(); }));
+        mark("Details.Add.Script");
+        if (add_script) {
+            // Runs the script selected in the Asset Browser, if one is.
+            ScriptComponent added;
+            for (const auto &meta : session.assets())
+                if (meta.id == selected_asset && meta.type == assets::AssetType::Script) added.script = {meta.id.value, meta.path};
+            details_add("Script", [added](const EntityRecord &r) -> std::optional<commands::Command> {
+                if (r.components.script) return std::nullopt;
+                return commands::SetScript{r.id, added};
+            });
+        }
         if (ImGui::MenuItem("Particle Emitter", nullptr, false, any_missing([](const EntityRecord &r) { return r.components.emitter.has_value(); })))
             details_add("Particle Emitter", [](const EntityRecord &r) -> std::optional<commands::Command> { if (r.components.emitter) return std::nullopt; return commands::SetParticleEmitter{r.id, ParticleEmitterComponent{}}; });
         const bool add_animator = ImGui::MenuItem("Animator", nullptr, false, any_missing([](const EntityRecord &r) { return r.components.animator.has_value(); }));
@@ -830,6 +843,208 @@ void EditorUI::behavior_sections() {
         }
         ImGui::PopID();
     }
+}
+// A script's properties come from the script, so they are drawn from what it declares, by type, like behaviors. An
+// entity holds only the values that differ from the defaults; the arrow takes a value back to the default.
+void EditorUI::script_section() {
+    if (!std::ranges::all_of(details_targets, [](const EntityRecord &r) { return r.components.script.has_value(); })) return;
+    const auto &primary = details_targets.back();
+    const auto &component = *primary.components.script;
+    const bool same_script = std::ranges::all_of(details_targets, [&](const EntityRecord &r) { return r.components.script->script.id == component.script.id; });
+    const std::string_view search(details_search.data());
+    const std::string file = component.script.path.substr(component.script.path.rfind('/') + 1);
+    const auto wanted = [&](const std::string &name) { return has_text(name, search) || has_text("script", search) || has_text(file, search); };
+    const auto info = component.script.empty() || !same_script ? Result<scripting::ScriptInfo>(fail(ErrorCode::NotFound, "")) : session.script_info(assets::AssetId{component.script.id});
+    const auto has_own = [&](const std::string &name) {
+        return std::ranges::any_of(details_targets, [&](const EntityRecord &r) { return r.components.script->find(name) != nullptr; });
+    };
+    if (search.size() || details_only_modified) {
+        // Shown only when something in it is wanted.
+        bool any = wanted("script") && !details_only_modified;
+        if (info)
+            for (const auto &decl : info.value().properties) any |= wanted(decl.name) && (!details_only_modified || has_own(decl.name));
+        if (!any) return;
+    }
+    ImGui::PushID("Script");
+    const std::string scope = "Script";
+    const bool open = remembered_header(*this, scope, settings_key("open", scope), true, true);
+    mark("Header.Script");
+    const float width = ImGui::CalcTextSize("Remove").x + ImGui::GetStyle().FramePadding.x * 2;
+    ImGui::SameLine(ImGui::GetWindowContentRegionMax().x - width);
+    if (tip_small_button("Remove", "Take this component off everything selected")) {
+        std::vector<commands::Command> edits;
+        for (const auto &record : details_targets) edits.emplace_back(commands::SetScript{record.id, std::nullopt});
+        details_apply("Remove Script", std::move(edits));
+    }
+    mark("Remove.Script");
+    if (!open) { ImGui::PopID(); return; }
+    // Sets a value on every target, or takes theirs away (no value): the script's default then applies.
+    const auto apply = [&](const std::string &label, const std::string &name, const std::optional<ScriptValue> &value, const std::optional<ScriptValue> &standard) {
+        std::vector<commands::Command> edits;
+        for (const auto &record : details_targets) {
+            auto script = *record.components.script;
+            std::erase_if(script.properties, [&](const ScriptProperty &p) { return p.name == name; });
+            if (value && (!standard || *value != *standard)) {
+                const auto at = std::ranges::find_if(script.properties, [&](const ScriptProperty &p) { return p.name > name; });
+                script.properties.insert(at, ScriptProperty{name, *value});
+            }
+            if (script != *record.components.script) edits.emplace_back(commands::SetScript{record.id, std::move(script)});
+        }
+        details_apply(label, std::move(edits));
+    };
+    if (begin_rows("##rows")) {
+        // ---- The script itself ----
+        ImGui::TableNextRow();
+        ImGui::TableNextColumn();
+        ImGui::AlignTextToFramePadding();
+        ImGui::Indent(ImGui::GetFrameHeight() * 0.7f);
+        ImGui::TextUnformatted("Script");
+        ImGui::Unindent(ImGui::GetFrameHeight() * 0.7f);
+        ImGui::TableNextColumn();
+        ImGui::PushID("##asset");
+        AssetRef chosen = component.script;
+        if (asset_field("script", chosen, !same_script)) {
+            std::vector<commands::Command> edits;
+            for (const auto &record : details_targets) {
+                auto script = *record.components.script;
+                script.script = chosen;
+                if (script != *record.components.script) edits.emplace_back(commands::SetScript{record.id, std::move(script)});
+            }
+            details_apply("Assign Script", std::move(edits));
+        }
+        ImGui::PopID();
+        mark("Details.Script.Asset");
+        ImGui::TableNextColumn();
+        // ---- What it declares ----
+        if (info) {
+            for (const auto &decl : info.value().properties) {
+                if (!wanted(decl.name) || (details_only_modified && !has_own(decl.name))) continue;
+                const ScriptValue standard = session.scene_value(decl.default_value);
+                const auto value_of = [&](const EntityRecord &r) {
+                    const auto *own = r.components.script->find(decl.name);
+                    // A value of another type is one the script no longer has: the default applies.
+                    return own && own->value.index() == standard.index() ? own->value : standard;
+                };
+                const ScriptValue current = value_of(primary);
+                const bool mixed = std::ranges::any_of(details_targets, [&](const EntityRecord &r) { return value_of(r) != current; });
+                const bool own = has_own(decl.name);
+                const std::string change = "Change " + decl.name;
+                ImGui::PushID(decl.name.c_str());
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::AlignTextToFramePadding();
+                ImGui::Indent(ImGui::GetFrameHeight() * 0.7f);
+                ImGui::TextUnformatted(decl.name.c_str());
+                ImGui::Unindent(ImGui::GetFrameHeight() * 0.7f);
+                ImGui::SetItemTooltip("%s property of %s", scripting::to_string(scripting::type_of(decl.default_value)), info.value().name.c_str());
+                ImGui::TableNextColumn();
+                ImGui::SetNextItemWidth(-FLT_MIN);
+                ImGui::BeginGroup();
+                std::visit([&](const auto &v) {
+                    using V = std::decay_t<decltype(v)>;
+                    if constexpr (std::is_same_v<V, double>) {
+                        double number = v;
+                        if (scrub("##value", number, 0.05, -1e9, 1e9, "%.3f", mixed)) apply(change, decl.name, ScriptValue(number), standard);
+                    } else if constexpr (std::is_same_v<V, bool>) {
+                        bool on = v;
+                        ImGui::PushItemFlag(ImGuiItemFlags_MixedValue, mixed);
+                        if (ImGui::Checkbox("##value", &on)) apply(change, decl.name, ScriptValue(on), standard);
+                        ImGui::PopItemFlag();
+                    } else if constexpr (std::is_same_v<V, std::string>) {
+                        // Typed into a buffer of its own, and set when the typing ends.
+                        const auto key = std::to_string(primary.id) + "." + decl.name;
+                        if (script_text_key != key || !ImGui::IsAnyItemActive()) {
+                            std::snprintf(script_text.data(), script_text.size(), "%s", mixed ? "" : v.c_str());
+                            script_text_key = key;
+                        }
+                        ImGui::InputTextWithHint("##value", mixed ? "Multiple Values" : "", script_text.data(), script_text.size());
+                        if (ImGui::IsItemDeactivatedAfterEdit()) {
+                            std::string typed(script_text.data());
+                            std::erase_if(typed, [](char ch) { return static_cast<unsigned char>(ch) < 32; });
+                            apply(change, decl.name, ScriptValue(std::move(typed)), standard);
+                        }
+                    } else if constexpr (std::is_same_v<V, Vec3>) {
+                        std::array<double, 3> values{v.x, v.y, v.z};
+                        std::array<bool, 3> differ{};
+                        for (const auto &record : details_targets) {
+                            const auto other = std::get<Vec3>(value_of(record));
+                            differ[0] |= other.x != v.x; differ[1] |= other.y != v.y; differ[2] |= other.z != v.z;
+                        }
+                        if (const int axis = axis_fields(values, 0.05, 0, 0, "%.3f", differ); axis >= 0) {
+                            Vec3 changed = v;
+                            (axis == 0 ? changed.x : axis == 1 ? changed.y : changed.z) = values[std::size_t(axis)];
+                            apply(change, decl.name, ScriptValue(changed), standard);
+                        }
+                    } else if constexpr (std::is_same_v<V, ScriptColor>) {
+                        float color[4]{float(v.r), float(v.g), float(v.b), float(v.a)};
+                        if (mixed) {
+                            if (ImGui::Button("Multiple Values", {-FLT_MIN, 0})) apply(change, decl.name, current, standard);
+                        } else if (ImGui::ColorEdit4("##value", color, ImGuiColorEditFlags_Float | ImGuiColorEditFlags_AlphaBar)) {
+                            const auto unit = [](float c) { return std::clamp(double(c), 0.0, 1.0); };
+                            apply(change, decl.name, ScriptValue(ScriptColor{unit(color[0]), unit(color[1]), unit(color[2]), unit(color[3])}), standard);
+                        }
+                    } else if constexpr (std::is_same_v<V, EntityLink>) {
+                        const auto target = v.id ? session.scene().inspect(v.id) : std::nullopt;
+                        const std::string label = mixed ? "Multiple Values" : !v.id ? "(none)" : target ? target->name : "(missing: " + std::to_string(v.id) + ")";
+                        if (ImGui::BeginCombo("##value", label.c_str(), ImGuiComboFlags_HeightLarge)) {
+                            if (ImGui::Selectable("(none)", !mixed && !v.id)) apply(change, decl.name, ScriptValue(EntityLink{}), standard);
+                            for (const auto &e : session.scene().snapshot().entities) {
+                                ImGui::PushID(reinterpret_cast<void *>(static_cast<uintptr_t>(e.id)));
+                                if (ImGui::Selectable(e.name.c_str(), !mixed && e.id == v.id)) apply(change, decl.name, ScriptValue(EntityLink{e.id}), standard);
+                                mark("Details.Script.Entity." + e.name);
+                                ImGui::PopID();
+                            }
+                            ImGui::EndCombo();
+                        }
+                    } else {
+                        AssetRef picked = v;
+                        if (asset_field("", picked, mixed)) apply(change, decl.name, ScriptValue(picked), standard);
+                    }
+                }, current);
+                ImGui::EndGroup();
+                mark("Details.Script." + decl.name);
+                ImGui::TableNextColumn();
+                if (own) {
+                    if (ImGui::ArrowButton("##reset", ImGuiDir_Left)) apply("Reset " + decl.name, decl.name, std::nullopt, standard);
+                    ImGui::SetItemTooltip("Reset to the script's default");
+                    mark("Arrow.Script." + decl.name);
+                }
+                ImGui::PopID();
+            }
+            // ---- Values the script no longer declares: kept, so a rename loses nothing, until removed here ----
+            for (const auto &property : component.properties) {
+                const auto *declared = info.value().property(property.name);
+                if ((declared && declared->default_value.index() == property.value.index()) || !wanted(property.name)) continue;
+                ImGui::PushID(("stale." + property.name).c_str());
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::AlignTextToFramePadding();
+                ImGui::Indent(ImGui::GetFrameHeight() * 0.7f);
+                ImGui::TextDisabled("%s", property.name.c_str());
+                ImGui::Unindent(ImGui::GetFrameHeight() * 0.7f);
+                ImGui::TableNextColumn();
+                if (declared) ImGui::TextDisabled("Not a %s any more", scripting::to_string(scripting::type_of(declared->default_value)));
+                else ImGui::TextDisabled("Not in the script");
+                ImGui::SameLine();
+                if (tip_small_button("Remove", "Remove this value, which the script does not use")) apply("Remove " + property.name, property.name, std::nullopt, std::nullopt);
+                mark("Details.Script.Stale." + property.name);
+                ImGui::TableNextColumn();
+                ImGui::PopID();
+            }
+        }
+        ImGui::EndTable();
+    }
+    if (!details_search[0] && !details_only_modified) {
+        if (component.script.empty()) ImGui::TextColored({0.95f, 0.75f, 0.3f, 1}, "No script: choose one, or drop a script on the field.");
+        else if (!same_script) ImGui::TextDisabled("The selected entities run different scripts.");
+        else if (!info) {
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.45f, 0.35f, 1));
+            ImGui::TextWrapped("%s", info.error().message.c_str());
+            ImGui::PopStyleColor();
+            mark("Details.Script.Error");
+        } else if (info.value().properties.empty()) ImGui::TextDisabled("The script declares no properties.");
+    }
+    ImGui::PopID();
 }
 // ---- Field helpers the Lighting panel also uses: drags commit on release; combos and checkboxes at once ----
 bool EditorUI::committed(bool changed) { return ImGui::IsItemDeactivatedAfterEdit() || (changed && !ImGui::IsItemActive()); }

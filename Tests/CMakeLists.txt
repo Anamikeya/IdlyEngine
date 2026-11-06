@@ -107,6 +107,10 @@ if(TARGET engine_editor_session)
 		LABELS editor assets unit
 		SOURCES Editor/editor_asset_path_tests.cpp
 		LIBRARIES engine_editor_session)
+	gameengine_add_test_executable(editor_script_tests
+		LABELS editor scripting unit
+		SOURCES Editor/editor_script_tests.cpp
+		LIBRARIES engine_editor_session)
 	gameengine_add_test_executable(editor_shooter_tests
 		LABELS editor gameplay unit
 		SOURCES Editor/editor_shooter_tests.cpp

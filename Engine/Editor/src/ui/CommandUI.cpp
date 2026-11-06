@@ -198,6 +198,7 @@ void EditorUI::bind_commands() {
     bind("Asset.Assign", [this, selected_asset_meta] {
         const auto meta = selected_asset_meta();
         if (meta->type == assets::AssetType::Effect) report(session.assign_effect(session.selection(), selected_asset), "Effect assigned to the selected entity");
+        else if (meta->type == assets::AssetType::Script) report(session.assign_script(session.selection(), selected_asset), "Script assigned to the selected entity");
         else report(meta->type == assets::AssetType::Material ? session.assign_material(session.selection(), selected_asset) : session.assign_asset(session.selection(), selected_asset), "Asset assigned to the selected entity");
     }, [this, selected_asset_meta] { const auto meta = selected_asset_meta(); return meta && session.selection() && meta->type != assets::AssetType::Environment; });
     bind("Asset.AddToScene", [this] { report(session.place_asset(selected_asset), "Added to the scene"); }, [selected_asset_meta] {

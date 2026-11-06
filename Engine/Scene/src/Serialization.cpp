@@ -7,6 +7,8 @@
 #include <locale>
 #include <ostream>
 #include <set>
+#include <string>
+#include <type_traits>
 namespace engine {
 namespace {
 struct StreamState {
@@ -115,6 +117,88 @@ void write_ref(std::ostream &out, const AssetRef &ref) {
     for (int shift = 60; shift >= 0; shift -= 4)
         out << digits[(ref.id >> shift) & 15];
     out << ' ' << std::quoted(ref.path);
+}
+// A script property's value: a type letter, then the value. n 1.5, b 1, t "text", v x y z, c r g b a, e 12, a <ref>.
+void write_script_value(std::ostream &out, const ScriptValue &value) {
+    std::visit(
+        [&](const auto &v) {
+            using T = std::decay_t<decltype(v)>;
+            if constexpr (std::is_same_v<T, double>)
+                out << "n " << v;
+            else if constexpr (std::is_same_v<T, bool>)
+                out << "b " << (v ? 1 : 0);
+            else if constexpr (std::is_same_v<T, std::string>)
+                out << "t " << std::quoted(v);
+            else if constexpr (std::is_same_v<T, Vec3>)
+                out << "v " << v.x << ' ' << v.y << ' ' << v.z;
+            else if constexpr (std::is_same_v<T, ScriptColor>)
+                out << "c " << v.r << ' ' << v.g << ' ' << v.b << ' ' << v.a;
+            else if constexpr (std::is_same_v<T, EntityLink>)
+                out << "e " << v.id;
+            else {
+                out << "a ";
+                write_ref(out, v);
+            }
+        },
+        value);
+}
+bool read_script_value(Reader &reader, ScriptValue &value) {
+    std::string tag;
+    if (!reader.token(tag, 1))
+        return false;
+    switch (tag[0]) {
+    case 'n': {
+        double v = 0;
+        if (!reader.number(v))
+            return false;
+        value = v;
+        return true;
+    }
+    case 'b': {
+        int v = -1;
+        if (!reader.number(v) || (v != 0 && v != 1))
+            return false;
+        value = v == 1;
+        return true;
+    }
+    case 't': {
+        std::string v;
+        if (!reader.name(v, max_script_text_bytes))
+            return false;
+        value = std::move(v);
+        return true;
+    }
+    case 'v': {
+        Vec3 v;
+        if (!reader.number(v.x) || !reader.number(v.y) || !reader.number(v.z))
+            return false;
+        value = v;
+        return true;
+    }
+    case 'c': {
+        ScriptColor v;
+        if (!reader.number(v.r) || !reader.number(v.g) || !reader.number(v.b) || !reader.number(v.a))
+            return false;
+        value = v;
+        return true;
+    }
+    case 'e': {
+        EntityLink v;
+        if (!reader.number(v.id))
+            return false;
+        value = v;
+        return true;
+    }
+    case 'a': {
+        AssetRef v;
+        if (!reader.asset_ref(v))
+            return false;
+        value = std::move(v);
+        return true;
+    }
+    default:
+        return false;
+    }
 }
 const char *mesh_token(BuiltinMesh mesh) {
     switch (mesh) {
@@ -230,7 +314,7 @@ Result<void> write_scene(std::ostream &out, const SceneSnapshot &s) {
                           e.components.colliders.size() + e.components.environment.has_value() +
                           e.components.behaviors.size() + e.components.emitter.has_value() +
                           e.components.animator.has_value() + e.components.attach.has_value() +
-                          (e.components.ragdoll ? 1 + e.components.ragdoll->bones.size() : 0) +
+                          (e.components.ragdoll ? 1 + e.components.ragdoll->bones.size() : 0) + e.components.script.has_value() +
                           (e.components.mesh ? e.components.mesh->material_slots.size() : 0);
         out << "COMPONENTS " << components << '\n';
         for (const auto &e : s.entities) {
@@ -310,6 +394,16 @@ Result<void> write_scene(std::ostream &out, const SceneSnapshot &s) {
                     out << "RAGBONE " << e.id << ' ' << std::quoted(b.bone) << ' ' << static_cast<int>(b.body) << ' ' << b.radius << ' '
                         << b.density << ' ' << b.swing_degrees << ' ' << b.twist_degrees << '\n';
             }
+            if (const auto &sc = e.components.script) {
+                out << "SCRIPT " << e.id << ' ';
+                write_ref(out, sc->script);
+                out << ' ' << sc->properties.size();
+                for (const auto &p : sc->properties) {
+                    out << ' ' << p.name << ' ';
+                    write_script_value(out, p.value);
+                }
+                out << '\n';
+            }
         }
         if (!out)
             return fail(ErrorCode::ParseError, "Scene output stream failed");
@@ -353,8 +447,10 @@ Result<SceneSnapshot> read_scene(std::istream &in) {
             // Version 2 defined no component kinds; version 3 allows one MESH, CAMERA and LIGHT per entity;
             // version 4 adds one BODY and up to max_colliders_per_entity COLLIDER records; version 6 adds one
             // ENVIRONMENT and up to max_material_slots MATSLOT and max_behaviors_per_entity BEHAVIOR records;
-            // version 7 adds one EMITTER, ANIMATOR, ATTACH and RAGDOLL, and up to max_ragdoll_bones RAGBONE records.
-            const std::size_t per_entity = version >= 7   ? 9 + max_colliders_per_entity + max_material_slots + max_behaviors_per_entity + max_ragdoll_bones
+            // version 7 adds one EMITTER, ANIMATOR, ATTACH and RAGDOLL, and up to max_ragdoll_bones RAGBONE records;
+            // version 8 adds one SCRIPT.
+            const std::size_t per_entity = version >= 8   ? 10 + max_colliders_per_entity + max_material_slots + max_behaviors_per_entity + max_ragdoll_bones
+                                           : version >= 7 ? 9 + max_colliders_per_entity + max_material_slots + max_behaviors_per_entity + max_ragdoll_bones
                                            : version >= 6 ? 5 + max_colliders_per_entity + max_material_slots + max_behaviors_per_entity
                                            : version >= 4 ? 4 + max_colliders_per_entity
                                            : version >= 3 ? 3
@@ -373,8 +469,9 @@ Result<SceneSnapshot> read_scene(std::istream &in) {
                 const bool physics = kind == "BODY" || kind == "COLLIDER";
                 const bool v6_only = kind == "MATSLOT" || kind == "ENVIRONMENT" || kind == "BEHAVIOR";
                 const bool v7_only = kind == "EMITTER" || kind == "ANIMATOR" || kind == "ATTACH" || kind == "RAGDOLL" || kind == "RAGBONE";
-                if ((kind != "MESH" && kind != "CAMERA" && kind != "LIGHT" && !physics && !v6_only && !v7_only) ||
-                    (physics && version < 4) || (v6_only && version < 6) || (v7_only && version < 7))
+                const bool v8_only = kind == "SCRIPT";
+                if ((kind != "MESH" && kind != "CAMERA" && kind != "LIGHT" && !physics && !v6_only && !v7_only && !v8_only) ||
+                    (physics && version < 4) || (v6_only && version < 6) || (v7_only && version < 7) || (v8_only && version < 8))
                     return fail(ErrorCode::ParseError, "Unsupported component kind '" + kind + "'");
                 if (!reader.number(id) || !index.contains(id))
                     return fail(ErrorCode::ParseError, kind + " record names a missing entity");
@@ -521,6 +618,18 @@ Result<SceneSnapshot> read_scene(std::istream &in) {
                              reader.number(b.twist_degrees);
                     b.body = static_cast<RagdollBody>(body);
                     c.ragdoll->bones.push_back(std::move(b));
+                } else if (kind == "SCRIPT") {
+                    ScriptComponent sc;
+                    std::size_t values = 0;
+                    duplicate = c.script.has_value();
+                    parsed = reader.asset_ref(sc.script) && reader.number(values) && values <= max_script_properties;
+                    for (std::size_t v = 0; parsed && v < values; ++v) {
+                        ScriptProperty p;
+                        parsed = reader.token(p.name, 64) && read_script_value(reader, p.value);
+                        sc.properties.push_back(std::move(p));
+                    }
+                    if (!duplicate)
+                        c.script = std::move(sc);
                 } else {
                     LightComponent l;
                     int shadows = 0;

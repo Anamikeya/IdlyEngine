@@ -253,3 +253,30 @@ external editor stays).
 - **Assets:** `AssetType::Script` for `.lua`. The database catalogues and copies scripts without decoding them; the
   Asset Browser labels them SCRIPT. The type filter chip waits for slice 2, as it moves the browser's layout.
 - **Tests:** `scripting_tests` gains 16 cases (23 in all) and `asset_tests` one. Both presets build and pass 580 of 580.
+
+### Slice 2: scripts in scenes and assets (done 2026-11-06)
+
+- **Scene:** `ScriptComponent` (the script, and the values that differ from its defaults) with `ScriptValue`, a variant
+  of the same seven types as the runtime's, in the same order. `ScriptColor` and `EntityLink` are new. Checked like
+  every component: Lua names of 1 to 64 bytes, each once, at most 64; finite numbers and vectors; colors in [0, 1];
+  text one line of at most 4096 bytes, since quoted scene strings refuse control characters.
+- **Format 8:** one `SCRIPT <entity> <script> <count> [<name> <type> <value>]...` record per entity, the type a
+  letter (`n b t v c e a`). Versions 1 to 7 still load; `006-scene-format.md` documents it. Two core checks that read
+  "7" as the written version, and one that used 8 as an unknown future version (now 9), changed with it.
+- **Commands:** `component.script.set` (`SetScript`). Duplicating a subtree points the links naming its entities at
+  their copies. Paste does the same for what is pasted together, keeps links to entities of the scene, and clears
+  the rest, as the clipboard may come from another scene.
+- **`Engine/Scripting`:** `scene_values.h` turns scene values into script values and back. Assets go by ID and path
+  in a scene and by ID and package name in a script, so the host says how to go from one to the other.
+- **Editor:** New script in the Asset Browser (`Scripts/<name>.lua`, from a template naming every callback), the
+  Script chip, Add Component > Script (running the script selected in the Asset Browser, if one is), Assign to
+  selection for scripts. Details has a Script section: the script's field, then a field per declared property by
+  type (number, checkbox, text, vector, color with alpha, entity list, asset), a reset arrow where an entity has its
+  own value, and values the script no longer declares, dimmed with Remove. Errors reading the script show there.
+  `EditorSession`: `create_script`, `script_info` (read again when the file is written or moved), `assign_script`,
+  `set_script_property` (a value equal to the default is not kept), `reset_script_property`, `scene_value`,
+  `script_value`. Fix Up Redirectors and renames reach script references and asset values.
+- **Found by the tests:** after a rename, `script_info` still gave the old name, because a move keeps the file's
+  time; the cache now also compares the path.
+- **Tests:** `editor_script_tests` (8 cases, new), `engine.core.acceptance`'s `format_v8_scripts`. Both presets build
+  and pass 588 of 588. The Details section has not been drawn on screen yet: slice 4's real-input run covers it.

@@ -9,6 +9,9 @@
 #include <engine/physics/scene_physics.h>
 #include <engine/renderer/RenderSnapshot.hpp>
 #include <engine/renderer/ResourceRegistry.hpp>
+#include <engine/scripting/scene_values.h>
+#include <engine/scripting/script_loader.h>
+#include <engine/scripting/script_runtime.h>
 #include <array>
 #include <chrono>
 #include <deque>
@@ -146,6 +149,15 @@ class EditorSession {
     std::map<assets::AssetId, assets::MaterialData> material_drafts_;
     // The same for particle effects in the Effect Editor.
     std::map<assets::AssetId, assets::EffectData> effect_drafts_;
+    // What each script declares, as read when its file was last written or moved (script_info).
+    struct ScriptInfoEntry {
+        std::filesystem::file_time_type written;
+        std::string path;
+        bool read = false;
+        std::optional<scripting::ScriptInfo> info;
+        std::optional<Error> error;
+    };
+    mutable std::map<std::uint64_t, ScriptInfoEntry> script_infos_;
     // Plays the editor scene's emitters while editing (view_flags.effects). Play mode has its own, in Runtime.
     effects::ParticleSystem edit_particles_{1};
     // Plays the editor scene's animators while editing (view_flags.animations). Play mode has its own, in Runtime.
@@ -520,6 +532,25 @@ public:
     Result<commands::Receipt> assign_effect(EntityId, assets::AssetId);
     // Starts every emitter of the shown scene again from its beginning, and drops one-shot effects.
     void restart_effects();
+
+    // ---- Scripts: .lua files in the asset folder (Milestone 6) ----
+    // Creates "Scripts/<name>.lua" under a free name, from a template with one property and every function the engine calls.
+    Result<assets::AssetId> create_script(const std::string &name);
+    // What a script declares, read without running a game: its top level runs in a throwaway sandbox. Read again when its
+    // file changes. The error says why it cannot be read, with the line when there is one.
+    Result<scripting::ScriptInfo> script_info(assets::AssetId) const;
+    // Gives the entity a Script component running the script, or changes its script, keeping the values it holds. An empty
+    // id leaves the component with no script. One undo step.
+    Result<commands::Receipt> assign_script(EntityId, assets::AssetId);
+    // Sets a property's value on the entity, one undo step. A value equal to the script's default removes the entity's own,
+    // so it follows the default again; a value of the wrong type is refused.
+    Result<commands::Receipt> set_script_property(EntityId, const std::string &name, const ScriptValue &);
+    // Removes the entity's own value, so the script's default applies. Also how a value the script no longer declares goes.
+    Result<commands::Receipt> reset_script_property(EntityId, const std::string &name);
+    // A script's value as a scene holds it: an asset named by package name resolves through the project.
+    ScriptValue scene_value(const scripting::Value &) const;
+    // A scene's value as the script sees it.
+    scripting::Value script_value(const ScriptValue &) const;
     // What the shown scene's particle system holds now.
     effects::Stats effect_stats() const;
     // Advances the edit-mode preview; update() calls it, and so can a host that is not playing.

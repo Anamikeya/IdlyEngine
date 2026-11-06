@@ -192,6 +192,8 @@ void EditorUI::reveal_asset(assets::AssetId id) {
 bool EditorUI::asset_field(std::string_view type_name, AssetRef &ref, bool mixed) {
     bool changed = false;
     const auto type = type_from_name(type_name);
+    // A type the panel does not know, such as a script's Asset property, takes an asset of any type.
+    const auto fits = [&](assets::AssetType of) { return type == assets::AssetType::Unknown || of == type; };
     const auto catalogue = session.assets();
     const auto current = std::ranges::find_if(catalogue, [&](const assets::AssetMetadata &meta) { return meta.id.value == ref.id; });
     const float picture = ImGui::GetFrameHeight();
@@ -215,7 +217,7 @@ bool EditorUI::asset_field(std::string_view type_name, AssetRef &ref, bool mixed
         if (wanted.starts_with('/')) {
             const auto found = session.resolve_package(wanted);
             if (!found) ImGui::TextDisabled("%s", found.error().message.c_str());
-            else if (found.value().type != type) ImGui::TextDisabled("%s is a %s", std::string(wanted).c_str(), assets::to_string(found.value().type));
+            else if (!fits(found.value().type)) ImGui::TextDisabled("%s is a %s", std::string(wanted).c_str(), assets::to_string(found.value().type));
             else {
                 std::string label = session.package_name_of(found.value().id);
                 if (const auto hops = found.value().redirects.size()) label += "  (through " + std::to_string(hops) + (hops == 1 ? " redirector)" : " redirectors)");
@@ -229,7 +231,7 @@ bool EditorUI::asset_field(std::string_view type_name, AssetRef &ref, bool mixed
         }
         if (ImGui::Selectable("(none)", ref.empty() && !mixed)) { ref = {}; changed = true; }
         for (const auto &meta : catalogue) {
-            if (meta.type != type) continue;
+            if (!fits(meta.type)) continue;
             const auto package = session.package_name_of(meta.id);
             if (!has_text(meta.path, wanted) && !has_text(package, wanted)) continue;
             if (ImGui::Selectable((package.empty() ? meta.path : package).c_str(), !mixed && ref.id == meta.id.value)) { ref = {meta.id.value, meta.path}; changed = true; }
@@ -248,14 +250,14 @@ bool EditorUI::asset_field(std::string_view type_name, AssetRef &ref, bool mixed
             assets::AssetId id;
             std::memcpy(&id.value, payload->Data, sizeof id.value);
             const auto dropped = std::ranges::find_if(catalogue, [&](const assets::AssetMetadata &meta) { return meta.id == id; });
-            if (dropped != catalogue.end() && dropped->type == type) { ref = {dropped->id.value, dropped->path}; changed = true; }
+            if (dropped != catalogue.end() && fits(dropped->type)) { ref = {dropped->id.value, dropped->path}; changed = true; }
             else log_error(std::string("That field takes a ") + std::string(type_name));
         }
         ImGui::EndDragDropTarget();
     }
     ImGui::SameLine(0, ImGui::GetStyle().ItemInnerSpacing.x);
     const auto chosen = std::ranges::find_if(catalogue, [&](const assets::AssetMetadata &meta) { return meta.id == selected_asset; });
-    const bool usable = chosen != catalogue.end() && chosen->type == type;
+    const bool usable = chosen != catalogue.end() && fits(chosen->type);
     ImGui::BeginDisabled(!usable);
     if (ImGui::ArrowButton("##use", ImGuiDir_Left) && usable) { ref = {chosen->id.value, chosen->path}; changed = true; }
     ImGui::EndDisabled();
@@ -322,6 +324,12 @@ void EditorUI::asset_browser_contents() {
         if (report(created, "Effect created")) { selected_asset = created.value(); asset_scroll_to = selected_asset; }
     }
     mark("Asset.NewEffect");
+    flow(button_width("New script"));
+    if (tip_button("New script", "Make a Lua script with the name to the left, in Scripts")) {
+        const auto created = session.create_script(new_material_name.data());
+        if (report(created, "Script created")) { selected_asset = created.value(); asset_scroll_to = selected_asset; }
+    }
+    mark("Asset.NewScript");
     flow(button_width("Duplicate"));
     ImGui::BeginDisabled(!have_material);
     if (ImGui::Button("Duplicate")) {
@@ -349,8 +357,8 @@ void EditorUI::asset_browser_contents() {
     ImGui::SetNextItemWidth(px(140));
     ImGui::InputTextWithHint("##asset-search", "Search assets", asset_search.data(), asset_search.size());
     mark("Asset.Search");
-    constexpr const char *chip_names[] = {"Model", "Image", "Material", "HDR", "Effect"};
-    constexpr assets::AssetType chip_types[] = {assets::AssetType::Mesh, assets::AssetType::Texture, assets::AssetType::Material, assets::AssetType::Environment, assets::AssetType::Effect};
+    constexpr const char *chip_names[] = {"Model", "Image", "Material", "HDR", "Effect", "Script"};
+    constexpr assets::AssetType chip_types[] = {assets::AssetType::Mesh, assets::AssetType::Texture, assets::AssetType::Material, assets::AssetType::Environment, assets::AssetType::Effect, assets::AssetType::Script};
     for (std::size_t i = 0; i < std::size(chip_names); ++i) {
         flow(button_width(chip_names[i]));
         if (asset_chips[i]) ImGui::PushStyleColor(ImGuiCol_Button, ImGui::ColorConvertU32ToFloat4(type_color(chip_types[i])));

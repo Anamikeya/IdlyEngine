@@ -42,8 +42,9 @@ void creation_and_flecs() {
         ++count;
     });
     check(count == 1, "Entity not stored in Flecs");
-    check(registry().size() == 18, "Registry incomplete");
+    check(registry().size() == 19, "Registry incomplete");
     check(describe(Command{DeleteEntity{id}}).name == "entity.delete", "Typed registry mismatch");
+    check(describe(Command{SetScript{id, std::nullopt}}).name == "component.script.set", "Typed registry mismatch for scripts");
 }
 void permissions_and_revision() {
     Scene s;
@@ -225,7 +226,7 @@ void physics_components() {
     check(parsed.value().entities[0].components.colliders.size() == 2 && parsed.value().entities[0].components.body,
           "Several colliders and one body per entity");
     // The example in docs/architecture/006-scene-format.md, verbatim: it loads and is what the writer emits.
-    const std::string documented = "ENGINE_SCENE 7 5 4\n"
+    const std::string documented = "ENGINE_SCENE 8 5 4\n"
                                    "ENTITY 1 0 \"Ball\" 0 0.5 0 0 0 0 1 1 1 1\n"
                                    "ENTITY 2 0 \"Sun\" 0 4 0 0 0 0 1 1 1 1\n"
                                    "ENTITY 3 0 \"Camera\" 0 1.5 6 0 0 0 1 1 1 1\n"
@@ -456,7 +457,7 @@ void format_v6() {
     std::ostringstream out;
     ok(write_scene(out, scene.snapshot()));
     const std::string text = out.str();
-    for (const char *expected : {"ENGINE_SCENE 7 ", "MATSLOT 1 3 0000000000000002 \"materials/two.material\"\n",
+    for (const char *expected : {"ENGINE_SCENE 8 ", "MATSLOT 1 3 0000000000000002 \"materials/two.material\"\n",
                                  "LIGHT 1 spot 1 1 1 100000 10 10 20 1\n", " 1 0 1\n", "ENVIRONMENT 1 image 0000000000000009 \"environments/sky.hdr\" ",
                                  " 7.5 pbr_neutral high 60 1 0\n", "BEHAVIOR 1 health 2 max 50 regen 0.25\n", "BEHAVIOR 1 target 0\n", " 0 0 4 3\n"})
         check(text.find(expected) != std::string::npos, expected);
@@ -553,7 +554,7 @@ void malformed_serialization() {
     for (const auto *text :
          {"WRONG 1 1 0", "ENGINE_SCENE 2 1 0", "ENGINE_SCENE 1 0 0", "ENGINE_SCENE 1 1 100001",
           "ENGINE_SCENE 1 1 0 trailing", "ENGINE_SCENE 1 2 1 ENTITY 1 0 \"x\" 0 0",
-          "ENGINE_SCENE 0 1 0", "ENGINE_SCENE 8 1 0 COMPONENTS 0", "ENGINE_SCENE 2 1 0 COMPONENTS",
+          "ENGINE_SCENE 0 1 0", "ENGINE_SCENE 9 1 0 COMPONENTS 0", "ENGINE_SCENE 2 1 0 COMPONENTS",
           "ENGINE_SCENE 2 1 0 COMPONENTS -1", "ENGINE_SCENE 2 1 0 COMPONENTS 1 MESH 1",
           "ENGINE_SCENE 2 1 0 COMPONENTS 0 trailing", "ENGINE_SCENE 1 1 0 COMPONENTS 0"}) {
         std::istringstream in(text);
@@ -981,6 +982,104 @@ void format_v7_ragdoll() {
     }
 }
 
+// Version 8: one SCRIPT per entity, with the property values that differ from the script's defaults (Milestone 6).
+void format_v8_scripts() {
+    Scene scene;
+    CommandBus b(scene);
+    Components gate;
+    gate.script = ScriptComponent{{0x00000000000000ef, "scripts/gate \"main\".lua"},
+                                  {{"speed", 2.5},
+                                   {"locked", true},
+                                   {"message", std::string("Say \"open\" \\ now")},
+                                   {"offset", Vec3{0, 1.5, -2}},
+                                   {"tint", ScriptColor{1, 0.5, 0, 0.25}},
+                                   {"trigger", EntityLink{1}},
+                                   {"sound", AssetRef{0x12, "sounds/creak.wav"}}}};
+    auto made = b.execute(owner, 0, CreateEntity{"Gate", {}, 0, 0, gate});
+    ok(made);
+    const auto id = made.value().created.front();
+    check(scene.inspect(id)->components == gate, "The script and its values are stored");
+    std::ostringstream out;
+    ok(write_scene(out, scene.snapshot()));
+    const std::string text = out.str();
+    check(text.rfind("ENGINE_SCENE 8 ", 0) == 0, text.c_str());
+    check(text.find(R"(SCRIPT 1 00000000000000ef "scripts/gate \"main\".lua" 7 speed n 2.5 locked b 1 message t "Say \"open\" \\ now" )"
+                    R"(offset v 0 1.5 -2 tint c 1 0.5 0 0.25 trigger e 1 sound a 0000000000000012 "sounds/creak.wav")" "\n") != std::string::npos,
+          text.c_str());
+    std::istringstream in(text);
+    auto parsed = read_scene(in);
+    ok(parsed);
+    check(parsed.value() == scene.snapshot(), "Scripts round trip");
+    std::ostringstream again;
+    ok(write_scene(again, parsed.value()));
+    check(again.str() == text, "Format 8 writes the same text twice");
+    // Changed and removed through its command, with undo.
+    auto changed = gate.script;
+    changed->properties.resize(1);
+    ok(b.execute(owner, b.revision(), SetScript{id, changed}));
+    check(scene.inspect(id)->components.script == changed, "The script command changes it");
+    ok(b.execute(owner, b.revision(), SetScript{id, std::nullopt}));
+    check(!scene.inspect(id)->components.script, "An empty script command removes it");
+    ok(b.undo(owner, b.revision()));
+    check(scene.inspect(id)->components.script == changed, "Undo restores it");
+    // Duplicating a subtree points its own links at the copies and leaves the others alone.
+    const auto door = b.execute(owner, b.revision(), CreateEntity{"Door", {}, 0, 0, {}});
+    ok(door);
+    const auto door_id = door.value().created.front();
+    Components lever;
+    lever.script = ScriptComponent{{0x00000000000000ef, "scripts/gate \"main\".lua"}, {{"opens", EntityLink{door_id}}, {"gate", EntityLink{id}}}};
+    const auto made_lever = b.execute(owner, b.revision(), CreateEntity{"Lever", {}, door_id, 0, lever});
+    ok(made_lever);
+    const auto copied = b.execute(owner, b.revision(), DuplicateEntity{door_id, ""});
+    ok(copied);
+    check(copied.value().created.size() == 2, "The door and its lever are copied");
+    const auto lever_copy = scene.inspect(copied.value().created[1]);
+    check(lever_copy && lever_copy->components.script, "The lever's copy has the script");
+    check(std::get<EntityLink>(lever_copy->components.script->find("opens")->value).id == copied.value().created[0],
+          "A link inside the copied subtree names the copy");
+    check(std::get<EntityLink>(lever_copy->components.script->find("gate")->value).id == id, "A link outside it is kept");
+    check(std::get<EntityLink>(scene.inspect(made_lever.value().created.front())->components.script->find("opens")->value).id == door_id,
+          "The original is untouched");
+    // Invalid values are refused by the command and by the reader.
+    const auto refused = [&](auto change) {
+        auto bad = *gate.script;
+        change(bad);
+        Components c;
+        c.script = bad;
+        check(!b.execute(owner, b.revision(), CreateEntity{"Bad", {}, 0, 0, c}), "An invalid script component was accepted");
+    };
+    refused([](ScriptComponent &s) { s.properties.front().name = "2fast"; });
+    refused([](ScriptComponent &s) { s.properties.front().name = "two words"; });
+    refused([](ScriptComponent &s) { s.properties.push_back(s.properties.front()); });
+    refused([](ScriptComponent &s) { s.properties.front().value = std::numeric_limits<double>::infinity(); });
+    refused([](ScriptComponent &s) { s.properties.front().value = ScriptColor{1.5, 0, 0, 1}; });
+    refused([](ScriptComponent &s) { s.properties.front().value = std::string("two\nlines"); });
+    refused([](ScriptComponent &s) { s.properties.front().value = std::string(max_script_text_bytes + 1, 'x'); });
+    refused([](ScriptComponent &s) { s.properties.front().value = Vec3{0, std::nan(""), 0}; });
+    refused([](ScriptComponent &s) { s.properties.front().value = AssetRef{0, "orphan.lua"}; });
+    refused([](ScriptComponent &s) { s.script = AssetRef{0, "orphan.lua"}; });
+    refused([](ScriptComponent &s) {
+        s.properties.clear();
+        for (std::size_t i = 0; i <= max_script_properties; ++i) s.properties.push_back({"p" + std::to_string(i), 1.0});
+    });
+    const std::string head = " 2 1 ENTITY 1 0 \"A\" 0 0 0 0 0 0 1 1 1 1 COMPONENTS ";
+    for (const std::string bad : {"ENGINE_SCENE 7" + head + "1 SCRIPT 1 - 0",
+                                  "ENGINE_SCENE 8" + head + "2 SCRIPT 1 - 0 SCRIPT 1 - 0",
+                                  "ENGINE_SCENE 8" + head + "1 SCRIPT 1 - 1 speed x 1",
+                                  "ENGINE_SCENE 8" + head + "1 SCRIPT 1 - 1 locked b 2",
+                                  "ENGINE_SCENE 8" + head + "1 SCRIPT 1 - 2 speed n 1",
+                                  "ENGINE_SCENE 8" + head + "1 SCRIPT 1 - 1 tint c 1 1 1",
+                                  "ENGINE_SCENE 8" + head + "1 SCRIPT 1 - 1 note t unquoted",
+                                  "ENGINE_SCENE 8" + head + "1 SCRIPT 1 - 65"}) {
+        std::istringstream rejected(bad);
+        check(!read_scene(rejected), bad.c_str());
+    }
+    std::istringstream empty("ENGINE_SCENE 8" + head + "1 SCRIPT 1 - 0");
+    auto plain = read_scene(empty);
+    ok(plain);
+    check(plain.value().entities[0].components.script == ScriptComponent{}, "A script component without a script is allowed");
+}
+
 } // namespace
 int main() {
     const std::pair<const char *, std::function<void()>> tests[] = {
@@ -989,6 +1088,7 @@ int main() {
         {"format_v7", format_v7},
         {"format_v7_animation", format_v7_animation},
         {"format_v7_ragdoll", format_v7_ragdoll},
+        {"format_v8_scripts", format_v8_scripts},
         {"permissions_and_revision", permissions_and_revision},
         {"atomic_batch", atomic_batch},
         {"hierarchy_and_cycles", hierarchy_and_cycles},

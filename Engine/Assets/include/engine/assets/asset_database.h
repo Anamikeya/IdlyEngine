@@ -103,6 +103,8 @@ public:
 	// The same for particle effects (.effect).
 	Result<AssetId> create_effect(std::string_view path, const EffectData& effect);
 	Result<void> save_effect(AssetId id, const EffectData& effect);
+	// The same for scripts (.lua), with the text as it is: the scripting runtime reads and checks it.
+	Result<AssetId> create_script(std::string_view path, std::string_view text);
 	// Replaces a model's clip events in its .meta (see normalize_clip_events). The model is not re-imported and its
 	// revision stays; find() returns the new events at once.
 	Result<void> set_clip_events(AssetId id, std::vector<ClipEvent> events);

@@ -675,6 +675,11 @@ Result<AssetId> AssetDatabase::create_effect(std::string_view path, const Effect
 	return impl_->create_text(*this, path, AssetType::Effect, "effect", ".effect", write_effect(effect));
 }
 
+Result<AssetId> AssetDatabase::create_script(std::string_view path, std::string_view text)
+{
+	return impl_->create_text(*this, path, AssetType::Script, "script", ".lua", std::string(text));
+}
+
 Result<void> AssetDatabase::save_effect(AssetId id, const EffectData& effect)
 {
 	const auto it = impl_->by_id.find(id);

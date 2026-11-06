@@ -86,6 +86,38 @@ double hit(const renderer::MeshHandle &mesh, const glm::dvec3 &origin, const glm
 glm::dvec3 vector(const std::array<float, 3> &v) { return {v[0], v[1], v[2]}; }
 constexpr Vec3 placeholder_color{1, 0, 1}; // Marks an asset that cannot be drawn.
 AssetRef reference(const assets::AssetMetadata &meta) { return {meta.id.value, meta.path}; }
+// The script a Script component runs and the assets its values name; how many `fix` changed.
+std::size_t fix_script_references(ScriptComponent &script, const std::function<bool(AssetRef &)> &fix) {
+    std::size_t changed = fix(script.script);
+    for (auto &property : script.properties)
+        if (auto *asset = std::get_if<AssetRef>(&property.value)) changed += fix(*asset);
+    return changed;
+}
+std::filesystem::path utf8_file(const std::string &text) { return std::filesystem::path(std::u8string(reinterpret_cast<const char8_t *>(text.data()), text.size())); }
+// The text New Script starts from: one property, and every function the engine calls, so a script is easy to begin.
+constexpr std::string_view script_template = R"lua(-- Runs on every entity whose Script component names this script, in Play and Simulate.
+-- `properties` are what Details shows; each entity can give them its own values. `self` holds them,
+-- and `self.entity` is the entity.
+local Script = {
+	properties = {
+		speed = 1.0,
+	},
+}
+
+-- Once, before the first tick.
+function Script:start()
+end
+
+-- Every fixed step, 60 times a second, before physics. `dt` is the step in seconds.
+function Script:tick(dt)
+end
+
+-- The engine also calls, when a script has them: late_tick(dt) after physics, on_hit(other, speed, point, normal),
+-- on_trigger_enter(other), on_trigger_exit(other), on_damage(amount, cause, point), on_death(),
+-- on_clip_event(name, point) and on_stop().
+
+return Script
+)lua";
 std::string trimmed_name(std::string name) {
     if (name.size() > 256) {
         name.resize(256);
@@ -852,6 +884,20 @@ Result<void> EditorSession::paste(std::string_view text) {
         });
         if (waiting.size() == before) { transaction.cancel(); return fail(ErrorCode::InvalidArgument, "The clipboard's entities could not be added"); }
     }
+    // Script values naming a pasted entity name its new copy. Those naming an entity of this scene keep it; the
+    // clipboard may come from another scene, so those naming no entity here are cleared rather than left to name
+    // whatever later takes that ID.
+    for (const auto &e : entities) {
+        if (!e.components.script) continue;
+        auto script = *e.components.script;
+        for (auto &property : script.properties)
+            if (auto *link = std::get_if<EntityLink>(&property.value); link && link->id) {
+                if (const auto copy = created.find(link->id); copy != created.end()) link->id = copy->second;
+                else if (!scene().inspect(link->id)) link->id = 0;
+            }
+        if (script == *e.components.script) continue;
+        if (auto linked = execute(commands::SetScript{created.at(e.id), std::move(script)}); !linked) { transaction.cancel(); return linked.error(); }
+    }
     selection_.set(std::span<const EntityId>(roots));
     return {};
 }
@@ -885,6 +931,7 @@ std::vector<commands::Command> EditorSession::reference_edits(const std::functio
         if (auto environment = e.components.environment; environment && fix(environment->image)) edits.emplace_back(commands::SetEnvironment{e.id, std::move(environment)});
         if (auto emitter = e.components.emitter; emitter && fix(emitter->effect)) edits.emplace_back(commands::SetParticleEmitter{e.id, std::move(emitter)});
         if (auto animator = e.components.animator; animator && fix(animator->clips)) edits.emplace_back(commands::SetAnimator{e.id, std::move(animator)});
+        if (auto script = e.components.script; script && fix_script_references(*script, fix)) edits.emplace_back(commands::SetScript{e.id, std::move(script)});
     }
     return edits;
 }
@@ -1018,6 +1065,7 @@ Result<EditorSession::FixUpReport> EditorSession::fix_up_redirectors() {
             if (c.environment) changed += fix(c.environment->image);
             if (c.emitter) changed += fix(c.emitter->effect);
             if (c.animator) changed += fix(c.animator->clips);
+            if (c.script) changed += fix_script_references(*c.script, fix);
         }
         if (!changed) continue;
         auto temporary = file; temporary += ".tmp";
@@ -1854,6 +1902,103 @@ Result<commands::Receipt> EditorSession::assign_effect(EntityId id, assets::Asse
     auto emitter = record->components.emitter.value_or(ParticleEmitterComponent{});
     emitter.effect = reference(*meta);
     return execute(commands::SetParticleEmitter{id, emitter}, "Assign Effect");
+}
+Result<assets::AssetId> EditorSession::create_script(const std::string &name) {
+    if (project_.empty()) return fail(ErrorCode::InvalidState, "No project is open");
+    if (!assets_) {
+        std::error_code ec;
+        std::filesystem::create_directories(asset_folder(), ec);
+        if (ec) return fail(ErrorCode::InvalidState, "Cannot create the asset folder: " + ec.message());
+        auto database = assets::AssetDatabase::open(asset_folder());
+        if (!database) return database.error();
+        assets_.emplace(std::move(database.value()));
+    }
+    auto id = assets_->create_script("Scripts/" + name + ".lua", script_template);
+    if (id) resolved_.clear();
+    return id;
+}
+Result<scripting::ScriptInfo> EditorSession::script_info(assets::AssetId id) const {
+    const auto meta = assets_ ? assets_->find(id) : std::nullopt;
+    if (!meta) return fail(ErrorCode::NotFound, "The script is not in the asset folder");
+    if (meta->type != assets::AssetType::Script) return fail(ErrorCode::InvalidArgument, meta->path + " is not a script");
+    std::error_code ec;
+    const auto written = std::filesystem::last_write_time(asset_folder() / utf8_file(meta->path), ec);
+    if (ec) return fail(ErrorCode::NotFound, meta->path + " cannot be read: " + ec.message());
+    auto &entry = script_infos_[id.value];
+    // A move keeps the file's time, but changes the name the script is known by.
+    if (!entry.read || entry.written != written || entry.path != meta->path) {
+        entry = {written, meta->path, true, std::nullopt, std::nullopt};
+        // By package name, as Play will load it; the path when the name is not known yet.
+        const std::string name = package_name_of(id);
+        auto read = scripting::inspect_script(name.empty() ? std::string(game_mount) + "/" + meta->path : name, scripting::package_loader(packages()));
+        if (read) entry.info = std::move(read.value());
+        else entry.error = read.error();
+    }
+    if (entry.error) return *entry.error;
+    return *entry.info;
+}
+ScriptValue EditorSession::scene_value(const scripting::Value &value) const {
+    return scripting::to_scene_value(value, [this](const scripting::AssetRef &asset) -> AssetRef {
+        if (!assets_) return {};
+        if (asset.id)
+            if (const auto meta = assets_->find(assets::AssetId{asset.id})) return reference(*meta);
+        if (!asset.name.empty())
+            if (const auto found = resolve_package(asset.name))
+                if (const auto meta = assets_->find(found.value().id)) return reference(*meta);
+        return {};
+    });
+}
+scripting::Value EditorSession::script_value(const ScriptValue &value) const {
+    return scripting::to_script_value(value, [this](const AssetRef &ref) {
+        const auto name = package_name_of(assets::AssetId{ref.id});
+        return name.empty() ? ref.path : name;
+    });
+}
+Result<commands::Receipt> EditorSession::assign_script(EntityId id, assets::AssetId asset) {
+    const auto record = scene().inspect(id);
+    if (!record) return fail(ErrorCode::NotFound, "Entity no longer exists");
+    auto script = record->components.script.value_or(ScriptComponent{});
+    if (asset.is_null()) {
+        script.script = {};
+    } else {
+        const auto meta = assets_ ? assets_->find(asset) : std::nullopt;
+        if (!meta) return fail(ErrorCode::NotFound, "The script is not in the asset folder");
+        if (meta->type != assets::AssetType::Script) return fail(ErrorCode::InvalidArgument, meta->path + " is not a script");
+        script.script = reference(*meta);
+    }
+    return execute(commands::SetScript{id, std::move(script)}, "Assign Script");
+}
+Result<commands::Receipt> EditorSession::set_script_property(EntityId id, const std::string &name, const ScriptValue &value) {
+    const auto record = scene().inspect(id);
+    if (!record) return fail(ErrorCode::NotFound, "Entity no longer exists");
+    if (!record->components.script) return fail(ErrorCode::InvalidState, record->name + " has no Script component");
+    auto script = *record->components.script;
+    // The default, when the script can be read: a value equal to it is not kept, so the entity follows the default.
+    std::optional<ScriptValue> standard;
+    if (!script.script.empty())
+        if (const auto info = script_info(assets::AssetId{script.script.id}))
+            if (const auto *declared = info.value().property(name)) {
+                if (declared->default_value.index() != value.index())
+                    return fail(ErrorCode::InvalidArgument, "'" + name + "' is a " + scripting::to_string(scripting::type_of(declared->default_value)) + " property");
+                standard = scene_value(declared->default_value);
+            }
+    std::erase_if(script.properties, [&](const ScriptProperty &p) { return p.name == name; });
+    if (!standard || *standard != value) {
+        // Kept in name order, so a scene file changes only where a value did.
+        const auto at = std::ranges::find_if(script.properties, [&](const ScriptProperty &p) { return p.name > name; });
+        script.properties.insert(at, ScriptProperty{name, value});
+    }
+    if (script == *record->components.script) return commands::Receipt{scene_revision(), {}, 0};
+    return execute(commands::SetScript{id, std::move(script)}, "Change " + name);
+}
+Result<commands::Receipt> EditorSession::reset_script_property(EntityId id, const std::string &name) {
+    const auto record = scene().inspect(id);
+    if (!record) return fail(ErrorCode::NotFound, "Entity no longer exists");
+    if (!record->components.script || !record->components.script->find(name))
+        return fail(ErrorCode::NotFound, record->name + " has no value of its own for '" + name + "'");
+    auto script = *record->components.script;
+    std::erase_if(script.properties, [&](const ScriptProperty &p) { return p.name == name; });
+    return execute(commands::SetScript{id, std::move(script)}, "Reset " + name);
 }
 void EditorSession::discard_material_draft(assets::AssetId id) {
     if (material_drafts_.erase(id)) forget_materials();

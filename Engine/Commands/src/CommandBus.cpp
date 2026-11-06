@@ -8,7 +8,7 @@
 #include <type_traits>
 namespace engine::commands {
 namespace {
-constexpr std::array<CommandDescriptor, 18> descriptors{
+constexpr std::array<CommandDescriptor, 19> descriptors{
     {{"entity.create", Capability::Edit, "name, transform, parent, optional new stable ID, components", "Create Entity"},
      {"entity.delete", Capability::Edit, "stable ID; deletes subtree", "Delete Entity"},
      {"entity.rename", Capability::Edit, "stable ID, name", "Rename Entity"},
@@ -26,7 +26,8 @@ constexpr std::array<CommandDescriptor, 18> descriptors{
      {"component.emitter.set", Capability::Edit, "stable ID, particle effect, auto play, loop and rate scale, or none to remove", "Change Particle Emitter"},
      {"component.animator.set", Capability::Edit, "stable ID, clip source model, clip, speed, loop, start time and edit preview, or none to remove", "Change Animator"},
      {"component.attach.set", Capability::Edit, "stable ID, joint name of the parent's model, or none to remove", "Change Attach To Bone"},
-     {"component.ragdoll.set", Capability::Edit, "stable ID, ragdoll trigger, density, joint limits and friction, and settings per bone, or none to remove", "Change Ragdoll"}}};
+     {"component.ragdoll.set", Capability::Edit, "stable ID, ragdoll trigger, density, joint limits and friction, and settings per bone, or none to remove", "Change Ragdoll"},
+     {"component.script.set", Capability::Edit, "stable ID, script asset and the property values that differ from its defaults, or none to remove", "Change Script"}}};
 struct Guard {
     bool &busy;
     explicit Guard(bool &b) : busy(b) {
@@ -185,6 +186,7 @@ Result<Receipt> CommandBus::execute(const Context &ctx, std::uint64_t expected,
                     // (original, parent of its copy), breadth first; parents are always copied first.
                     std::vector<std::pair<EntityId, EntityId>> queue{{cmd.id, source->second.parent}};
                     std::map<EntityId, bool> visited; // A staged cycle must not loop forever.
+                    std::map<EntityId, EntityId> copy_of;
                     for (std::size_t i = 0; i < queue.size(); ++i) {
                         const auto [original, parent] = queue[i];
                         if (!visited.emplace(original, true).second)
@@ -197,10 +199,21 @@ Result<Receipt> CommandBus::execute(const Context &ctx, std::uint64_t expected,
                         if (i == 0 && !cmd.name.empty())
                             copy.name = cmd.name;
                         receipt.created.push_back(copy.id);
+                        copy_of.emplace(original, copy.id);
                         if (const auto kids = children.find(original); kids != children.end())
                             for (const auto child : kids->second)
                                 queue.emplace_back(child, copy.id);
                         staged.emplace(copy.id, std::move(copy));
+                    }
+                    // A script property naming an entity of the subtree now names its copy, as the parents do.
+                    for (const auto &entry : copy_of) {
+                        auto &script = staged.at(entry.second).components.script;
+                        if (!script)
+                            continue;
+                        for (auto &property : script->properties)
+                            if (auto *link = std::get_if<EntityLink>(&property.value))
+                                if (const auto copied = copy_of.find(link->id); copied != copy_of.end())
+                                    link->id = copied->second;
                     }
                 } else if constexpr (std::is_same_v<T, ReplaceScene>) {
                     auto valid = Scene::validate(cmd.snapshot);
@@ -240,6 +253,8 @@ Result<Receipt> CommandBus::execute(const Context &ctx, std::uint64_t expected,
                         it->second.components.attach = cmd.attach;
                     else if constexpr (std::is_same_v<T, SetRagdoll>)
                         it->second.components.ragdoll = cmd.ragdoll;
+                    else if constexpr (std::is_same_v<T, SetScript>)
+                        it->second.components.script = cmd.script;
                     else if constexpr (std::is_same_v<T, DeleteEntity>) {
                         std::map<EntityId, std::vector<EntityId>> children;
                         for (const auto &[id, e] : staged)
