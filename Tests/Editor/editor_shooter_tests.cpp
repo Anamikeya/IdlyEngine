@@ -270,3 +270,36 @@ ENGINE_TEST(stress_scene_has_ten_walking_enemies_and_five_thousand_particles)
 	ENGINE_CHECK(timing.effect_updates >= 180 && timing.effects.count() > 0);
 	play.stop_and_check_the_editor_scene();
 }
+
+// Milestone 6, slice 5: the vault's scripts run in Play through the project's asset database, as in the editor. Its
+// gate opens once the west wing's targets have fallen; inside, E at the button gives its prize. Stop leaves nothing.
+ENGINE_TEST(sample_vault_scripts_run_in_play_and_stop_leaves_the_scene_as_it_was)
+{
+	Shooter play;
+	auto& s = play.s;
+	const EntityId gate = play.find("Vault Gate"), button = play.find("Vault Button");
+	ENGINE_REQUIRE(gate != 0 && button != 0);
+	ENGINE_CHECK(s.script_instances() == (std::vector<EntityId>{gate, button}));
+	const Vec3 closed = play.position(gate);
+	play.ticks(30);
+	ENGINE_CHECK(play.position(gate) == closed);
+	for (const char* name : {"Static Target 3", "Enemy 1"}) play.game->damage(play.find(name), 1000, {});
+	play.ticks(150);
+	ENGINE_CHECK_NEAR(play.position(gate).z, closed.z + 3, 1e-9);
+	ENGINE_CHECK(s.script_field(gate, "opened") == std::optional<scripting::Value>(scripting::Value{true}));
+	// In the vault, E at the button.
+	const Vec3 at = play.position(button);
+	play.stand({at.x + 1.5, 1.0, at.z});
+	play.ticks(5);
+	gameplay::InputFrame press;
+	press.held[std::size_t(gameplay::Action::Interact)] = press.pressed[std::size_t(gameplay::Action::Interact)] = true;
+	(void)play.frame();
+	s.set_game_input(press);
+	s.update(EditorSession::fixed_step);
+	const auto hud = play.game->hud();
+	ENGINE_CHECK_EQ(hud.score, 200 + 100 + 300); // The two targets, then the prize.
+	ENGINE_CHECK(hud.last_event == "+300  Vault, and 20 seconds");
+	ENGINE_CHECK(s.script_errors_since_play() == 0);
+	ENGINE_CHECK(s.take_script_errors().empty());
+	play.stop_and_check_the_editor_scene();
+}

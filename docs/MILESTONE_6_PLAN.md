@@ -346,3 +346,36 @@ external editor stays).
   15 again with that change (`docs/evidence/m6-scripts`).
 - **Docs:** the guide's "Write scripts" section, and editing and hot reload in `SCRIPTING.md`.
 - **Tests:** two in `scripting_tests`, two in `editor_script_tests`. Both presets pass 603 of 603.
+
+### Slice 5: the shooter's scripts and its vault (done 2026-11-06)
+
+- **Five scripts** in `Samples/PhysicsShooter/Assets/Scripts`. `Mover`, `Pickup` and `BonusZone` are the C++
+  behaviors of those names written as Lua, step for step: the same `std::hypot` length, `fmod` along the path and
+  toward-zero whole numbers, so a run gives the same bits. `Gate` slides by `open_offset` once every target standing
+  in its room, a box, has fallen, or when a button presses it. `Button` is pressed with E from within `reach`, gives
+  points and time, and calls `press()` on its target's script. The sample's scenes keep the C++ behaviors (decision 3).
+- **Equivalence** (`Tests/Gameplay/scripted_behavior_tests.cpp`, in `gameplay_tests`): each of the three is played
+  both ways side by side, from one scene with the behaviors swapped for scripts given the same values, and every
+  entity's transform and the HUD are compared exactly after every tick. Alone: movers carrying a crate, on a slant, at
+  rest and with defaults over 900 ticks; pickups of ammo, time and both, and one a crate falls through; a bonus zone
+  scoring two crates, one of them twice in, a kinematic body and the player passing through. Then the whole sample
+  over 1,200 ticks: a crate into the zone, both pickups, then both moving targets shot. A speed changed by a part in
+  ten million fails it on the first tick, and one space fewer in the bonus message on the tick the crate lands.
+  The one difference that remains is within a tick: a C++ behavior acts before the game decides that time has run
+  out, a script after, which only matters for time picked up on the very tick the clock reaches zero.
+- **The vault:** through the west wall by the start (the wall is split; the new entities come last, so the earlier
+  ones keep their IDs). Its gate's room is the west wing, which holds the pillar's target and Enemy 1; inside, the
+  button gives 300 points and 20 seconds, once. No target was added, so the C++-only tests of the sample stand
+  unchanged. The generator writes Script records, and the sample's scenes are format 8.
+- **Engine:** `engine.game.targets()`, the standing targets, for the gate. Collision and sensor events are no longer
+  passed on when the game removed one of their entities in the same tick, as the game's own sensors ignore them: a
+  bonus zone would otherwise have failed on a target destroyed as it fell in.
+- **Editor:** the game log has the scripted entities' positions, the HUD's message and the script errors since Play
+  began (`script_errors_since_play()`). An editor test runs the vault in Play through the project's asset database.
+- **Real input** (`Tests/RealInput/milestone6_shooter.ps1`, 14 checks): the shut gate stops the player at the
+  doorway; shooting the west wing's two targets opens it, sliding 3 m into the wall; inside, the hint shows, E gives
+  300 points and 20 seconds and sinks the button, and a second E nothing; the rest of the targets are destroyed and the
+  game won with 31 s left; Restart shuts the gate again; the clock runs out and the game is lost; no script failed;
+  Stop gives back the scene byte for byte. 14 of 14 on the first run (`docs/evidence/m6-shooter`).
+- **Docs:** the shooter's scripts in `SCRIPTING.md`, the vault and E in the sample's README, the testing README.
+- **Tests:** eight in `gameplay_tests`, one in `editor_shooter_tests`. Both presets pass 612 of 612.

@@ -223,11 +223,12 @@ Open **Project... > Open Physics Shooter Sample**, or start the editor with `--s
 
 Shots push what they hit. Crates topple, a row of dominoes can knock over the last target, glass breaks, and a crate that lands in the
 green zone scores points. Static targets stay put, kinematic ones follow a path, and dynamic ones can also be destroyed by a hard fall.
-A shot enemy flinches, and a killed one falls as a ragdoll, pushed the way the shot went. **Stop** puts the scene back exactly as it
-was.
+A shot enemy flinches, and a killed one falls as a ragdoll, pushed the way the shot went. Beside the start, a vault through the west
+wall stays shut until the pillar's target and the nearest enemy have fallen; inside, `E` at the green button gives 300 points and 20
+seconds. The vault's gate and button are Lua scripts. **Stop** puts the scene back exactly as it was.
 
-Everything specific to the shooter is data in [`Samples/PhysicsShooter`](Samples/PhysicsShooter): the scenes, materials and a
-generator script. Its textures, HDR sky and model are CC0, listed in
+Everything specific to the shooter is data in [`Samples/PhysicsShooter`](Samples/PhysicsShooter): the scenes, materials, scripts and
+a generator script. Its textures, HDR sky and model are CC0, listed in
 [`ASSET_LICENSES.md`](Samples/PhysicsShooter/ASSET_LICENSES.md). The sample opens from the source tree, so to experiment, copy the
 folder and open the copy with `--project <copy> --scene <copy>\physics_shooter.scene`.
 

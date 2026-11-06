@@ -637,6 +637,8 @@ public:
     // What scripts got wrong and printed since the last take, oldest first; each kept at most 512 deep.
     std::vector<scripting::ScriptError> take_script_errors();
     std::vector<scripting::ScriptOutput> take_script_output();
+    // Script errors since Play began, taken or not: for logs and acceptance runs.
+    std::size_t script_errors_since_play() const { return script_errors_seen_; }
     // The entities whose scripts run, ascending; empty outside Play.
     std::vector<EntityId> script_instances() const;
     // A field of a running script's `self`, when it holds a plain value.
@@ -699,6 +701,7 @@ private:
     // The files of the run's loaded scripts as they were when loaded, and the time since they were last looked at.
     std::map<std::string, std::filesystem::file_time_type> script_times_;
     std::chrono::nanoseconds script_watch_{0};
+    std::size_t script_errors_seen_ = 0;
 };
 // Keeps a transaction open for a scope. Nested guards join the outer one.
 class ScopedTransaction {

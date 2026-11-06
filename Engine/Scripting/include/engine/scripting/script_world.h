@@ -100,6 +100,7 @@ public:
 	void add_time(double seconds) override;
 	void give_ammo(int rounds) override;
 	int targets_left() const override;
+	std::vector<EntityId> targets() const override;
 	EntityId player() const override;
 	std::string phase() const override;
 	void win() override;

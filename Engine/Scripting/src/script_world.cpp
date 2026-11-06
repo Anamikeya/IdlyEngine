@@ -147,7 +147,9 @@ void ScriptWorld::pre_physics()
 
 void ScriptWorld::post_physics(std::span<const gameplay::AnimationNotice> notices)
 {
+	// Each side hears the other, unless the game removed one of them after the step: as the game's own sensors do.
 	const auto both = [&](EntityId a, EntityId b, const char* callback, std::span<const Value> rest) {
+		if ((a && !exists(a)) || (b && !exists(b))) return;
 		for (const auto& [self, other] : {std::pair{a, b}, std::pair{b, a}}) {
 			if (!self || !runtime_->has_instance(self)) continue;
 			std::vector<Value> args{EntityRef{other}};
@@ -418,6 +420,12 @@ double ScriptWorld::time_left() const { return game().hud().time_remaining; }
 void ScriptWorld::add_time(double seconds) { game().add_time(seconds); }
 void ScriptWorld::give_ammo(int rounds) { game().give_ammo(rounds); }
 int ScriptWorld::targets_left() const { return game().hud().targets_remaining; }
+std::vector<EntityId> ScriptWorld::targets() const
+{
+	auto standing = game().standing_targets();
+	std::erase_if(standing, [&](EntityId id) { return destroyed_.contains(id); });
+	return standing;
+}
 EntityId ScriptWorld::player() const { return game_ ? game_->player() : 0; }
 std::string ScriptWorld::phase() const { return game_ ? gameplay::to_string(game_->phase()) : "none"; }
 void ScriptWorld::win() { game().win(); }

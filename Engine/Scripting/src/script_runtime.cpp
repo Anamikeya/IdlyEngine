@@ -438,6 +438,11 @@ struct ScriptRuntime::Impl {
 		game.set_function("add_time", [this](double seconds) { world().add_time(seconds); });
 		game.set_function("give_ammo", [this](int rounds) { world().give_ammo(rounds); });
 		game.set_function("targets_left", [this] { return world().targets_left(); });
+		game.set_function("targets", [this] {
+			std::vector<EntityRef> standing;
+			for (const EntityId id : world().targets()) standing.push_back(EntityRef{id});
+			return sol::as_table(std::move(standing));
+		});
 		game.set_function("player", [this] { return entity_or_nil(world().player()); });
 		game.set_function("phase", [this] { return world().phase(); });
 		game.set_function("win", [this] { world().win(); });

@@ -1,4 +1,4 @@
-ENGINE_SCENE 7 98 97
+ENGINE_SCENE 8 106 105
 ENTITY 1 0 "Game Rules" 0 0 0 0 0 0 1 1 1 1
 ENTITY 2 0 "Environment" 0 0 0 0 0 0 1 1 1 1
 ENTITY 3 0 "Sun" 0 20 0 -0.4144880622958475 0.29261871889070007 0.14271968522738726 0.8498264664139349 1 1 1
@@ -9,7 +9,7 @@ ENTITY 7 0 "Glass Shard Template" 6 -40 0 0 0 0 1 0.22 0.16 0.012
 ENTITY 8 0 "Floor" 0 -0.5 0 0 0 0 1 32 1 32
 ENTITY 9 0 "Wall North" 0 2.5 -16.5 0 0 0 1 34 5 1
 ENTITY 10 0 "Wall South" 0 2.5 16.5 0 0 0 1 34 5 1
-ENTITY 11 0 "Wall West" -16.5 2.5 0 0 0 0 1 1 5 32
+ENTITY 11 0 "Wall West" -16.5 2.5 -2.75 0 0 0 1 1 5 26.5
 ENTITY 12 0 "Wall East" 16.5 2.5 0 0 0 0 1 1 5 32
 ENTITY 13 0 "Player" 0 1 12 0 0 0 1 1 1 1
 ENTITY 14 13 "Camera" 0 0.68 0 0 0 0 1 1 1 1
@@ -96,7 +96,15 @@ ENTITY 94 0 "Stress Fountain 7" 4.5 0.05 -14.6 0 0 0 1 1 1 1
 ENTITY 95 0 "Stress Fountain 8" 7.5 0.05 -14.6 0 0 0 1 1 1 1
 ENTITY 96 0 "Stress Fountain 9" 10.5 0.05 -14.6 0 0 0 1 1 1 1
 ENTITY 97 0 "Stress Fountain 10" 13.5 0.05 -14.6 0 0 0 1 1 1 1
-COMPONENTS 310
+ENTITY 98 0 "Wall West End" -16.5 2.5 14.75 0 0 0 1 1 5 2.5
+ENTITY 99 0 "Vault Lintel" -16.5 4 12 0 0 0 1 1 2 3
+ENTITY 100 0 "Vault Floor" -20 -0.5 12 0 0 0 1 8 1 7
+ENTITY 101 0 "Vault Wall North" -20.5 2.5 9 0 0 0 1 7 5 1
+ENTITY 102 0 "Vault Wall South" -20.5 2.5 15 0 0 0 1 7 5 1
+ENTITY 103 0 "Vault Wall Back" -23.5 2.5 12 0 0 0 1 1 5 5
+ENTITY 104 0 "Vault Gate" -16.5 1.5 12 0 0 0 1 0.3 3 3
+ENTITY 105 0 "Vault Button" -22.9 1.3 12 0 0 0 1 0.2 0.35 0.35
+COMPONENTS 328
 BEHAVIOR 1 game_mode 1 time_limit 90
 ENVIRONMENT 2 image 26d86673787c1453 "environments/sky_1k.hdr" 0.32 0.5 0.82 0.78 0.84 0.92 0.3 0.27 0.24 22000 0 1 14.6 aces medium 50 1 1
 LIGHT 3 directional 1 0.95 0.86 85000 10 25 35 1
@@ -115,7 +123,7 @@ MESH 9 cube 1 1 1 0.65 0 - - 3dd476cd8eddbb89 "materials/plaster_wall.material" 
 COLLIDER 9 box 0 0 0 0 0 0 1 0.5 0.5 0.5 0.5 0.5 1000 0.8 0 0 0 18446744073709551615 18446744073709551615
 MESH 10 cube 1 1 1 0.65 0 - - 3dd476cd8eddbb89 "materials/plaster_wall.material" 9 1.4
 COLLIDER 10 box 0 0 0 0 0 0 1 0.5 0.5 0.5 0.5 0.5 1000 0.8 0 0 0 18446744073709551615 18446744073709551615
-MESH 11 cube 1 1 1 0.65 0 - - 3dd476cd8eddbb89 "materials/plaster_wall.material" 9 1.4
+MESH 11 cube 1 1 1 0.65 0 - - 3dd476cd8eddbb89 "materials/plaster_wall.material" 7.5 1.4
 COLLIDER 11 box 0 0 0 0 0 0 1 0.5 0.5 0.5 0.5 0.5 1000 0.8 0 0 0 18446744073709551615 18446744073709551615
 MESH 12 cube 1 1 1 0.65 0 - - 3dd476cd8eddbb89 "materials/plaster_wall.material" 9 1.4
 COLLIDER 12 box 0 0 0 0 0 0 1 0.5 0.5 0.5 0.5 0.5 1000 0.8 0 0 0 18446744073709551615 18446744073709551615
@@ -407,3 +415,21 @@ EMITTER 94 7b7d5996bb06e787 "effects/stress_fountain_glow.effect" 1 1 1
 EMITTER 95 17b3919f993a6c30 "effects/stress_fountain_smoke.effect" 1 1 1
 EMITTER 96 7b7d5996bb06e787 "effects/stress_fountain_glow.effect" 1 1 1
 EMITTER 97 17b3919f993a6c30 "effects/stress_fountain_smoke.effect" 1 1 1
+MESH 98 cube 1 1 1 0.65 0 - - 3dd476cd8eddbb89 "materials/plaster_wall.material" 0.7 1.4
+COLLIDER 98 box 0 0 0 0 0 0 1 0.5 0.5 0.5 0.5 0.5 1000 0.8 0 0 0 18446744073709551615 18446744073709551615
+MESH 99 cube 1 1 1 0.65 0 - - 3dd476cd8eddbb89 "materials/plaster_wall.material" 0.85 0.55
+COLLIDER 99 box 0 0 0 0 0 0 1 0.5 0.5 0.5 0.5 0.5 1000 0.8 0 0 0 18446744073709551615 18446744073709551615
+MESH 100 cube 1 1 1 0.65 0 - - 2bfd8d78f387bc8d "materials/concrete_floor.material" 2.5 2.2
+COLLIDER 100 box 0 0 0 0 0 0 1 0.5 0.5 0.5 0.5 0.5 1000 0.8 0 0 0 18446744073709551615 18446744073709551615
+MESH 101 cube 1 1 1 0.65 0 - - 3dd476cd8eddbb89 "materials/plaster_wall.material" 2 1.4
+COLLIDER 101 box 0 0 0 0 0 0 1 0.5 0.5 0.5 0.5 0.5 1000 0.8 0 0 0 18446744073709551615 18446744073709551615
+MESH 102 cube 1 1 1 0.65 0 - - 3dd476cd8eddbb89 "materials/plaster_wall.material" 2 1.4
+COLLIDER 102 box 0 0 0 0 0 0 1 0.5 0.5 0.5 0.5 0.5 1000 0.8 0 0 0 18446744073709551615 18446744073709551615
+MESH 103 cube 1 1 1 0.65 0 - - 3dd476cd8eddbb89 "materials/plaster_wall.material" 1.4 1.4
+COLLIDER 103 box 0 0 0 0 0 0 1 0.5 0.5 0.5 0.5 0.5 1000 0.8 0 0 0 18446744073709551615 18446744073709551615
+MESH 104 cube 1 1 1 0.65 0 - - 661e5075e3495afc "materials/vault_gate.material" 1 1
+BODY 104 kinematic 0 0 0 0 0 0 0 0 1 0 0 0
+COLLIDER 104 box 0 0 0 0 0 0 1 0.5 0.5 0.5 0.5 0.5 1000 0.7 0 0 0 18446744073709551615 18446744073709551615
+SCRIPT 104 d92d56840e9e75b3 "Scripts/Gate.lua" 4 message t "The vault is open" open_offset v 0 0 3 room_max v -6 8 16 room_min v -16 -1 -6
+MESH 105 cube 1 1 1 0.65 0 - - acd523a02a69781f "materials/vault_button.material" 1 1
+SCRIPT 105 40bd59954271c32b "Scripts/Button.lua" 5 hint t "Press E for the vault's prize" message t "+300  Vault, and 20 seconds" points n 300 time n 20 travel v -0.08 0 0

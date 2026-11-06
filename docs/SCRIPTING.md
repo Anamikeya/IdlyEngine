@@ -91,6 +91,9 @@ All are optional. They are called on the instances in the order of their entitie
 | `on_clip_event(name, point)` | Its animation crossed a clip event, such as a footstep, at `point` |
 | `on_stop()` | Play is stopping |
 
+A collision or sensor event is not passed on when the game removed one of its two entities in the same tick, as the
+game's own sensors ignore it then: a target destroyed by a hit does not also enter a zone.
+
 ## Values
 
 `Vec3` and `Color` are values: their fields cannot be assigned, so `v.x = 1` is an error and sharing one never changes
@@ -143,11 +146,36 @@ the end of the ticks before physics, and at the end of the events and late ticks
 | `engine.game.active()` | The scene runs a game: an entity has a `game_mode` or `player` behavior |
 | `engine.game.score()`, `add_score(points[, message])`, `announce(message)` | |
 | `engine.game.time_left()`, `add_time(seconds)`, `give_ammo(rounds)`, `targets_left()` | |
+| `engine.game.targets()` | The targets still standing, as entities in ID order: not destroyed, and not fallen into a ragdoll |
 | `engine.game.player()`, `phase()`, `win()`, `lose()` | `phase()` is `"ready"`, `"playing"`, `"paused"`, `"won"` or `"lost"` |
 | `print(...)`, `log.info(...)`, `log.warn(...)` | To the Message Log, with the script and line |
 | `require "/Game/Scripts/util"` | Another script, run once; returns what it returned |
 
 The rest of Lua that a script gets: the base functions, `math`, `string`, `table`, `utf8` and `coroutine`.
+
+## The shooter's scripts
+
+The Physics Shooter sample has five, in `Samples/PhysicsShooter/Assets/Scripts`, to read and copy:
+
+| Script | What it does |
+|---|---|
+| `Mover` | Moves its entity back and forth between `a` and `b` at `speed`: the `mover` behavior |
+| `Pickup` | Collected when the player walks into its sensor: `ammo` rounds and `time` seconds, then it is gone: the `pickup` behavior |
+| `BonusZone` | Scores `points` once for each body physics moves that falls into its sensor, not the player: the `bonus_zone` behavior |
+| `Gate` | Slides by `open_offset` at `speed` once every target standing in its room, a box from `room_min` to `room_max`, has fallen, or when a button presses it |
+| `Button` | Pressed with E from within `reach`: sinks by `travel`, gives `points` and `time`, shows `message`, and calls `press()` on its `target`'s script. `once`, or again after half a second |
+
+The first three play exactly as the C++ behaviors of those names do with the same values. The sample's scene keeps the
+C++ behaviors; `Tests/Gameplay/scripted_behavior_tests.cpp` plays each both ways side by side, and the whole sample too,
+comparing every entity's transform and the HUD after every tick. They agree to the last bit, and one changed space in a
+message, or a speed changed by a part in ten million, fails them at once. The one difference that remains is timing
+within a tick: a C++ behavior acts during the game's own events, before it decides whether time has run out, while a
+script hears events after that, so time added by a scripted pickup on the very tick the clock reaches zero comes too
+late.
+
+The vault, through the west wall by the start, is the gate and the button. Its gate's room is the west wing, which
+holds the pillar's target and Enemy 1: shoot both and it slides open. Inside, E at the button gives 300 points and 20
+seconds, once.
 
 ## The sandbox
 

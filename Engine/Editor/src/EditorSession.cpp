@@ -1487,6 +1487,7 @@ Result<void> EditorSession::play() {
     runtime_ = std::move(runtime);
     script_times_.clear();
     script_watch_ = {};
+    script_errors_seen_ = 0;
     reload_changed_scripts(); // Notes the files' times, so a later change is seen.
     collect_script_messages();
     physics_error_.clear();
@@ -2790,7 +2791,10 @@ void EditorSession::collect_script_messages() {
     auto &scripts = runtime_->scripts->runtime();
     // Kept for whoever shows them; a session nobody reads keeps only the newest.
     constexpr std::size_t keep = 512;
-    for (auto &error : scripts.take_errors()) script_errors_.push_back(std::move(error));
+    for (auto &error : scripts.take_errors()) {
+        script_errors_.push_back(std::move(error));
+        ++script_errors_seen_;
+    }
     for (auto &line : scripts.take_output()) script_output_.push_back(std::move(line));
     if (script_errors_.size() > keep) script_errors_.erase(script_errors_.begin(), script_errors_.end() - keep);
     if (script_output_.size() > keep) script_output_.erase(script_output_.begin(), script_output_.end() - keep);

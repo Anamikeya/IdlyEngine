@@ -80,6 +80,8 @@ public:
 	virtual void add_time(double seconds) = 0;
 	virtual void give_ammo(int rounds) = 0;
 	[[nodiscard]] virtual int targets_left() const = 0;
+	// The targets still standing, ascending: not destroyed and not fallen into a ragdoll.
+	[[nodiscard]] virtual std::vector<EntityId> targets() const = 0;
 	[[nodiscard]] virtual EntityId player() const = 0;
 	[[nodiscard]] virtual std::string phase() const = 0; // "ready", "playing", "paused", "won", "lost".
 	virtual void win() = 0;

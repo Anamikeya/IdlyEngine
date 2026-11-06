@@ -143,6 +143,23 @@ struct StateLog {
                 out << " t:" << name << '=' << m[0] * c.x + m[4] * c.y + m[8] * c.z + m[12] << ',' << m[1] * c.x + m[5] * c.y + m[9] * c.z + m[13] << ','
                     << m[2] * c.x + m[6] * c.y + m[10] * c.z + m[14];
             }
+            // The HUD's latest message, with underscores for spaces.
+            std::string event = hud.last_event;
+            std::ranges::replace(event, ' ', '_');
+            out << " event=" << (event.empty() ? "-" : event) << " event_age=" << hud.last_event_age;
+        }
+        // Milestone 6: the entities running scripts, where they are, and the script errors since Play began.
+        if (session.play_state() != editor::PlayState::Editing) {
+            const auto scripted = session.script_instances();
+            out << " scripts=" << scripted.size() << " script_errors=" << session.script_errors_since_play();
+            for (const auto id : scripted) {
+                const auto record = session.scene().inspect(id);
+                const auto w = session.scene().world_transform(id);
+                if (!record || !w) continue;
+                std::string name = record->name;
+                std::ranges::replace(name, ' ', '_');
+                out << " s:" << name << '=' << w->matrix[12] << ',' << w->matrix[13] << ',' << w->matrix[14];
+            }
         }
         out << '\n';
         if (session.game() && now - last_bodies >= std::chrono::seconds(1)) {

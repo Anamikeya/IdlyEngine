@@ -28,6 +28,11 @@ if(TARGET engine::gameplay)
 		SOURCES Gameplay/gameplay_tests.cpp
 		LIBRARIES engine::gameplay)
 	target_compile_definitions(gameplay_tests PRIVATE "GAMEENGINE_SAMPLES_DIR=\"${CMAKE_SOURCE_DIR}/Samples\"")
+	# Milestone 6: the sample's scripted behaviors against the C++ ones, and its scripted vault.
+	if(TARGET engine::script_world)
+		target_sources(gameplay_tests PRIVATE Gameplay/scripted_behavior_tests.cpp)
+		target_link_libraries(gameplay_tests PRIVATE engine::script_world)
+	endif()
 endif()
 
 # ozz-animation as the engine builds it, and Engine/Animation on it.
